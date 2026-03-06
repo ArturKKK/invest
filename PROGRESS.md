@@ -1,7 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
 **Последнее обновление:** 2026-03-07  
-**Статус:** Phase 1 — Baseline v2 TRAINED. Сильный ranking сигнал (LS Sharpe 4.2). Long-only не работает.
+**Статус:** Phase 1 — v3 trained on cluster. v4 + HIST ready to run. LS Sharpe ~3.8, Long-only needs regime fix.
 
 ---
 
@@ -17,11 +17,20 @@
 - Long-Short работает отлично, Long-Only нет (рынок падал в test периоде)
 - Top фичи: MA-ratios, GK-volatility, Sharpe-ratios, CCI
 
+### Baseline v3 (CLUSTER RUN)
+- **Best horizon: 4h** (LS Sharpe = 3.82)
+- Rank IC = 0.0287, ICIR = 0.3366, Rank ICIR = 0.5789
+- 12h: LS Sharpe 2.01, 24h: LS Sharpe 0.78
+- Cross-asset фичи работают (btc_vol_24h в Top-4)
+- Regime filter (72h MA) бесполезен: 49.9% ON = монетка
+- Optuna не запустился (не был установлен) — теперь установлен
+- Long-Only = -100% (все ещё катастрофа)
+
 ### Что нужно дальше
-1. Short-side execution (futures/margin на OKX) ИЛИ market-neutral стратегия
-2. Попробовать другие target horizons (12h, 24h)
-3. HIST/MASTER трансформеры на A100 GPU
-4. HPO с Optuna (100+ trials)
+1. **v4**: HPO (ICIR objective) + advanced regime (composite 5-factor) + multi-seed ensemble
+2. **HIST**: трансформер с cross-stock attention на A100 GPU
+3. **Ensemble**: HIST + LightGBM → финальная модель
+4. Paper trading на OKX
 
 ---
 
@@ -44,12 +53,19 @@ invest/
 ├── PROGRESS.md                    # Этот файл
 ├── run_pipeline.py                # v1 pipeline (baseline, плохие результаты)
 ├── run_pipeline_v2.py             # v2 pipeline (cross-sectional rank, 3 модели + ensemble)
-├── requirements-cluster.txt       # Зависимости для кластера
+├── run_pipeline_v3.py             # v3 pipeline (multi-horizon + cross-asset + regime)
+├── run_pipeline_v4.py             # v4 pipeline (HPO ICIR + advanced regime + multi-seed)
+├── run_hist_model.py              # HIST transformer (PyTorch, cross-stock attention)
+├── requirements-cluster.txt       # Зависимости для кластера (CPU)
+├── requirements-gpu.txt           # Зависимости для GPU (torch + всё остальное)
 ├── data/
 │   ├── raw/                       # 50 parquet файлов, 65 MB
 │   └── features/                  # crypto_features_1h.parquet, 1.5 GB
 ├── results/                       # v1 results (плохие)
-├── results_v2/                    # v2 results (хорошие) ← ТЕКУЩИЕ
+├── results_v2/                    # v2 results (хорошие)
+├── results_v3/                    # v3 results (cluster run) ← ТЕКУЩИЕ
+├── results_v4/                    # v4 results (HPO + regime + ensemble)
+├── results_hist/                  # HIST transformer results
 │   ├── all_results.json           # Метрики всех 4 моделей
 │   ├── feature_importance_v2.csv  # Важность фичей
 │   ├── test_predictions_v2.parquet# Предсказания на тест
@@ -112,6 +128,75 @@ close_ma24_ratio, close_ma720_ratio, low_close_ratio, close_ma336_ratio,
 ret_sharpe_24h, ret_sharpe_168h, gk_vol_168h, close_ma6_ratio, ret_2h,
 gk_vol_24h, close_ma12_ratio, cci_48, gk_vol_48h, vol_price_corr_168h,
 macd, gk_vol_12h, atr_48, vol_price_corr_48h, bb_width_20, high_close_ratio
+```
+
+### ✅ v3 обучена на кластере
+**Скрипт:** `run_pipeline_v3.py`
+
+**Новое в v3 vs v2:**
+1. Multi-horizon targets (4h, 12h, 24h)
+2. Cross-asset features: btc_ret_*, eth_ret_*, btc_vol_24h, market_dispersion, ret_vs_btc_24h
+3. BTC regime filter (btc_regime_72)
+4. Optuna HPO slot (не запустился — optuna не был установлен)
+5. 109 фичей (было 92)
+
+**Результаты на тесте (2025-01 → 2026-03):**
+
+| Horizon | Rank IC | ICIR | Rank ICIR | LS Sharpe | LS Ann Ret | LS MaxDD |
+|---------|---------|------|-----------|-----------|------------|----------|
+| **4h**  | **0.0287** | **0.337** | **0.579** | **3.82** | 152% | -55.6% |
+| 12h     | 0.0302 | 0.262 | 0.451 | 2.01 | 78.5% | -91.5% |
+| 24h     | 0.0245 | 0.178 | 0.318 | 0.78 | 31.9% | -99.7% |
+
+**Regime filter НЕ работает:** 49.9% ON = монетка. BTC MA(72) = 3 дня слишком короткая.
+**Long-Only = -100%** — катастрофа. Все монеты упали в bear market.
+
+**Top фичи (v3):**
+```
+close_ma336_ratio, close_ma720_ratio, vol_price_corr_168h, btc_vol_24h,
+gk_vol_168h, macd_signal, ret_skew_168h, ret_sharpe_168h, ret_std_168h,
+ret_kurt_168h, atr_48, gk_vol_48h, vol_price_corr_48h
+```
+
+### 🔄 v4 готова к запуску
+**Скрипт:** `run_pipeline_v4.py`
+
+**Улучшения v4 vs v3:**
+1. **Optuna HPO с ICIR objective** — оптимизируем стабильность сигнала, не силу
+2. **Advanced multi-factor regime** (5 сигналов):
+   - BTC vs 720h (30d) MA
+   - Slope 720h MA (тренд растёт?)
+   - Market breadth (>50% монет в плюсе за 24h)
+   - BTC drawdown от 30d high (< -15% = crash)
+   - BTC vol regime (< 2× медиана)
+3. **Dynamic position sizing** (≥0.8 → 100%, ≥0.6 → 60%, ≥0.4 → 25%, <0.4 → 0%)
+4. **Multi-seed ensemble** (5 seeds, avg predictions)
+5. **Feature selection** (drop bottom 20% by importance)
+6. **Purged walk-forward** (48h gap between splits)
+7. **Score-weighted portfolio** (softmax weights, не equal-weight)
+
+**Запуск:**
+```bash
+python run_pipeline_v4.py --hpo-trials 50          # ~15-30 мин
+python run_pipeline_v4.py --hpo-trials 100         # ~30-60 мин
+python run_pipeline_v4.py --skip-hpo               # быстрый тест без HPO
+```
+
+### 🔄 HIST Transformer готов к запуску
+**Скрипт:** `run_hist_model.py`
+
+**Архитектура (adapted from Xu et al., KDD 2021):**
+1. Feature Embedding: MLP(109 → 128)
+2. Concept Attention: 8 crypto категорий (BTC, L1, DeFi, Gaming, L2, Infra, Meme, Other)
+3. Cross-Stock Self-Attention: 2 layers, 4 heads — учит зависимости между 50 монетами
+4. Prediction Head: MLP → score per coin
+5. Loss: 0.5×MSE + 0.5×IC_loss (дифференцируемая корреляция)
+
+**Запуск (нужен GPU):**
+```bash
+pip install -r requirements-gpu.txt
+python run_hist_model.py --device cuda --epochs 80               # ~2-5 мин на A100
+python run_hist_model.py --lgb-preds results_v4/test_predictions_v4.parquet  # + ensemble
 ```
 
 ---
