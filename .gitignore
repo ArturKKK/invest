@@ -1,0 +1,29 @@
+# Data
+data/
+*.parquet
+
+# Results
+results/
+results_v2/
+results_v3/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets
+.env
+*.key
