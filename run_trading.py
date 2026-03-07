@@ -390,11 +390,13 @@ def build_features(df):
 
 def add_12h_features(df):
     """
-    v6-specific features optimized for 12h holding period.
+    v7 features optimized for 12h holding period.
     """
     for sym, grp in df.groupby('symbol'):
         c = grp['close']
         v = grp['volume']
+        h = grp['high']
+        l = grp['low']
         idx = grp.index
 
         r12 = c.pct_change(12)
@@ -419,11 +421,33 @@ def add_12h_features(df):
         hours = grp['timestamp'].dt.hour
         df.loc[idx, 'is_asian_session'] = ((hours >= 0) & (hours < 12)).astype(float)
 
-        h12 = grp['high'].rolling(12).max()
-        l12 = grp['low'].rolling(12).min()
+        h12 = h.rolling(12).max()
+        l12 = l.rolling(12).min()
         range12 = (h12 - l12) / (c + 1e-10)
         range_avg = range12.rolling(168).mean() + 1e-10
         df.loc[idx, 'range_expansion_12h'] = range12 / range_avg - 1
+
+        # v7 NEW features
+        range_pos = (c - l12) / (h12 - l12 + 1e-10)
+        df.loc[idx, 'range_position_12h'] = range_pos
+
+        vwap_change = (c * v).rolling(12).sum() / (v.rolling(12).sum() + 1e-10)
+        vwap_prev = (c.shift(12) * v.shift(12)).rolling(12).sum() / (v.shift(12).rolling(12).sum() + 1e-10)
+        df.loc[idx, 'vwpc_12h'] = vwap_change / (vwap_prev + 1e-10) - 1
+
+        hh = (h > h.shift(1)).rolling(12).sum()
+        ll = (l < l.shift(1)).rolling(12).sum()
+        df.loc[idx, 'hh_count_12h'] = hh
+        df.loc[idx, 'll_count_12h'] = ll
+        df.loc[idx, 'trend_strength_12h'] = hh - ll
+
+        vol_recent = c.pct_change().rolling(12).std()
+        vol_base = c.pct_change().rolling(72).std() + 1e-10
+        df.loc[idx, 'vol_crush_ratio'] = vol_recent / vol_base
+
+        ret_abs = (c - c.shift(12)).abs()
+        hi_lo_path = (h - l).rolling(12).sum()
+        df.loc[idx, 'direction_quality_12h'] = ret_abs / (hi_lo_path + 1e-10)
 
     df['ret_12h_temp'] = df.groupby('symbol')['close'].transform(lambda x: x.pct_change(12))
     df['ret_12h_cs_rank'] = df.groupby('timestamp')['ret_12h_temp'].rank(pct=True)
@@ -432,6 +456,14 @@ def add_12h_features(df):
     df['vol_12h_sum'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(12).sum())
     df['vol_12h_cs_rank'] = df.groupby('timestamp')['vol_12h_sum'].rank(pct=True)
     df.drop(columns=['vol_12h_sum'], inplace=True)
+
+    # v7: funding rate cross-sectional rank (if available)
+    if 'funding_rate' in df.columns:
+        df['funding_cs_rank'] = df.groupby('timestamp')['funding_rate'].rank(pct=True)
+        df['cum_funding_24h'] = df.groupby('symbol')['funding_rate'].transform(
+            lambda x: x.rolling(3, min_periods=1).sum())
+        df['cum_funding_72h'] = df.groupby('symbol')['funding_rate'].transform(
+            lambda x: x.rolling(9, min_periods=1).sum())
 
     for col in df.select_dtypes(include=[np.number]).columns:
         df[col] = df[col].replace([np.inf, -np.inf], np.nan)

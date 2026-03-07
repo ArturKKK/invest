@@ -36,6 +36,8 @@ def main():
     ap.add_argument("--days",    type=int,   default=14)
     ap.add_argument("--capital", type=float, default=1000.0)
     ap.add_argument("--config",  type=str,   default=None)
+    ap.add_argument("--model-dir", type=str, default=None,
+                    help="Model directory (default: results_v7, fallback results_v6)")
     ap.add_argument("--rebal",   type=int,   default=12,
                     help="Rebalance interval in hours (default: 12)")
     ap.add_argument("--npos",    type=int,   default=None,
@@ -89,7 +91,16 @@ def main():
 
     # ── 3  models ─────────────────────────────────────────────────
     print("📡 Models …")
-    models = load_lgb_models(os.path.join(root, "results_v6"))
+    model_dir = args.model_dir
+    if not model_dir:
+        # Try v7 first, fallback to v6
+        for d in ["results_v7", "results_v6"]:
+            p = os.path.join(root, d)
+            if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
+                model_dir = p; break
+    if not model_dir:
+        model_dir = os.path.join(root, "results_v6")
+    models = load_lgb_models(model_dir)
     if not models:
         print("❌ no models"); return
     mf = models[0].feature_name()
@@ -150,14 +161,38 @@ def main():
         new_L = set(syms[order[:nl]])
         new_S = set(syms[order[-nl:]])
 
+        # v7: confidence-weighted sizing — stronger signals get more weight
+        score_dict = dict(zip(syms, scores))
+        s_long = np.array([score_dict[s] for s in new_L])
+        s_short = np.array([-score_dict[s] for s in new_S])  # negate for shorts
+
+        # Softmax-like weights (temperature=1)
+        def soft_weights(arr):
+            if len(arr) == 0: return {}
+            arr = arr - arr.mean()  # center
+            w = np.exp(arr * 2)     # temperature=0.5: moderate confidence scaling
+            w = w / w.sum()
+            return w
+
+        wL = soft_weights(s_long)
+        wS = soft_weights(s_short)
+        sym_L = list(new_L)
+        sym_S = list(new_S)
+        weight_L = dict(zip(sym_L, wL))
+        weight_S = dict(zip(sym_S, wS))
+
         # ── compute changes (costs only on traded positions) ──────
         open_L  = new_L - set(held_L)
         close_L = set(held_L) - new_L
         open_S  = new_S - set(held_S)
         close_S = set(held_S) - new_S
 
-        usd_per = (equity * kelly) / max(2 * nl, 1)
-        step_cost = (len(open_L) + len(close_L) + len(open_S) + len(close_S)) * usd_per * COST_SIDE
+        total_alloc = equity * kelly
+        half_alloc = total_alloc / 2  # half for longs, half for shorts
+
+        # Costs: estimate average position size for cost calc
+        usd_per_avg = total_alloc / max(2 * nl, 1)
+        step_cost = (len(open_L) + len(close_L) + len(open_S) + len(close_S)) * usd_per_avg * COST_SIDE
         cum_cost += step_cost
         tot_trades += len(open_L) + len(close_L) + len(open_S) + len(close_S)
 
@@ -165,10 +200,12 @@ def main():
         fwd_pnl = 0.0
         for sym in new_L:
             p0 = px0.get(sym, 0); p1 = px1.get(sym, p0)
-            if p0 > 0: fwd_pnl += usd_per * (p1 - p0) / p0
+            w = weight_L.get(sym, 1.0 / max(nl, 1))
+            if p0 > 0: fwd_pnl += half_alloc * w * (p1 - p0) / p0
         for sym in new_S:
             p0 = px0.get(sym, 0); p1 = px1.get(sym, p0)
-            if p0 > 0: fwd_pnl += usd_per * (-(p1 - p0) / p0)
+            w = weight_S.get(sym, 1.0 / max(nl, 1))
+            if p0 > 0: fwd_pnl += half_alloc * w * (-(p1 - p0) / p0)
 
         equity += fwd_pnl - step_cost
         peak = max(peak, equity)
