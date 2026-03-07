@@ -11,7 +11,8 @@ Uses:
 
 Modes:
   signal   — Generate signals only, print portfolio (no API needed)
-  paper    — Paper trade on OKX demo account
+  sim      — Local paper trading: track positions, compute PnL from real prices (no API needed)
+  paper    — Paper trade on OKX demo account (needs API key)
   live     — Live trading with real money
 
 Setup:
@@ -22,6 +23,9 @@ Setup:
   4. For paper: export OKX_DEMO=1
 
 Usage:
+  # Local paper trading (no API needed):
+  python run_trading.py --mode sim --capital 1000 --loop
+
   # Generate signals only (no API needed):
   python run_trading.py --mode signal
 
@@ -670,6 +674,147 @@ def execute(exchange, positions, dry_run=True):
 
 
 # ============================================================
+# LOCAL PAPER TRADING SIMULATOR
+# ============================================================
+
+def fetch_current_prices(symbols):
+    """Fetch current prices for all symbols from Binance."""
+    try:
+        import ccxt
+    except ImportError:
+        return {}
+
+    exchange = ccxt.binance({'enableRateLimit': True})
+    exchange.session.verify = False
+
+    prices = {}
+    try:
+        tickers = exchange.fetch_tickers([s for s in symbols])
+        for sym, tick in tickers.items():
+            if tick and tick.get('last'):
+                prices[sym] = tick['last']
+    except Exception:
+        # Fallback: fetch one by one
+        for sym in symbols:
+            try:
+                tick = exchange.fetch_ticker(sym)
+                if tick and tick.get('last'):
+                    prices[sym] = tick['last']
+            except Exception:
+                pass
+    return prices
+
+
+def sim_settle_positions(state, prices):
+    """
+    Settle open positions using current prices.
+    Returns PnL for this cycle.
+    """
+    open_positions = state.get('sim_positions', [])
+    if not open_positions:
+        return 0.0, []
+
+    settled = []
+    total_pnl = 0.0
+
+    for pos in open_positions:
+        sym = pos['symbol']
+        entry_price = pos.get('entry_price', 0)
+        usd = pos['usd']
+        side = pos['side']
+
+        current_price = prices.get(sym)
+        if not current_price or not entry_price:
+            # Can't settle — carry forward
+            settled.append({**pos, 'pnl': 0.0, 'status': 'no_price'})
+            continue
+
+        # Calculate return
+        price_ret = (current_price - entry_price) / entry_price
+        if side == 'short':
+            price_ret = -price_ret
+
+        # Deduct trading costs (entry + exit)
+        cost_rate = 0.0003 + 0.0001  # taker fee + slippage, each side
+        net_ret = price_ret - cost_rate * 2  # round-trip
+
+        pnl = usd * net_ret
+        total_pnl += pnl
+
+        settled.append({
+            'symbol': sym,
+            'side': side,
+            'usd': usd,
+            'entry_price': entry_price,
+            'exit_price': current_price,
+            'return_%': round(price_ret * 100, 2),
+            'net_return_%': round(net_ret * 100, 2),
+            'pnl': round(pnl, 2),
+        })
+
+    return round(total_pnl, 2), settled
+
+
+def sim_open_positions(positions, prices):
+    """
+    Record new positions with entry prices.
+    """
+    new_positions = []
+    for pos in positions:
+        sym = pos['symbol']
+        price = prices.get(sym)
+        if not price:
+            print(f"      ⚠️  No price for {sym}, skipping")
+            continue
+        new_positions.append({
+            **pos,
+            'entry_price': price,
+            'entry_time': datetime.now(timezone.utc).isoformat(),
+        })
+    return new_positions
+
+
+def sim_print_summary(state, log_dir):
+    """Print sim portfolio summary and save equity curve."""
+    equity = state.get('equity', 1000)
+    peak = state.get('peak', 1000)
+    initial = state.get('initial_capital', 1000)
+    dd = equity / peak - 1 if peak > 0 else 0
+    total_ret = equity / initial - 1 if initial > 0 else 0
+    n_cycles = state.get('n_cycles', 0)
+    total_pnl = state.get('total_pnl', 0)
+
+    print(f"\n   {'=' * 50}")
+    print(f"   📊 PORTFOLIO SUMMARY (cycle #{n_cycles})")
+    print(f"   {'=' * 50}")
+    print(f"   Initial:     ${initial:,.0f}")
+    print(f"   Current:     ${equity:,.2f}")
+    print(f"   Total PnL:   ${total_pnl:+,.2f} ({total_ret:+.1%})")
+    print(f"   Peak:        ${peak:,.2f}")
+    print(f"   Drawdown:    {dd:.1%}")
+    print(f"   Cycles:      {n_cycles}")
+
+    # Win/loss stats
+    cycle_pnls = state.get('cycle_pnls', [])
+    if cycle_pnls:
+        wins = [p for p in cycle_pnls if p > 0]
+        losses = [p for p in cycle_pnls if p < 0]
+        print(f"   Win rate:    {len(wins)}/{len(cycle_pnls)} ({len(wins)/len(cycle_pnls):.0%})")
+        if wins:
+            print(f"   Avg win:     ${np.mean(wins):+.2f}")
+        if losses:
+            print(f"   Avg loss:    ${np.mean(losses):+.2f}")
+
+    # Save equity history
+    eq_history = state.get('equity_history', [])
+    if eq_history:
+        eq_path = os.path.join(log_dir, 'sim_equity.csv')
+        pd.DataFrame(eq_history).to_csv(eq_path, index=False)
+
+    print(f"   {'=' * 50}")
+
+
+# ============================================================
 # STATE MANAGEMENT
 # ============================================================
 
@@ -691,7 +836,7 @@ def save_state(state, path):
 
 def main():
     parser = argparse.ArgumentParser(description='Production Trading System')
-    parser.add_argument('--mode', choices=['signal', 'paper', 'live'], default='signal')
+    parser.add_argument('--mode', choices=['signal', 'sim', 'paper', 'live'], default='signal')
     parser.add_argument('--capital', type=float, default=1000.0)
     parser.add_argument('--loop', action='store_true')
     parser.add_argument('--hours', type=int, default=800, help='Hours of history')
@@ -730,7 +875,13 @@ def main():
     if 'equity' not in state:
         state['equity'] = args.capital
         state['peak'] = args.capital
+        state['initial_capital'] = args.capital
         state['recent_rets'] = []
+        state['cycle_pnls'] = []
+        state['equity_history'] = []
+        state['total_pnl'] = 0.0
+        state['n_cycles'] = 0
+        state['sim_positions'] = []
 
     print("=" * 70)
     print(f"  PRODUCTION TRADING — {args.mode.upper()}")
@@ -750,6 +901,41 @@ def main():
         print(f"\n{'─' * 70}")
         print(f"  🕐 {now.strftime('%Y-%m-%d %H:%M UTC')}")
         print(f"{'─' * 70}")
+
+        # ── SIM: settle previous positions ──
+        if args.mode == 'sim' and state.get('sim_positions'):
+            print(f"\n📤 Settling previous positions...")
+            prices = fetch_current_prices(SYMBOLS)
+            pnl, settled = sim_settle_positions(state, prices)
+
+            for s in settled:
+                icon = '🟢' if s.get('pnl', 0) >= 0 else '🔴'
+                print(f"      {icon} {s['side']:>5s} {s['symbol']:<14s} "
+                      f"${s.get('entry_price',0):>10.4f} → ${s.get('exit_price',0):>10.4f} "
+                      f"  ret={s.get('net_return_%',0):+.2f}%  pnl=${s.get('pnl',0):+.2f}")
+
+            state['equity'] += pnl
+            state['peak'] = max(state['peak'], state['equity'])
+            state['total_pnl'] = state.get('total_pnl', 0) + pnl
+            state['n_cycles'] = state.get('n_cycles', 0) + 1
+            state['cycle_pnls'] = state.get('cycle_pnls', []) + [pnl]
+            state['equity_history'] = state.get('equity_history', []) + [{
+                'timestamp': now.isoformat(),
+                'equity': round(state['equity'], 2),
+                'pnl': pnl,
+                'dd': round(state['equity'] / state['peak'] - 1, 4),
+            }]
+
+            # Track recent returns for vol scaling
+            if state['equity'] > 0:
+                ret = pnl / (state['equity'] - pnl) if (state['equity'] - pnl) > 0 else 0
+                state['recent_rets'] = (state.get('recent_rets', []) + [ret])[-200:]
+
+            print(f"\n      💰 Cycle PnL: ${pnl:+.2f}  |  "
+                  f"Equity: ${state['equity']:,.2f}  |  "
+                  f"DD: {state['equity']/state['peak']-1:.1%}")
+
+            state['sim_positions'] = []
 
         # 1. Fetch data
         print(f"\n📊 Fetching data ({len(SYMBOLS)} symbols, {args.hours}h)...")
@@ -779,7 +965,8 @@ def main():
 
         # 5. Portfolio
         print(f"\n💼 Portfolio construction...")
-        positions = construct_portfolio(signals, args.capital, risk_cfg, state)
+        positions = construct_portfolio(signals, state.get('equity', args.capital),
+                                        risk_cfg, state)
 
         if not positions:
             print("   (no positions this cycle)")
@@ -791,22 +978,31 @@ def main():
                       f"{pos['score']:>+8.3f}")
 
         # 6. Execute
-        if args.mode == 'signal' or not positions:
-            results = execute(None, positions, dry_run=True)
+        if args.mode == 'signal':
+            execute(None, positions, dry_run=True)
+        elif args.mode == 'sim':
+            # Record positions with entry prices
+            if positions:
+                prices = fetch_current_prices(SYMBOLS)
+                state['sim_positions'] = sim_open_positions(positions, prices)
+                print(f"\n   📌 Opened {len(state['sim_positions'])} sim positions "
+                      f"(will settle in {HORIZON}h)")
+            sim_print_summary(state, log_dir)
         else:
             print(f"\n📤 Closing existing positions...")
             close_all(exchange)
             print(f"\n📥 Opening new positions...")
-            results = execute(exchange, positions, dry_run=False)
+            execute(exchange, positions, dry_run=False)
 
         # 7. Log
         log = {
             'timestamp': now.isoformat(),
             'mode': args.mode,
-            'capital': args.capital,
+            'capital': state.get('equity', args.capital),
             'risk_config': risk_cfg,
             'positions': positions,
-            'state': {k: v for k, v in state.items() if k != 'recent_rets'},
+            'state': {k: v for k, v in state.items()
+                      if k not in ('recent_rets', 'equity_history', 'sim_positions')},
             'signals_top5': signals.head(5).to_dict('records') if signals is not None else [],
             'signals_bot5': signals.tail(5).to_dict('records') if signals is not None else [],
         }
