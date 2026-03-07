@@ -28,3 +28,4 @@ build/
 .env
 *.key
 data.tar.gz
+data.tar.gz
