@@ -1,7 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
-**Последнее обновление:** 2026-03-08  
-**Статус:** Phase 4 — Sentiment features добавлены (Fear&Greed, funding rates, OI, LS ratio). LGB v5 с sentiment + risk overlay (Sharpe raw 4.15, net 1.64). HIST v2 с sentiment-aware архитектурой написан. Лучший ансамбль: HIST+LGB (Sharpe 4.38).
+**Последнее обновление:** 2026-03-07  
+**Статус:** Phase 4 — Sentiment pipeline DONE. LGB v5 кластер: LS Sharpe net 1.35 (3 окна). HIST v2 кластер: Rank IC 0.074, LS Sharpe net 1.23. Ensemble v2 скрипт готов. Ждём ensemble run.
 
 ---
 
@@ -73,36 +73,60 @@
 - **Rolling walk-forward:** 3 окна (W1→2024-12, W2→2025-03, W3→latest)
 - **Реалистичная модель комиссий:** 0.03% blended maker + 0.01% slip + 0.005%/8h funding, 25% turnover
 
-**Результаты (single window, 2 seeds, quick test):**
+**Результаты кластер (3 walk-forward окна, 5 seeds, Optuna не установлен):**
 
-| Metric | Value |
-|--------|-------|
-| Rank IC | 0.028 |
-| Rank ICIR | 0.545 |
-| LS Sharpe raw | 4.15 |
-| **LS Sharpe net** | **1.64** |
-| LS Ann Return net | 64.5% |
-| LS MaxDD net | -70.9% |
-| LS VolTarget Sharpe | 1.86 |
-| LS DDStop Sharpe | 0.93 |
-| LS DDStop MaxDD | -37.9% |
-| Cost per period | 2.2 bps |
+| Window | Rank IC | Rank ICIR | LS Sharpe raw | LS Sharpe net | MaxDD net | DDStop Sharpe | DDStop MaxDD |
+|--------|---------|-----------|---------------|---------------|-----------|---------------|------ -------|
+| W1 (→2024-12) | 0.026 | 0.415 | 2.77 | 0.39 | -67.5% | -0.06 | -43.8% |
+| W2 (→2025-03) | 0.026 | 0.503 | 4.04 | 1.45 | -70.1% | 1.05 | -37.6% |
+| W3 (→latest) | 0.029 | 0.565 | 4.20 | 1.70 | -67.9% | 0.99 | -41.2% |
+| **AVG** | **0.027** | **0.494** | **3.67** | **1.18** | **-68.5%** | **0.66** | **-40.9%** |
 
-**7/30 top фичей — sentiment:** fng_ma30 (#3), fng_momentum (#4), fng_ma7 (#6), btc_beta_48h (#12), btc_beta_168h (#16), reversal_24v168 (#19), fng_value (#28)
+**Combined (all windows):** LS Net Sharpe=1.35, LS DDStop Sharpe=0.87 (MaxDD -46.2%), Cost=2.2 bps/period
 
-#### HIST v2 с Sentiment-Aware Architecture (написан, ждёт запуска)
+⚠️ W1 слабее (Sharpe net 0.39, DDStop -0.06) — меньше train данных, короткий test.
+W2/W3 стабильные: net Sharpe 1.45-1.70, DDStop ~1.0.
+
+**7/30 top фичей — sentiment:** fng_ma30 (#4), fng_momentum (#7), fng_ma7 (#8), btc_beta_168h (#15), btc_beta_48h (#18), fng_value (#20), reversal_24v168 (#24)
+
+#### HIST v2 с Sentiment-Aware Architecture (CLUSTER RUN ✅)
 **Скрипт:** `run_hist_v2.py`
-- Отдельная sentiment embedding ветка: `sent_embed(n_sent→sent_hidden→d_model)`
-- Gated fusion: `h = h_tech + gate * h_sent`
-- Разделение фичей: technical vs sentiment по keywords
-- Те же concept categories и cross-stock attention что в v1
-- Запуск: `python run_hist_v2.py --device cuda --epochs 80`
+- Отдельная sentiment embedding ветка: `sent_embed(15→128)` + gated fusion
+- 544K params (vs 502K v1), best epoch 7/80, early stop at 22
+- Val Rank IC: 0.0723
+
+**Результаты кластер (H100, 80 epochs):**
+
+| Metric | HIST v2 | HIST v1 |
+|--------|---------|---------|
+| Rank IC | **0.074** | 0.067 |
+| Rank ICIR | **0.533** | 0.530 |
+| LS Sharpe raw | 3.91 | 4.25 |
+| LS Sharpe net | **1.23** | N/A (gross) |
+| LS MaxDD net | -64.9% | -51% (gross) |
+| LS DDStop Sharpe | 0.70 | N/A |
+| LS DDStop MaxDD | **-33.6%** | N/A |
+
+✅ Rank IC улучшился: 0.074 vs 0.067 (v1). Sentiment branch добавляет сигнал.
+⚠️ LS Sharpe raw упал: 3.91 vs 4.25 — вероятно шум от ограниченных sentiment данных.
+✅ DDStop MaxDD -33.6% — лучший показатель по просадке среди всех моделей.
+
+### Сводная таблица (все модели, актуальные результаты)
+
+| Model | Rank IC | LS Sharpe (gross) | LS Sharpe (net) | DDStop Sharpe | DDStop MaxDD |
+|-------|---------|-------------------|-----------------|---------------|------ -------|
+| LGB v4 | 0.029 | 4.00 | ~1.5* | N/A | N/A |
+| HIST v1 | 0.067 | 4.25 | ~1.7* | N/A | N/A |
+| HIST+LGB v1 ensemble | 0.078 | 4.38 | ~1.8* | N/A | N/A |
+| **LGB v5 (avg 3 win)** | **0.027** | **3.67** | **1.18** | **0.66** | **-40.9%** |
+| **HIST v2** | **0.074** | **3.91** | **1.23** | **0.70** | **-33.6%** |
+
+*оценка, пересчёт с теми же 2.2 bps/period
 
 ### Что нужно дальше
-1. **Запустить v5 full** на кластере (3 walk-forward окна + HPO)
-2. **Запустить HIST v2** на GPU (H100)
-3. **Ensemble v5 LGB + HIST v2** — ожидаем Sharpe > 4.5
-4. **Paper trading** на OKX (run_paper_trading.py)
+1. **Запустить ensemble v2** на кластере: `python run_ensemble_v2.py`
+2. **Оптимизировать rebalance частоту** — 8h/12h вместо 4h (снижение костов)
+3. **Paper trading** на OKX (run_paper_trading.py)
 
 ---
 
