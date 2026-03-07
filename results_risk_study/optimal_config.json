@@ -1,0 +1,13 @@
+{
+  "n_long": 8,
+  "n_short": 8,
+  "vol_target": 0.015,
+  "vol_lookback": 48,
+  "kelly_frac": 0.3,
+  "dd_stop": -0.20,
+  "dd_resume": -0.08,
+  "confidence_threshold": 0.0,
+  "cost_per_ls_period": 0.00025,
+  "horizon_hours": 4,
+  "ensemble": "hist_v1 + lgb_v5 (equal weight)"
+}

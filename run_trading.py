@@ -261,6 +261,12 @@ def build_features(df):
     for hr in [1, 4, 12, 24]:
         df[f'eth_ret_{hr}h'] = df.groupby('symbol')['eth_close'].transform(lambda x: x.pct_change(hr))
     df['btc_vol_24h'] = df.groupby('symbol')['btc_close'].transform(lambda x: x.pct_change().rolling(24).std())
+
+    # ETH/BTC ratio return (missing in previous version)
+    df['eth_btc_ratio'] = df['eth_close'] / (df['btc_close'] + 1e-10)
+    df['eth_btc_ret_24h'] = df.groupby('symbol')['eth_btc_ratio'].transform(lambda x: x.pct_change(24))
+    df.drop(columns=['eth_btc_ratio'], inplace=True, errors='ignore')
+
     df['market_dispersion'] = df.groupby('timestamp')['ret_1h'].transform('std')
     if 'ret_24h' in df.columns:
         df['ret_vs_btc_24h'] = df['ret_24h'] - df['btc_ret_24h']
@@ -269,18 +275,41 @@ def build_features(df):
     breadth = df.groupby('timestamp')['ret_24h'].agg(
         breadth_pct_positive=lambda x: (x > 0).mean()
     ).reset_index()
+    breadth['regime_breadth_bullish'] = (breadth['breadth_pct_positive'] > 0.5).astype(float)
     df = df.merge(breadth, on='timestamp', how='left')
 
     # Regime
     btc_ts = df[df['symbol'] == 'BTC/USDT'][['timestamp', 'btc_close']].drop_duplicates('timestamp').sort_values('timestamp')
+    for w in [24, 72, 168]:
+        btc_ts[f'btc_ma{w}'] = btc_ts['btc_close'].rolling(w).mean()
+    btc_ts['btc_regime_24'] = (btc_ts['btc_close'] > btc_ts['btc_ma24']).astype(float)
+    btc_ts['btc_regime_72'] = (btc_ts['btc_close'] > btc_ts['btc_ma72']).astype(float)
+    btc_ts['btc_regime_168'] = (btc_ts['btc_close'] > btc_ts['btc_ma168']).astype(float)
     for w in [336, 720]:
         btc_ts[f'btc_ma{w}'] = btc_ts['btc_close'].rolling(w, min_periods=min(w, 100)).mean()
+    btc_ts['regime_btc_above_ma336'] = (btc_ts['btc_close'] > btc_ts['btc_ma336']).astype(float)
     btc_ts['regime_btc_above_ma720'] = (btc_ts['btc_close'] > btc_ts['btc_ma720']).astype(float)
+    btc_ts['regime_btc_ma720_slope'] = (btc_ts['btc_ma720'] > btc_ts['btc_ma720'].shift(24)).astype(float)
     btc_ts['btc_rolling_high_720'] = btc_ts['btc_close'].rolling(720, min_periods=100).max()
     btc_ts['regime_btc_dd_720'] = btc_ts['btc_close'] / btc_ts['btc_rolling_high_720'] - 1
     btc_ts['regime_btc_not_crashed'] = (btc_ts['regime_btc_dd_720'] > -0.15).astype(float)
-    df = df.merge(btc_ts[['timestamp', 'regime_btc_above_ma720', 'regime_btc_dd_720',
-                           'regime_btc_not_crashed']], on='timestamp', how='left')
+    btc_ts['_btc_vol_24'] = btc_ts['btc_close'].pct_change().rolling(24).std()
+    btc_ts['_btc_vol_720_med'] = btc_ts['_btc_vol_24'].rolling(720, min_periods=100).median()
+    btc_ts['regime_low_vol'] = (btc_ts['_btc_vol_24'] < btc_ts['_btc_vol_720_med'] * 2.0).astype(float)
+    regime_cols = ['timestamp', 'btc_regime_24', 'btc_regime_72', 'btc_regime_168',
+                   'regime_btc_above_ma336', 'regime_btc_above_ma720',
+                   'regime_btc_ma720_slope', 'regime_btc_dd_720',
+                   'regime_btc_not_crashed', 'regime_low_vol']
+    df = df.merge(btc_ts[regime_cols], on='timestamp', how='left')
+
+    # Regime composite
+    df['regime_composite'] = (
+        0.25 * df['regime_btc_above_ma720'].fillna(0) +
+        0.20 * df['regime_btc_ma720_slope'].fillna(0) +
+        0.20 * df['regime_breadth_bullish'].fillna(0) +
+        0.20 * df['regime_btc_not_crashed'].fillna(0) +
+        0.15 * df['regime_low_vol'].fillna(0)
+    )
 
     # Sentiment: FNG (if available)
     root = os.path.dirname(os.path.abspath(__file__))
@@ -297,32 +326,47 @@ def build_features(df):
         df['fng_extreme_greed'] = (df['fng_value'] > 75).astype(float)
         df['fng_ma7'] = df.groupby('symbol')['fng_value'].transform(lambda x: x.rolling(7*24, min_periods=24).mean())
         df['fng_ma30'] = df.groupby('symbol')['fng_value'].transform(lambda x: x.rolling(30*24, min_periods=24).mean())
-        df['fng_momentum'] = df['fng_value'] - df['fng_ma7']
+        df['fng_momentum'] = df['fng_value'] - df['fng_ma30']
         df.drop(columns=['date'], inplace=True, errors='ignore')
 
-    # Synthetic positioning
-    for fast, slow in [(4, 24), (12, 48), (24, 168)]:
-        fr = f'ret_{fast}h'
-        sr = f'ret_{slow}h'
+    # Synthetic positioning (formula matches v5 training)
+    for short, long in [(4, 24), (12, 48), (24, 168)]:
+        fr = f'ret_{short}h'
+        sr = f'ret_{long}h'
         if fr in df.columns and sr in df.columns:
-            df[f'reversal_{fast}v{slow}'] = -df[fr] * df[sr].abs()
+            df[f'reversal_{short}v{long}'] = df[fr] - df[sr] / (long / short)
 
-    for w in [12, 24]:
+    for w in [12, 24, 48]:
         df[f'vol_surge_{w}h'] = df.groupby('symbol')['volume'].transform(
             lambda x: x / x.rolling(w).mean() - 1)
+
+    # Cross-coin dispersion features
+    cs_disp = df.groupby('timestamp')['ret_4h'].transform('std') if 'ret_4h' in df.columns else 0
+    df['cross_coin_dispersion'] = cs_disp
+    df['cross_coin_disp_ma24'] = df.groupby('symbol')['cross_coin_dispersion'].transform(
+        lambda x: x.rolling(24, min_periods=6).mean())
+    df['dispersion_regime'] = df['cross_coin_dispersion'] / (df['cross_coin_disp_ma24'] + 1e-10)
+
+    # Return skew cross-sectional rank
+    for w in [48, 168]:
+        if f'ret_skew_{w}h' in df.columns:
+            df[f'ret_skew_{w}h_cs'] = df.groupby('timestamp')[f'ret_skew_{w}h'].transform(
+                lambda x: x.rank(pct=True) - 0.5)
 
     # BTC beta
     btc_rets = df[df['symbol'] == 'BTC/USDT'][['timestamp', 'ret_1h']].rename(
         columns={'ret_1h': 'btc_r'}).drop_duplicates('timestamp')
     df = df.merge(btc_rets, on='timestamp', how='left')
     for w in [48, 168]:
-        df[f'btc_beta_{w}h'] = df.groupby('symbol').apply(
-            lambda g: g['ret_1h'].rolling(w).corr(g['btc_r']) *
-                      (g['ret_1h'].rolling(w).std() / (g['btc_r'].rolling(w).std() + 1e-10))
+        cov = df.groupby('symbol').apply(
+            lambda g: g['ret_1h'].rolling(w).cov(g['btc_r'])
         ).reset_index(level=0, drop=True)
+        var = df.groupby('symbol')['btc_r'].transform(
+            lambda x: x.rolling(w).var() + 1e-10)
+        df[f'btc_beta_{w}h'] = cov / var
 
     # Clean up
-    df.drop(columns=['btc_close', 'eth_close', 'btc_r'], inplace=True, errors='ignore')
+    df.drop(columns=['btc_close', 'eth_close', 'btc_r', 'cross_coin_dispersion'], inplace=True, errors='ignore')
 
     # Replace inf/nan
     for col in df.select_dtypes(include=[np.number]).columns:
