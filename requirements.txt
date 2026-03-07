@@ -6,6 +6,7 @@ pyarrow          # parquet support
 
 # ML
 lightgbm
+scikit-learn     # required by lightgbm sklearn API
 optuna           # hyperparameter optimization
 
 # Features
