@@ -487,3 +487,52 @@ TRAIN_END = '2024-07-01'  # Train: all before this
 VAL_END = '2025-07-01'    # Val: TRAIN_END to VAL_END
                            # Test: after VAL_END
 ```
+
+---
+
+## Phase 5 — Production System (в работе)
+
+### Что сделано
+
+1. **`run_risk_study.py`** — 4-фазная оптимизация риск-параметров:
+   - Phase 1: Portfolio construction (top/bot K sweep)
+   - Phase 2: Vol target × Kelly fraction grid
+   - Phase 3: DD stop / resume threshold sweep
+   - Phase 4: Confidence filter threshold
+   - Оптимизирует по **Calmar ratio** (return / max drawdown)
+   - Сохраняет `optimal_config.json` для загрузки live-системой
+
+2. **`run_trading.py`** — полный production trading pipeline:
+   - Fetch live OHLCV (Binance spot API, 800h history)
+   - Feature engineering (100+ фичей, тот же пайплайн что и при обучении)
+   - Cross-sectional rank normalization
+   - Signal generation: LGB v5 multi-seed ensemble (загружает сохранённые .txt модели)
+   - Risk overlay: vol targeting, Kelly fraction, DD stop/resume, confidence filter
+   - Execution через OKX CCXT (isolated margin, 1x leverage)
+   - Три режима: `signal` (только сигналы), `paper` (OKX demo), `live`
+   - `--loop` режим: автоматический цикл каждые 4h
+   - State persistence: отслеживает equity, peak, drawdown между циклами
+   - Logging: JSON логи каждого trade cycle
+
+3. **Model saving в LGB v5** (`run_pipeline_v5.py`):
+   - `train_multi_seed()` теперь возвращает все модели (не только последнюю)
+   - Сохраняет `lgb_model_seed_{seed}.txt` для каждого seed
+   - Сохраняет `feature_names.json` со списком отобранных фичей
+   - Backward-compatible: feature importance по-прежнему использует last_model
+
+### Критическая проблема: DDStop Sharpe
+
+| Ensemble | LS raw | LS net | MaxDD | DDStop Sharpe |
+|----------|--------|--------|-------|---------------|
+| HIST v1 + LGB v5 | 4.42 | 2.93 | -56.5% | -0.19 |
+| HIST v1 standalone | 4.20 | 2.57 | -51.1% | +0.12 |
+| LGB v5 standalone | 4.20 | 2.78 | -59.0% | -0.08 |
+
+Стратегия зарабатывает, но через болезненные просадки (-56%).
+`run_risk_study.py` должен найти параметры, при которых Calmar > 1.0.
+
+### Roadmap
+1. Переобучить LGB v5 на кластере (нужно для сохранения моделей)
+2. Запустить `run_risk_study.py` на ensemble predictions
+3. Paper trading на OKX demo (минимум 2 недели)
+4. Live с $100-500 при DDStop Sharpe > 1.0

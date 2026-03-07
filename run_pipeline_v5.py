@@ -527,16 +527,18 @@ def train_multi_seed(X_train, y_train, X_val, y_val, X_test,
     print(f"\n   🌱 Multi-seed ensemble ({len(seeds)} seeds)...")
 
     all_preds = []
+    all_models = []
     for i, seed in enumerate(seeds):
         print(f"      Seed {seed} ({i+1}/{len(seeds)})...", end=" ")
         model = train_lgbm(X_train, y_train, X_val, y_val,
                            custom_params=params, seed=seed)
         preds = model.predict(X_test)
         all_preds.append(preds)
+        all_models.append(model)
         print(f"iters={model.best_iteration_}")
 
     ensemble_pred = np.mean(all_preds, axis=0)
-    return ensemble_pred, model
+    return ensemble_pred, all_models
 
 
 def feature_selection(model, feat_cols, threshold_pct=20):
@@ -860,7 +862,7 @@ def main():
         selected_feats = feature_selection(model_base, feat_cols, threshold_pct=20)
 
         # --- Multi-seed ensemble ---
-        ensemble_pred, last_model = train_multi_seed(
+        ensemble_pred, all_models = train_multi_seed(
             train[selected_feats], y_train,
             val[selected_feats], y_val,
             test[selected_feats],
@@ -868,6 +870,17 @@ def main():
             seeds=SEEDS[:args.seeds],
         )
         test['pred_v5'] = ensemble_pred
+        last_model = all_models[-1]
+
+        # --- Save trained models (for production inference) ---
+        for i, mdl in enumerate(all_models):
+            seed = SEEDS[:args.seeds][i]
+            model_path = os.path.join(results_dir, f'lgb_model_seed_{seed}.txt')
+            mdl.booster_.save_model(model_path)
+        # Save selected feature names
+        with open(os.path.join(results_dir, 'feature_names.json'), 'w') as f:
+            json.dump(selected_feats, f)
+        print(f"   💾 Saved {len(all_models)} models + feature names")
 
         # --- Evaluate ---
         metrics, ls_net, ls_vt, ls_dd, timestamps = evaluate_model(
