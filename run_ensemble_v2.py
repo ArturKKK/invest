@@ -232,22 +232,32 @@ def optimize_weights_grid(merged, pred_cols, actual_col, step=0.05):
 
     steps = np.arange(0, 1.001, step)
 
+    # Count combos for progress
+    combo_count = 0
+    total_combos = 0
+
     if n == 2:
+        total_combos = len(steps)
         for w0 in steps:
             w1 = round(1.0 - w0, 3)
             if w1 < -0.001:
                 continue
+            combo_count += 1
             train_df['_ens'] = w0 * train_df[pred_cols[0]] + w1 * train_df[pred_cols[1]]
             m = evaluate(train_df, '_ens', actual_col)
             if m and m['LS_Sharpe_net'] > best_sharpe:
                 best_sharpe = m['LS_Sharpe_net']
                 best_w = {pred_cols[0]: w0, pred_cols[1]: w1}
     elif n == 3:
-        for w0 in steps:
-            for w1 in np.arange(0, 1.001 - w0, step):
+        # Use coarser step for 3+ models
+        coarse = max(step, 0.1)
+        coarse_steps = np.arange(0, 1.001, coarse)
+        for w0 in coarse_steps:
+            for w1 in np.arange(0, 1.001 - w0, coarse):
                 w2 = round(1.0 - w0 - w1, 3)
                 if w2 < -0.001:
                     continue
+                combo_count += 1
                 train_df['_ens'] = (w0 * train_df[pred_cols[0]]
                                     + w1 * train_df[pred_cols[1]]
                                     + w2 * train_df[pred_cols[2]])
@@ -255,21 +265,12 @@ def optimize_weights_grid(merged, pred_cols, actual_col, step=0.05):
                 if m and m['LS_Sharpe_net'] > best_sharpe:
                     best_sharpe = m['LS_Sharpe_net']
                     best_w = {pred_cols[0]: w0, pred_cols[1]: w1, pred_cols[2]: w2}
-    elif n == 4:
-        for w0 in np.arange(0, 1.001, step):
-            for w1 in np.arange(0, 1.001 - w0, step):
-                for w2 in np.arange(0, 1.001 - w0 - w1, step):
-                    w3 = round(1.0 - w0 - w1 - w2, 3)
-                    if w3 < -0.001:
-                        continue
-                    train_df['_ens'] = (w0 * train_df[pred_cols[0]]
-                                        + w1 * train_df[pred_cols[1]]
-                                        + w2 * train_df[pred_cols[2]]
-                                        + w3 * train_df[pred_cols[3]])
-                    m = evaluate(train_df, '_ens', actual_col)
-                    if m and m['LS_Sharpe_net'] > best_sharpe:
-                        best_sharpe = m['LS_Sharpe_net']
-                        best_w = dict(zip(pred_cols, [w0, w1, w2, w3]))
+        print(f"      ({combo_count} combinations evaluated)")
+    elif n >= 4:
+        # For 4+ models: just try top-2 pairs + equal weight (grid too expensive)
+        print(f"      (4+ models: skipping full grid, using pairwise + equal weight)")
+        # Already covered by pairwise + equal weight in main()
+        best_w = {c: 1.0 / n for c in pred_cols}
     else:
         best_w = {c: 1.0 / n for c in pred_cols}
 
@@ -317,13 +318,12 @@ def main():
         'lgb_v5': (args.lgb, [
             'results_v5/test_predictions_v5.parquet',
         ], 'pred_v5'),
-        'hist_v1': (args.hist_old, [
-            'results_hist/test_predictions_hist.parquet',
-        ], 'pred_hist'),
-        'lgb_v4': (args.lgb_old, [
-            'results_v4/test_predictions_v4.parquet',
-        ], 'pred_ensemble'),
     }
+    # Only add v1 models if explicitly requested
+    if args.hist_old:
+        auto['hist_v1'] = (args.hist_old, [], 'pred_hist')
+    if args.lgb_old:
+        auto['lgb_v4'] = (args.lgb_old, [], 'pred_ensemble')
 
     dfs = {}
     for name, (explicit, defaults, guess_col) in auto.items():
