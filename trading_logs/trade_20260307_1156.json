@@ -1,0 +1,142 @@
+{
+  "timestamp": "2026-03-07T11:56:33.039242+00:00",
+  "mode": "signal",
+  "capital": 1000.0,
+  "risk_config": {
+    "n_long": 5,
+    "n_short": 5,
+    "vol_target": 0.015,
+    "vol_lookback": 48,
+    "kelly_frac": 0.3,
+    "dd_stop": -0.2,
+    "dd_resume": -0.08,
+    "confidence_threshold": 0.0,
+    "cost_per_ls_period": 0.00025,
+    "rebal_hours": 12,
+    "note": "Optimized: 12h rebal + 5 pos/side reduces turnover, net Sharpe +4.0 on 30d OOS"
+  },
+  "positions": [
+    {
+      "symbol": "LDO/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.4578
+    },
+    {
+      "symbol": "GALA/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.3953
+    },
+    {
+      "symbol": "AAVE/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.2671
+    },
+    {
+      "symbol": "SAND/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.248
+    },
+    {
+      "symbol": "CRV/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.1405
+    },
+    {
+      "symbol": "BAT/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -2.0494
+    },
+    {
+      "symbol": "FTM/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -2.0888
+    },
+    {
+      "symbol": "EGLD/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -2.1347
+    },
+    {
+      "symbol": "MKR/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -2.2172
+    },
+    {
+      "symbol": "MATIC/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -2.2763
+    }
+  ],
+  "state": {
+    "equity": 1000.0,
+    "peak": 1000.0,
+    "initial_capital": 1000.0,
+    "cycle_pnls": [],
+    "total_pnl": 0.0,
+    "n_cycles": 0
+  },
+  "signals_top5": [
+    {
+      "symbol": "LDO/USDT",
+      "pred_lgb": 1.4577754209468068,
+      "score": 1.4577754209468068
+    },
+    {
+      "symbol": "GALA/USDT",
+      "pred_lgb": 1.3952746834614806,
+      "score": 1.3952746834614806
+    },
+    {
+      "symbol": "AAVE/USDT",
+      "pred_lgb": 1.2671284450642153,
+      "score": 1.2671284450642153
+    },
+    {
+      "symbol": "SAND/USDT",
+      "pred_lgb": 1.2479513630348733,
+      "score": 1.2479513630348733
+    },
+    {
+      "symbol": "CRV/USDT",
+      "pred_lgb": 1.140536273190697,
+      "score": 1.140536273190697
+    }
+  ],
+  "signals_bot5": [
+    {
+      "symbol": "BAT/USDT",
+      "pred_lgb": -2.0493899620845992,
+      "score": -2.0493899620845992
+    },
+    {
+      "symbol": "FTM/USDT",
+      "pred_lgb": -2.0888387069629517,
+      "score": -2.0888387069629517
+    },
+    {
+      "symbol": "EGLD/USDT",
+      "pred_lgb": -2.134704497160808,
+      "score": -2.134704497160808
+    },
+    {
+      "symbol": "MKR/USDT",
+      "pred_lgb": -2.217188039799011,
+      "score": -2.217188039799011
+    },
+    {
+      "symbol": "MATIC/USDT",
+      "pred_lgb": -2.2762669073578436,
+      "score": -2.2762669073578436
+    }
+  ]
+}

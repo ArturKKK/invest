@@ -1,0 +1,142 @@
+{
+  "timestamp": "2026-03-07T11:53:29.265970+00:00",
+  "mode": "signal",
+  "capital": 1000.0,
+  "risk_config": {
+    "n_long": 5,
+    "n_short": 5,
+    "vol_target": 0.015,
+    "vol_lookback": 48,
+    "kelly_frac": 0.3,
+    "dd_stop": -0.2,
+    "dd_resume": -0.08,
+    "confidence_threshold": 0.0,
+    "cost_per_ls_period": 0.00025,
+    "rebal_hours": 12,
+    "note": "Optimized: 12h rebal + 5 pos/side reduces turnover, net Sharpe +4.0 on 30d OOS"
+  },
+  "positions": [
+    {
+      "symbol": "THETA/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.8709
+    },
+    {
+      "symbol": "MANA/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.767
+    },
+    {
+      "symbol": "SAND/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.3789
+    },
+    {
+      "symbol": "CHZ/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.371
+    },
+    {
+      "symbol": "LDO/USDT",
+      "side": "long",
+      "usd": 30.0,
+      "score": 1.3402
+    },
+    {
+      "symbol": "BAT/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -1.7492
+    },
+    {
+      "symbol": "FTM/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -1.8701
+    },
+    {
+      "symbol": "ICX/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -1.9204
+    },
+    {
+      "symbol": "MKR/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -1.9847
+    },
+    {
+      "symbol": "MATIC/USDT",
+      "side": "short",
+      "usd": 30.0,
+      "score": -2.0374
+    }
+  ],
+  "state": {
+    "equity": 1000.0,
+    "peak": 1000.0,
+    "initial_capital": 1000.0,
+    "cycle_pnls": [],
+    "total_pnl": 0.0,
+    "n_cycles": 0
+  },
+  "signals_top5": [
+    {
+      "symbol": "THETA/USDT",
+      "pred_lgb": 1.870897081905794,
+      "score": 1.870897081905794
+    },
+    {
+      "symbol": "MANA/USDT",
+      "pred_lgb": 1.766995796871547,
+      "score": 1.766995796871547
+    },
+    {
+      "symbol": "SAND/USDT",
+      "pred_lgb": 1.3788877559252497,
+      "score": 1.3788877559252497
+    },
+    {
+      "symbol": "CHZ/USDT",
+      "pred_lgb": 1.3710009496676863,
+      "score": 1.3710009496676863
+    },
+    {
+      "symbol": "LDO/USDT",
+      "pred_lgb": 1.3401676914908642,
+      "score": 1.3401676914908642
+    }
+  ],
+  "signals_bot5": [
+    {
+      "symbol": "BAT/USDT",
+      "pred_lgb": -1.7492256957377639,
+      "score": -1.7492256957377639
+    },
+    {
+      "symbol": "FTM/USDT",
+      "pred_lgb": -1.8700856271470225,
+      "score": -1.8700856271470225
+    },
+    {
+      "symbol": "ICX/USDT",
+      "pred_lgb": -1.920374669588555,
+      "score": -1.920374669588555
+    },
+    {
+      "symbol": "MKR/USDT",
+      "pred_lgb": -1.9846857912164033,
+      "score": -1.9846857912164033
+    },
+    {
+      "symbol": "MATIC/USDT",
+      "pred_lgb": -2.0374359517795546,
+      "score": -2.0374359517795546
+    }
+  ]
+}

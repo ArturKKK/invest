@@ -89,7 +89,7 @@ def main():
 
     # ── 3  models ─────────────────────────────────────────────────
     print("📡 Models …")
-    models = load_lgb_models(os.path.join(root, "results_v5"))
+    models = load_lgb_models(os.path.join(root, "results_v6"))
     if not models:
         print("❌ no models"); return
     mf = models[0].feature_name()

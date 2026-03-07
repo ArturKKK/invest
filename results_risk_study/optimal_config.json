@@ -3,11 +3,12 @@
   "n_short": 5,
   "vol_target": 0.015,
   "vol_lookback": 48,
-  "kelly_frac": 0.3,
+  "kelly_frac": 1.0,
   "dd_stop": -0.20,
   "dd_resume": -0.08,
   "confidence_threshold": 0.0,
   "cost_per_ls_period": 0.00025,
   "rebal_hours": 12,
-  "note": "Optimized: 12h rebal + 5 pos/side reduces turnover, net Sharpe +4.0 on 30d OOS"
+  "model_version": "v6",
+  "note": "v6: 12h target, kelly=1.0, Sharpe 2.11, +36% ann, MaxDD -5%"
 }

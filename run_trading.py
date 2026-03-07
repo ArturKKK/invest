@@ -101,6 +101,8 @@ UNRANKED_COLS = {
     'fng_value', 'fng_extreme_fear', 'fng_extreme_greed',
     'fng_ma7', 'fng_ma30', 'fng_momentum',
     'market_avg_funding', 'market_funding_skew',
+    # v6: binary features
+    'is_asian_session',
 }
 
 # Default risk config (overridden by optimal_config.json)
@@ -376,6 +378,61 @@ def build_features(df):
     df.drop(columns=['btc_close', 'eth_close', 'btc_r', 'cross_coin_dispersion'], inplace=True, errors='ignore')
 
     # Replace inf/nan
+    for col in df.select_dtypes(include=[np.number]).columns:
+        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+    df = df.fillna(0)
+
+    # v6: 12h-specific features
+    df = add_12h_features(df)
+
+    return df
+
+
+def add_12h_features(df):
+    """
+    v6-specific features optimized for 12h holding period.
+    """
+    for sym, grp in df.groupby('symbol'):
+        c = grp['close']
+        v = grp['volume']
+        idx = grp.index
+
+        r12 = c.pct_change(12)
+        r12_mean = r12.rolling(168).mean()
+        r12_std = r12.rolling(168).std() + 1e-10
+        df.loc[idx, 'mom_12h_zscore'] = (r12 - r12_mean) / r12_std
+
+        vwap_12 = (c * v).rolling(12).sum() / (v.rolling(12).sum() + 1e-10)
+        df.loc[idx, 'vwap_12h_dist'] = c / vwap_12 - 1
+
+        df.loc[idx, 'mom_3d'] = c.pct_change(72)
+        df.loc[idx, 'mom_7d'] = c.pct_change(168)
+
+        ret_12 = c.pct_change(12)
+        ret_12_prev = c.shift(12).pct_change(12)
+        df.loc[idx, 'mom_accel_12h'] = ret_12 - ret_12_prev
+
+        vol_12 = v.rolling(12).mean()
+        vol_48 = v.rolling(48).mean() + 1e-10
+        df.loc[idx, 'vol_trend_12_48'] = vol_12 / vol_48 - 1
+
+        hours = grp['timestamp'].dt.hour
+        df.loc[idx, 'is_asian_session'] = ((hours >= 0) & (hours < 12)).astype(float)
+
+        h12 = grp['high'].rolling(12).max()
+        l12 = grp['low'].rolling(12).min()
+        range12 = (h12 - l12) / (c + 1e-10)
+        range_avg = range12.rolling(168).mean() + 1e-10
+        df.loc[idx, 'range_expansion_12h'] = range12 / range_avg - 1
+
+    df['ret_12h_temp'] = df.groupby('symbol')['close'].transform(lambda x: x.pct_change(12))
+    df['ret_12h_cs_rank'] = df.groupby('timestamp')['ret_12h_temp'].rank(pct=True)
+    df.drop(columns=['ret_12h_temp'], inplace=True)
+
+    df['vol_12h_sum'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(12).sum())
+    df['vol_12h_cs_rank'] = df.groupby('timestamp')['vol_12h_sum'].rank(pct=True)
+    df.drop(columns=['vol_12h_sum'], inplace=True)
+
     for col in df.select_dtypes(include=[np.number]).columns:
         df[col] = df[col].replace([np.inf, -np.inf], np.nan)
     df = df.fillna(0)
