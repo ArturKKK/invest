@@ -1,7 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
 **Последнее обновление:** 2026-03-07  
-**Статус:** Phase 2 — v4 (LGB) + HIST + MASTER trained. HIST Rank IC=0.075 (2.6× LGB). Ensemble (2-model) Rank IC=0.082, LS Sharpe=4.12. MASTER script ready, waiting for cluster run. Long-only всё ещё не работает.
+**Статус:** Phase 3 — Eval bug FIXED. GRU temporal model + ensemble script + paper trading написаны. MASTER ≈ HIST (нет прироста), заменён на GRU. Rank IC 0.07+ (сильный сигнал). Ждём GRU на кластере.
 
 ---
 
@@ -36,27 +36,25 @@
 - **Rank ICIR = 0.5296**, ICIR = 0.3482
 - Val Rank IC = 0.0708 (best epoch 9/80, early stop at 24)
 - 502K params, embed(105→128) + concept(8) + cross_attn(2L,4H)
-- ⚠️ Standalone LS Sharpe = 14.85 (баг: nan MaxDD, inf LO) — метрика в 3D eval неправильная
-- Через flat eval: LS Sharpe = 3.71
+- ✅ Eval bug FIXED — теперь LS Sharpe считается по actual returns, не по ranks
 
-### HIST+LGB Ensemble ← ТЕКУЩИЙ ЛУЧШИЙ
-- **Rank IC = 0.0816, LS Sharpe = 4.12**
-- 50% HIST + 50% LGB (normalized)
+### MASTER Transformer (GPU, H100) ← НЕ ДАЛ ПРИРОСТА
+- Rank IC = 0.0738 (≈ HIST 0.0752, нет прироста)
+- Best epoch = 2 (мгновенное переобучение)
+- Вывод: архитектуры слишком похожи на HIST, заменён на GRU
 
-### MASTER Transformer (написан, ждёт запуска)
-- Архитектура: gated_feat → dynamic_routing(4 centroids) → inter_stock_attn(2L,4H) → market_modulation(FiLM) → head
-- Отличия от HIST: нет предопределённых категорий, market-guided modulation (BTC/ETH/vol → gamma,beta)
-- 3 loss: MSE(40%) + IC(40%) + RankLoss(20%)
-- Cosine LR schedule + warmup + early stopping
-- Auto-обнаружение LGB/HIST предсказаний для 3-model ensemble
-- Запуск: `python run_master_model.py --device cuda`
+### GRU Temporal Model (написан, ждёт запуска)
+- Архитектура: proj → BiGRU(2L) → temporal_attention → gate → head
+- Принципиально другой подход: temporal per-coin (не cross-sectional как HIST/MASTER)
+- Per-coin rolling z-score нормализация (не cross-sectional rank)
+- Должен дать ортогональный сигнал для ансамбля
+- Запуск: `python run_gru_model.py --device cuda`
 
 ### Что нужно дальше
-1. **Запустить MASTER на кластере** (GPU, H100)
-2. **Fix optuna** на кластере (pip install optuna в правильный Python)
-3. **Final 3-model ensemble** — MASTER + HIST + LightGBM
-4. **Fix HIST eval** — 3D evaluation даёт inf/nan
-5. Paper trading на OKX
+1. **Запустить GRU на кластере** (GPU, H100)
+2. **Запустить run_ensemble.py** — сравнить HIST+LGB+GRU с правильным eval
+3. **Paper trading** на OKX (run_paper_trading.py)
+4. Fix optuna на кластере
 
 ---
 
@@ -83,6 +81,9 @@ invest/
 ├── run_pipeline_v4.py             # v4 pipeline (HPO ICIR + advanced regime + multi-seed)
 ├── run_hist_model.py              # HIST transformer (PyTorch, cross-stock attention)
 ├── run_master_model.py            # MASTER transformer (market-guided, dynamic routing)
+├── run_gru_model.py               # GRU temporal model (per-coin sequence, orthogonal signal)
+├── run_ensemble.py                # Final multi-model ensemble evaluator
+├── run_paper_trading.py           # OKX paper trading (signal → execution)
 ├── requirements-cluster.txt       # Зависимости для кластера (CPU)
 ├── requirements-gpu.txt           # Зависимости для GPU (torch + всё остальное)
 ├── data/

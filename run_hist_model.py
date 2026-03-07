@@ -148,13 +148,14 @@ def cross_sectional_rank(df, feat_cols):
 # DATA PREPARATION (flat → 3D tensors)
 # ============================================================
 
-def prepare_cross_section_data(df, feat_cols, target_col):
+def prepare_cross_section_data(df, feat_cols, target_col, actual_return_col=None):
     """
     Convert flat DataFrame to cross-sectional format.
 
     Returns:
         X: dict {split: (T, N, F)} — features per timestamp
-        y: dict {split: (T, N)} — targets per timestamp
+        y: dict {split: (T, N)} — targets per timestamp (rank)
+        y_actual: dict {split: (T, N)} — actual returns for P&L eval
         masks: dict {split: (T, N)} — valid coin mask
         timestamps: dict {split: list}
         symbols: list of symbol names (sorted)
@@ -183,6 +184,7 @@ def prepare_cross_section_data(df, feat_cols, target_col):
 
         X = np.zeros((T, N, F), dtype=np.float32)
         y_arr = np.full((T, N), np.nan, dtype=np.float32)
+        y_actual_arr = np.full((T, N), np.nan, dtype=np.float32)
         mask = np.zeros((T, N), dtype=np.float32)
 
         # Vectorized fill
@@ -196,14 +198,17 @@ def prepare_cross_section_data(df, feat_cols, target_col):
             X[ti, si, i] = split_df[col].values.astype(np.float32)
 
         y_arr[ti, si] = split_df[target_col].values.astype(np.float32)
+        if actual_return_col and actual_return_col in split_df.columns:
+            y_actual_arr[ti, si] = split_df[actual_return_col].values.astype(np.float32)
         mask[ti, si] = 1.0
 
         # Replace NaN in X with 0
         X = np.nan_to_num(X, nan=0.0)
         y_arr = np.nan_to_num(y_arr, nan=0.0)
+        y_actual_arr = np.nan_to_num(y_actual_arr, nan=0.0)
 
         result[split_name] = {
-            'X': X, 'y': y_arr, 'mask': mask,
+            'X': X, 'y': y_arr, 'y_actual': y_actual_arr, 'mask': mask,
             'timestamps': timestamps,
         }
 
@@ -515,12 +520,14 @@ def build_model_and_train(data, concept_ids, args):
 # ============================================================
 
 def evaluate_hist_predictions(test_preds, test_targets, test_masks, test_timestamps,
-                               symbols, target_col_name, horizon_hours=4):
+                               symbols, target_col_name, horizon_hours=4,
+                               test_actual_rets=None):
     """
     Evaluate HIST predictions using same metrics as LightGBM pipeline.
-    test_preds: (T, N)
-    test_targets: (T, N)
+    test_preds: (T, N) — model predictions
+    test_targets: (T, N) — rank targets (for IC)
     test_masks: (T, N)
+    test_actual_rets: (T, N) or None — actual returns for P&L (fixes rank-as-return bug)
     """
     periods_per_day = 24 // horizon_hours
     periods_per_year = periods_per_day * 365
@@ -553,17 +560,24 @@ def evaluate_hist_predictions(test_preds, test_targets, test_masks, test_timesta
         ics.append(ic)
         rank_ics.append(ric)
 
-        # Sort by prediction (descending)
+        # Use actual returns for P&L (not rank targets!)
+        if test_actual_rets is not None:
+            act = test_actual_rets[t][m]
+            act_valid = act[valid]
+        else:
+            act_valid = av  # fallback to targets (may be ranks — old behavior)
+
+        # Sort by prediction (descending), compute P&L from actual returns
         order = np.argsort(-pv)
-        sorted_actual = av[order]
+        sorted_actual = act_valid[order]
 
         n_quintile = max(len(pv) // 5, 1)
         long_ret = sorted_actual[:n_quintile].mean()
         short_ret = sorted_actual[-n_quintile:].mean()
         ls_rets.append(long_ret - short_ret)
 
-        lo5_rets.append(sorted_actual[:5].mean())
-        lo10_rets.append(sorted_actual[:10].mean())
+        lo5_rets.append(sorted_actual[:min(5, len(sorted_actual))].mean())
+        lo10_rets.append(sorted_actual[:min(10, len(sorted_actual))].mean())
 
     rank_ics = np.array(rank_ics)
     ics = np.array(ics)
@@ -758,7 +772,7 @@ def main():
     # ========================================
     print(f"\n📐 Preparing cross-sectional data...")
     data, symbols, concept_ids = prepare_cross_section_data(
-        df, feat_cols, 'target_rank'
+        df, feat_cols, 'target_rank', actual_return_col=target_col
     )
 
     # ========================================
@@ -772,9 +786,12 @@ def main():
     # ========================================
     test_timestamps = data['test']['timestamps']
 
+    test_actual_rets = data['test']['y_actual']
+
     metrics = evaluate_hist_predictions(
         test_preds, test_targets, test_masks,
-        test_timestamps, symbols, target_col, HORIZON
+        test_timestamps, symbols, target_col, HORIZON,
+        test_actual_rets=test_actual_rets
     )
 
     print(f"\n   📈 HIST Test Results:")
@@ -859,7 +876,7 @@ def main():
                     'timestamp': ts,
                     'symbol': sym,
                     'pred_hist': float(test_preds[t_idx, s_idx]),
-                    f'target_ret_{HORIZON}h': float(test_targets[t_idx, s_idx]),
+                    f'target_ret_{HORIZON}h': float(test_actual_rets[t_idx, s_idx]),
                 })
 
     pred_df = pd.DataFrame(rows)

@@ -131,10 +131,12 @@ def cross_sectional_rank(df, feat_cols):
 # DATA PREPARATION
 # ============================================================
 
-def prepare_cross_section_data(df, feat_cols, target_col, market_feat_cols):
+def prepare_cross_section_data(df, feat_cols, target_col, market_feat_cols,
+                               actual_return_col=None):
     """
     Convert flat DataFrame to cross-sectional format.
     Also extracts market features as a separate tensor.
+    actual_return_col: if provided, also builds y_actual for proper P&L eval.
     """
     symbols = sorted(df['symbol'].unique())
     sym2idx = {s: i for i, s in enumerate(symbols)}
@@ -155,6 +157,7 @@ def prepare_cross_section_data(df, feat_cols, target_col, market_feat_cols):
 
         X = np.zeros((T, N, F), dtype=np.float32)
         y_arr = np.full((T, N), np.nan, dtype=np.float32)
+        y_actual_arr = np.full((T, N), np.nan, dtype=np.float32)
         mask = np.zeros((T, N), dtype=np.float32)
         market = np.zeros((T, M), dtype=np.float32)
 
@@ -168,6 +171,8 @@ def prepare_cross_section_data(df, feat_cols, target_col, market_feat_cols):
             X[ti, si, i] = split_df[col].values.astype(np.float32)
 
         y_arr[ti, si] = split_df[target_col].values.astype(np.float32)
+        if actual_return_col and actual_return_col in split_df.columns:
+            y_actual_arr[ti, si] = split_df[actual_return_col].values.astype(np.float32)
         mask[ti, si] = 1.0
 
         # Market features: take from BTC/USDT rows (or first available)
@@ -181,10 +186,11 @@ def prepare_cross_section_data(df, feat_cols, target_col, market_feat_cols):
 
         X = np.nan_to_num(X, nan=0.0)
         y_arr = np.nan_to_num(y_arr, nan=0.0)
+        y_actual_arr = np.nan_to_num(y_actual_arr, nan=0.0)
         market = np.nan_to_num(market, nan=0.0)
 
         result[split_name] = {
-            'X': X, 'y': y_arr, 'mask': mask,
+            'X': X, 'y': y_arr, 'y_actual': y_actual_arr, 'mask': mask,
             'market': market, 'timestamps': timestamps,
         }
 
@@ -575,8 +581,12 @@ def build_model_and_train(data, args):
 # EVALUATION
 # ============================================================
 
-def evaluate_predictions(test_preds, test_targets, test_masks, horizon_hours=4):
-    """Evaluate 3D predictions."""
+def evaluate_predictions(test_preds, test_targets, test_masks, horizon_hours=4,
+                         test_actual_rets=None):
+    """
+    Evaluate 3D predictions.
+    test_actual_rets: (T, N) actual returns for P&L (fixes rank-as-return bug).
+    """
     periods_per_day = 24 // horizon_hours
     periods_per_year = periods_per_day * 365
     T, N = test_preds.shape
@@ -600,8 +610,15 @@ def evaluate_predictions(test_preds, test_targets, test_masks, horizon_hours=4):
         ics.append(ic if not np.isnan(ic) else 0)
         rank_ics.append(ric if not np.isnan(ric) else 0)
 
+        # Use actual returns for P&L (not rank targets!)
+        if test_actual_rets is not None:
+            act = test_actual_rets[t][m]
+            act_valid = act[valid]
+        else:
+            act_valid = av  # fallback
+
         order = np.argsort(-pv)
-        sorted_actual = av[order]
+        sorted_actual = act_valid[order]
         n_q = max(len(pv) // 5, 1)
 
         ls_rets.append(sorted_actual[:n_q].mean() - sorted_actual[-n_q:].mean())
@@ -611,8 +628,8 @@ def evaluate_predictions(test_preds, test_targets, test_masks, horizon_hours=4):
     rank_ics = np.array(rank_ics)
     ics = np.array(ics)
     ls_rets = np.array(ls_rets)
-    lo5 = np.array(lo5_rets) - 0.0008
-    lo10 = np.array(lo10_rets) - 0.0008
+    lo5 = np.array(lo5_rets) - 0.0005  # commission (0.05%)
+    lo10 = np.array(lo10_rets) - 0.0005
 
     def sharpe(r, ppyr):
         if len(r) == 0 or r.std() < 1e-12:
@@ -651,9 +668,9 @@ def evaluate_predictions(test_preds, test_targets, test_masks, horizon_hours=4):
     return metrics
 
 
-def flatten_predictions(test_preds, test_targets, test_masks, test_timestamps,
+def flatten_predictions(test_preds, test_actual_rets, test_masks, test_timestamps,
                         symbols, target_col):
-    """Convert 3D predictions back to flat DataFrame."""
+    """Convert 3D predictions back to flat DataFrame (with actual returns)."""
     rows = []
     T, N = test_preds.shape
     for t_idx, ts in enumerate(test_timestamps):
@@ -663,7 +680,7 @@ def flatten_predictions(test_preds, test_targets, test_masks, test_timestamps,
                     'timestamp': ts,
                     'symbol': sym,
                     'pred_master': float(test_preds[t_idx, s_idx]),
-                    target_col: float(test_targets[t_idx, s_idx]),
+                    target_col: float(test_actual_rets[t_idx, s_idx]),
                 })
     return pd.DataFrame(rows)
 
@@ -827,7 +844,8 @@ def main():
     # ========================================
     print(f"\n📐 Preparing cross-sectional data...")
     data, symbols = prepare_cross_section_data(
-        df, feat_cols, 'target_rank', market_feat_cols
+        df, feat_cols, 'target_rank', market_feat_cols,
+        actual_return_col=target_col
     )
 
     # ========================================
@@ -840,8 +858,10 @@ def main():
     # 4. EVALUATE
     # ========================================
     test_timestamps = data['test']['timestamps']
+    test_actual_rets = data['test']['y_actual']
 
-    metrics = evaluate_predictions(test_preds, test_targets, test_masks, HORIZON)
+    metrics = evaluate_predictions(test_preds, test_targets, test_masks, HORIZON,
+                                   test_actual_rets=test_actual_rets)
 
     print(f"\n   📈 MASTER Test Results:")
     for k, v in metrics.items():
@@ -855,7 +875,7 @@ def main():
     # 5. MULTI-MODEL ENSEMBLE
     # ========================================
     master_flat = flatten_predictions(
-        test_preds, test_targets, test_masks,
+        test_preds, test_actual_rets, test_masks,
         test_timestamps, symbols, target_col
     )
 
