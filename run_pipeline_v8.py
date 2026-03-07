@@ -179,12 +179,15 @@ def add_cross_asset_features(df):
     disp.columns = ['timestamp', 'market_dispersion']
     btc_ts = btc_ts.merge(disp, on='timestamp', how='left')
 
-    merge_cols = [c for c in btc_ts.columns if c not in ['btc_close', 'eth_close',
-                  'open', 'high', 'low', 'close', 'volume', 'symbol'] and c in btc_ts.columns]
-    merge_cols = list(set(merge_cols))
+    # Columns we computed on btc_ts that we want to merge back
+    new_cols = [c for c in btc_ts.columns if c not in df.columns and c != 'timestamp']
+    # Also btc_close/eth_close which we added via merge earlier
+    new_cols += ['btc_close', 'eth_close']
+    merge_cols = ['timestamp'] + [c for c in new_cols if c in btc_ts.columns]
+    merge_cols = list(dict.fromkeys(merge_cols))  # dedupe, preserve order
 
-    df = df.drop(columns=[c for c in btc_ts.columns if c in df.columns
-                          and c != 'timestamp'], errors='ignore')
+    # Drop btc_close/eth_close from df (will re-merge with new features)
+    df = df.drop(columns=['btc_close', 'eth_close'], errors='ignore')
     df = df.merge(btc_ts[merge_cols], on='timestamp', how='left')
 
     # Per-coin: return vs BTC
