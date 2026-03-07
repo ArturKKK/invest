@@ -1,0 +1,19 @@
+# Core
+numpy
+pandas
+scipy
+pyarrow          # parquet support
+
+# ML
+lightgbm
+optuna           # hyperparameter optimization
+
+# Features
+ta               # technical analysis indicators
+
+# Data
+ccxt             # crypto exchange API
+
+# Optional (for HIST transformer, only needed on GPU cluster)
+# torch
+# torch-geometric
