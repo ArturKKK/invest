@@ -1,6 +1,12 @@
 # Data
 data/
+!data/sentiment/
 *.parquet
+!data/sentiment/*.parquet
+!results_v5/*.parquet
+
+# Source data scripts (not actual data)
+!src/data/
 
 # Results
 results/

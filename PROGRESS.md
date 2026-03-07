@@ -1,7 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
-**Последнее обновление:** 2026-03-07  
-**Статус:** Phase 3 — Eval bug FIXED. GRU temporal model + ensemble script + paper trading написаны. MASTER ≈ HIST (нет прироста), заменён на GRU. Rank IC 0.07+ (сильный сигнал). Ждём GRU на кластере.
+**Последнее обновление:** 2026-03-08  
+**Статус:** Phase 4 — Sentiment features добавлены (Fear&Greed, funding rates, OI, LS ratio). LGB v5 с sentiment + risk overlay (Sharpe raw 4.15, net 1.64). HIST v2 с sentiment-aware архитектурой написан. Лучший ансамбль: HIST+LGB (Sharpe 4.38).
 
 ---
 
@@ -43,18 +43,66 @@
 - Best epoch = 2 (мгновенное переобучение)
 - Вывод: архитектуры слишком похожи на HIST, заменён на GRU
 
-### GRU Temporal Model (написан, ждёт запуска)
+### GRU Temporal Model (ПРОВАЛ — слабый сигнал)
 - Архитектура: proj → BiGRU(2L) → temporal_attention → gate → head
 - Принципиально другой подход: temporal per-coin (не cross-sectional как HIST/MASTER)
 - Per-coin rolling z-score нормализация (не cross-sectional rank)
-- Должен дать ортогональный сигнал для ансамбля
-- Запуск: `python run_gru_model.py --device cuda`
+- **Результат: Rank IC = 0.035, LS Sharpe = 1.16, MaxDD = -68%**
+- Вывод: temporal per-coin подход значительно слабее cross-sectional. Убран из ансамбля.
+
+### Ensemble (HIST+LGB) ← ЛУЧШИЙ РЕЗУЛЬТАТ
+- **Rank IC = 0.078, LS Sharpe = 4.38, MaxDD = -55.2%**
+- HIST+LGB = лучшая комбинация (MASTER/GRU не помогают)
+- Все LS Sharpe — GROSS (без учёта комиссий)
+
+### Phase 4: Sentiment (NEW)
+
+#### Sentiment Data (OKX + Alternative.me)
+- **Fear & Greed Index:** 2953 дня (с 2018), mean=46.6
+- **Funding Rates (OKX):** 15,241 строк, 46 символов, ~3 мес. истории
+- **Open Interest (OKX):** 1,900 строк, 19 символов, ~100ч истории
+- **Long/Short Ratio (OKX):** 1,900 строк, 19 символов, ~100ч истории
+- ⚠️ Binance Futures API заблокирован из России → заменён на OKX public API
+- ⚠️ OKX даёт только ~3 мес. funding и ~100ч OI/LSR → используем synthetic proxies для backtest
+
+#### LGB v5 с Sentiment + Risk Overlay
+**Скрипт:** `run_pipeline_v5.py`
+- 143 фичи (98 оригинальных + 25 cross-asset + 20 sentiment/positioning)
+- **Sentiment фичи:** FNG (value, MA7, MA30, momentum, extreme zones), funding rates, synthetic proxies (reversal scores, volume surge, cross-coin dispersion, BTC beta)
+- **Risk overlay:** vol targeting (target=2%), drawdown stop (-25% DD circuit breaker, resume at -10%)
+- **Rolling walk-forward:** 3 окна (W1→2024-12, W2→2025-03, W3→latest)
+- **Реалистичная модель комиссий:** 0.03% blended maker + 0.01% slip + 0.005%/8h funding, 25% turnover
+
+**Результаты (single window, 2 seeds, quick test):**
+
+| Metric | Value |
+|--------|-------|
+| Rank IC | 0.028 |
+| Rank ICIR | 0.545 |
+| LS Sharpe raw | 4.15 |
+| **LS Sharpe net** | **1.64** |
+| LS Ann Return net | 64.5% |
+| LS MaxDD net | -70.9% |
+| LS VolTarget Sharpe | 1.86 |
+| LS DDStop Sharpe | 0.93 |
+| LS DDStop MaxDD | -37.9% |
+| Cost per period | 2.2 bps |
+
+**7/30 top фичей — sentiment:** fng_ma30 (#3), fng_momentum (#4), fng_ma7 (#6), btc_beta_48h (#12), btc_beta_168h (#16), reversal_24v168 (#19), fng_value (#28)
+
+#### HIST v2 с Sentiment-Aware Architecture (написан, ждёт запуска)
+**Скрипт:** `run_hist_v2.py`
+- Отдельная sentiment embedding ветка: `sent_embed(n_sent→sent_hidden→d_model)`
+- Gated fusion: `h = h_tech + gate * h_sent`
+- Разделение фичей: technical vs sentiment по keywords
+- Те же concept categories и cross-stock attention что в v1
+- Запуск: `python run_hist_v2.py --device cuda --epochs 80`
 
 ### Что нужно дальше
-1. **Запустить GRU на кластере** (GPU, H100)
-2. **Запустить run_ensemble.py** — сравнить HIST+LGB+GRU с правильным eval
-3. **Paper trading** на OKX (run_paper_trading.py)
-4. Fix optuna на кластере
+1. **Запустить v5 full** на кластере (3 walk-forward окна + HPO)
+2. **Запустить HIST v2** на GPU (H100)
+3. **Ensemble v5 LGB + HIST v2** — ожидаем Sharpe > 4.5
+4. **Paper trading** на OKX (run_paper_trading.py)
 
 ---
 
@@ -79,27 +127,32 @@ invest/
 ├── run_pipeline_v2.py             # v2 pipeline (cross-sectional rank, 3 модели + ensemble)
 ├── run_pipeline_v3.py             # v3 pipeline (multi-horizon + cross-asset + regime)
 ├── run_pipeline_v4.py             # v4 pipeline (HPO ICIR + advanced regime + multi-seed)
-├── run_hist_model.py              # HIST transformer (PyTorch, cross-stock attention)
-├── run_master_model.py            # MASTER transformer (market-guided, dynamic routing)
-├── run_gru_model.py               # GRU temporal model (per-coin sequence, orthogonal signal)
+├── run_pipeline_v5.py             # v5 pipeline (sentiment + risk overlay + walk-forward)
+├── run_hist_model.py              # HIST transformer v1 (cross-stock attention)
+├── run_hist_v2.py                 # HIST transformer v2 (sentiment-aware, gated fusion)
+├── run_master_model.py            # MASTER transformer (≈HIST, dropped)
+├── run_gru_model.py               # GRU temporal model (слабый, dropped)
 ├── run_ensemble.py                # Final multi-model ensemble evaluator
 ├── run_paper_trading.py           # OKX paper trading (signal → execution)
 ├── requirements-cluster.txt       # Зависимости для кластера (CPU)
 ├── requirements-gpu.txt           # Зависимости для GPU (torch + всё остальное)
 ├── data/
 │   ├── raw/                       # 50 parquet файлов, 65 MB
-│   └── features/                  # crypto_features_1h.parquet, 1.5 GB
+│   ├── features/                  # crypto_features_1h.parquet, 1.5 GB
+│   └── sentiment/                 # Fear&Greed, funding rates, OI, LSR (parquet)
 ├── results/                       # v1 results (плохие)
 ├── results_v2/                    # v2 results (хорошие)
-├── results_v3/                    # v3 results (cluster run) ← ТЕКУЩИЕ
+├── results_v3/                    # v3 results (cluster run)
 ├── results_v4/                    # v4 results (HPO + regime + ensemble)
+├── results_v5/                    # v5 results (sentiment + risk overlay)
 ├── results_hist/                  # HIST transformer results
 │   ├── all_results.json           # Метрики всех 4 моделей
 │   ├── feature_importance_v2.csv  # Важность фичей
 │   ├── test_predictions_v2.parquet# Предсказания на тест
 │   └── equity_curve_v2.parquet    # Кривая капитала
 ├── src/
-│   ├── data/download_crypto.py    # Загрузка данных с Binance
+│   ├── data/download_crypto.py    # Загрузка OHLCV данных с Binance
+│   ├── data/download_sentiment.py # Загрузка sentiment данных (OKX + Alternative.me)
 │   ├── features/build_features.py # Генерация 98 фичей
 │   ├── models/baseline_lgbm.py    # LightGBM baseline (v1)
 │   └── backtest/simple_backtest.py# Long-only Top-K бэктест
@@ -225,17 +278,16 @@ regime_btc_dd_720 (324), vol_price_corr_168h (323), ret_std_168h (316), btc_vol_
 - Best epoch: 9/80, early stop at 24
 - Val Rank IC: 0.0708
 
-**Test Results (flat eval, comparable to LGB):**
+**Test Results (eval bug fixed — actual returns для P&L):**
 
 | Model | Rank IC | LS Sharpe |
 |-------|---------|-----------|
-| HIST standalone | 0.0752 | 3.71 |
-| LGB ensemble | 0.0290 | 4.00 |
-| **HIST+LGB ensemble** | **0.0816** | **4.12** |
+| HIST standalone | 0.067 | 4.25 |
+| LGB v4 ensemble | 0.081 | 4.00 |
+| **HIST+LGB ensemble** | **0.078** | **4.38** |
 
-⚠️ HIST 3D eval даёт LS Sharpe=14.85 (баг: inf/nan). Flat eval = 3.71 — реальный результат.
-✅ HIST Rank IC = 0.0752 — в 2.6× лучше LightGBM! Трансформер работает.
-✅ Ensemble HIST+LGB = 0.0816 Rank IC — лучший результат проекта.
+✅ HIST Rank IC = 0.067 — cross-stock attention работает.
+✅ Ensemble HIST+LGB = Sharpe 4.38 ← лучший результат (GROSS, без комиссий).
 
 ---
 
@@ -359,26 +411,16 @@ python simple_backtest.py
 
 ## 5. Следующие шаги (приоритезированы)
 
-### Immediate (можно делать сейчас):
-1. **Market-neutral / short-side** — LS Sharpe = 4.21 говорит что сигнал есть, но нужен шорт. Варианты:
-   - OKX margin trading (шорт на споте)
-   - OKX futures (perps) — аккуратно, без leverage
-   - Dollar-neutral: long top 50% equal weight + short bottom 50%
-2. **Больше target horizons** — попробовать 12h и 24h вместо 4h (меньше шума, меньше комиссий)
-3. **HPO с Optuna** — LR, depth, leaves, regularization (100 trials, ~30 мин на M3 Pro)
-4. **Walk-forward expanding** — вместо одного split, двигать окно каждые 3 мес
+### Immediate:
+1. **Запустить v5 full** на кластере — 3 walk-forward окна + Optuna HPO (50 trials)
+2. **Запустить HIST v2** на GPU — sentiment-aware architecture (80 epochs, H100)
+3. **Ensemble v5 LGB + HIST v2** — ожидаем Sharpe net > 2.0
+4. **Исследовать 12h/24h rebalance** — меньше комиссий, возможно лучший net Sharpe
 
-### Phase 2: Deep Learning (нужен GPU/A100):
-5. **Установить Qlib** — `pip install pyqlib`
-6. **HIST model** — transformer для cross-asset relationships
-7. **MASTER model** — AAAI 2024 SOTA, market-guided transformer
-8. **Ensemble** — weighted combination MASTER + HIST + LightGBM
-
-### Phase 3: Production:
-9. **FinBERT sentiment** — добавить новостные фичи (CryptoPanic API)
-10. **On-chain data** — exchange flows, funding rates
-11. **Paper trading** — подключить к OKX sandbox
-12. **Live trading** — реальные деньги ($100-1K)
+### Phase 5: Production:
+5. **Paper trading** на OKX sandbox (run_paper_trading.py)
+6. **Live trading** с $100 deposit — maker orders для 0.02% комиссий
+7. **Streaming pipeline** — real-time data + inference каждые 4h
 
 ---
 
