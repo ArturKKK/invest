@@ -145,7 +145,7 @@ def add_sentiment_features(df, project_root):
 
         df['date'] = df['timestamp'].dt.date
         df = df.merge(fng_daily, on='date', how='left')
-        df['fng_value'] = df['fng_value'].fillna(method='ffill').fillna(50)
+        df['fng_value'] = df['fng_value'].ffill().fillna(50)
 
         df['fng_extreme_fear'] = (df['fng_value'] < 25).astype(float)
         df['fng_extreme_greed'] = (df['fng_value'] > 75).astype(float)
