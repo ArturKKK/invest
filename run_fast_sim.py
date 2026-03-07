@@ -37,7 +37,7 @@ def main():
     ap.add_argument("--capital", type=float, default=1000.0)
     ap.add_argument("--config",  type=str,   default=None)
     ap.add_argument("--model-dir", type=str, default=None,
-                    help="Model directory (default: results_v7, fallback results_v6)")
+                    help="Model directory (default: results_v8 > results_v7 > results_v6)")
     ap.add_argument("--rebal",   type=int,   default=12,
                     help="Rebalance interval in hours (default: 12)")
     ap.add_argument("--npos",    type=int,   default=None,
@@ -93,8 +93,8 @@ def main():
     print("📡 Models …")
     model_dir = args.model_dir
     if not model_dir:
-        # Try v7 first, fallback to v6
-        for d in ["results_v7", "results_v6"]:
+        # Try v8 first, fallback to v7, v6
+        for d in ["results_v8", "results_v7", "results_v6"]:
             p = os.path.join(root, d)
             if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
                 model_dir = p; break

@@ -16,10 +16,11 @@ urllib3.disable_warnings()
 # === CONFIG ===
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'raw')
 TIMEFRAME = '1h'
-SINCE = '2021-01-01T00:00:00Z'  # Start date
+SINCE = '2017-01-01T00:00:00Z'  # Start date — go as far back as possible
 LIMIT = 1000  # Binance max per request
 
 # Top coins by liquidity (USDT pairs on Binance)
+# Many coins only have data from 2019-2023 — that's fine, download will get what's available
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
     'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT',
@@ -95,13 +96,34 @@ def main():
         safe_name = symbol.replace('/', '_')
         filepath = os.path.join(DATA_DIR, f'{safe_name}_{TIMEFRAME}.parquet')
 
-        # Skip if already downloaded
+        # If file exists, check if we need to extend backward
         if os.path.exists(filepath):
             existing = pd.read_parquet(filepath)
-            print(f"  ✓ {symbol}: already exists ({len(existing)} rows)")
-            total_rows += len(existing)
-            downloaded += 1
-            continue
+            existing_start = existing['timestamp'].min()
+            target_start = pd.Timestamp(SINCE, tz='UTC')
+            if existing_start <= target_start + pd.Timedelta(hours=24):
+                # Already have data from target start date, skip
+                print(f"  ✓ {symbol}: already complete ({len(existing)} rows, from {existing_start})")
+                total_rows += len(existing)
+                downloaded += 1
+                continue
+            else:
+                # Need to fetch older data and merge
+                print(f"  ↻ {symbol}: extending backward ({existing_start} → {SINCE})")
+                old_df = fetch_all_ohlcv(exchange, symbol, TIMEFRAME, since_ts)
+                if not old_df.empty:
+                    # Merge old and existing, dedup
+                    combined = pd.concat([old_df, existing], ignore_index=True)
+                    combined = combined.drop_duplicates(subset='timestamp').sort_values('timestamp').reset_index(drop=True)
+                    combined.to_parquet(filepath, index=False)
+                    total_rows += len(combined)
+                    downloaded += 1
+                    print(f"  ✓ {symbol}: extended to {len(combined)} rows ({combined['timestamp'].min()} → {combined['timestamp'].max()})")
+                    continue
+                else:
+                    total_rows += len(existing)
+                    downloaded += 1
+                    continue
 
         df = fetch_all_ohlcv(exchange, symbol, TIMEFRAME, since_ts)
 
