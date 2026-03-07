@@ -32,8 +32,11 @@ Usage:
   # Paper trading (single cycle):
   python run_trading.py --mode paper --capital 1000
 
-  # Live continuous (runs every 4h):
+  # Live continuous (rebalances every 12h by default):
   python run_trading.py --mode live --capital 500 --loop
+
+  # Custom rebalance interval and position count:
+  python run_trading.py --mode sim --capital 1000 --loop --rebal 12 --npos 5
 
   # Override risk params:
   python run_trading.py --mode paper --vol-target 0.01 --kelly 0.3
@@ -840,6 +843,10 @@ def main():
     parser.add_argument('--capital', type=float, default=1000.0)
     parser.add_argument('--loop', action='store_true')
     parser.add_argument('--hours', type=int, default=800, help='Hours of history')
+    parser.add_argument('--rebal', type=int, default=12,
+                        help='Rebalance interval in hours (default: 12)')
+    parser.add_argument('--npos', type=int, default=None,
+                        help='Positions per side (overrides config)')
     parser.add_argument('--vol-target', type=float, default=None)
     parser.add_argument('--kelly', type=float, default=None)
     parser.add_argument('--config', type=str, default=None, help='Path to risk config JSON')
@@ -868,6 +875,11 @@ def main():
         risk_cfg['vol_target'] = args.vol_target
     if args.kelly is not None:
         risk_cfg['kelly_frac'] = args.kelly
+    if args.npos is not None:
+        risk_cfg['n_long'] = args.npos
+        risk_cfg['n_short'] = args.npos
+
+    rebal_hours = args.rebal
 
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
@@ -889,6 +901,8 @@ def main():
     print(f"  Risk: kelly={risk_cfg['kelly_frac']:.0%}, "
           f"vol_target={risk_cfg['vol_target']*100:.1f}%, "
           f"DD_stop={risk_cfg['dd_stop']*100:.0f}%")
+    print(f"  Rebalance: every {rebal_hours}h  |  "
+          f"N={risk_cfg['n_long']}L+{risk_cfg['n_short']}S")
     print("=" * 70)
 
     # Init exchange
@@ -1016,7 +1030,7 @@ def main():
 
     # Run
     if args.loop:
-        print(f"\n🔄 Continuous mode (every {HORIZON}h)...")
+        print(f"\n🔄 Continuous mode (every {rebal_hours}h)...")
         while True:
             try:
                 run_cycle()
@@ -1026,12 +1040,12 @@ def main():
                 traceback.print_exc()
 
             now = datetime.now(timezone.utc)
-            # Align to next HORIZON-hour boundary + 5min
+            # Align to next rebal_hours boundary + 5min
             next_h = now.hour
-            next_h = ((next_h // HORIZON) + 1) * HORIZON
+            next_h = ((next_h // rebal_hours) + 1) * rebal_hours
             next_time = now.replace(hour=next_h % 24, minute=5, second=0, microsecond=0)
             if next_time <= now:
-                next_time += timedelta(hours=HORIZON)
+                next_time += timedelta(hours=rebal_hours)
 
             sleep = (next_time - now).total_seconds()
             print(f"\n   ⏰ Next: {next_time.strftime('%H:%M UTC')} ({sleep/60:.0f} min)")
