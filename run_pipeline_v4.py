@@ -271,7 +271,9 @@ def run_optuna_hpo(X_train, y_train, X_val, y_val, val_dates, n_trials=50):
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
     except ImportError:
-        print("   ⚠️  Optuna not installed, using default params")
+        print("   ⚠️  Optuna not installed in current Python!")
+        print(f"   Python: {sys.executable}")
+        print(f"   Fix: {sys.executable} -m pip install optuna")
         return None
 
     print(f"   🔍 Running Optuna HPO ({n_trials} trials, objective=Rank_ICIR)...")

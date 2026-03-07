@@ -27,3 +27,4 @@ build/
 # Secrets
 .env
 *.key
+data.tar.gz

@@ -1,7 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
 **Последнее обновление:** 2026-03-07  
-**Статус:** Phase 1 — v3 trained on cluster. v4 + HIST ready to run. LS Sharpe ~3.8, Long-only needs regime fix.
+**Статус:** Phase 2 — v4 (LGB) + HIST + MASTER trained. HIST Rank IC=0.075 (2.6× LGB). Ensemble (2-model) Rank IC=0.082, LS Sharpe=4.12. MASTER script ready, waiting for cluster run. Long-only всё ещё не работает.
 
 ---
 
@@ -20,17 +20,43 @@
 ### Baseline v3 (CLUSTER RUN)
 - **Best horizon: 4h** (LS Sharpe = 3.82)
 - Rank IC = 0.0287, ICIR = 0.3366, Rank ICIR = 0.5789
-- 12h: LS Sharpe 2.01, 24h: LS Sharpe 0.78
 - Cross-asset фичи работают (btc_vol_24h в Top-4)
 - Regime filter (72h MA) бесполезен: 49.9% ON = монетка
-- Optuna не запустился (не был установлен) — теперь установлен
-- Long-Only = -100% (все ещё катастрофа)
+
+### v4 LightGBM (CLUSTER RUN) ←
+- **LS Sharpe = 4.00** (5-seed ensemble, 94 features)
+- Rank IC = 0.0290, ICIR = 0.3535, Rank ICIR = 0.5552
+- Feature selection 118 → 94 (+0.05 LS Sharpe)
+- ⚠️ Optuna HPO не запустился (Python 3.11 на кластере не видит optuna)
+- Advanced regime ХУЖЕ v3 для LO: $2.21 vs $14.05 (v3 regime)
+- breadth_pct_positive — топ фича (#1), regime_btc_dd_720 тоже важна
+
+### HIST Transformer (GPU, H100) ← ЛУЧШИЙ
+- **Rank IC = 0.0752** (2.6× лучше LightGBM!)
+- **Rank ICIR = 0.5296**, ICIR = 0.3482
+- Val Rank IC = 0.0708 (best epoch 9/80, early stop at 24)
+- 502K params, embed(105→128) + concept(8) + cross_attn(2L,4H)
+- ⚠️ Standalone LS Sharpe = 14.85 (баг: nan MaxDD, inf LO) — метрика в 3D eval неправильная
+- Через flat eval: LS Sharpe = 3.71
+
+### HIST+LGB Ensemble ← ТЕКУЩИЙ ЛУЧШИЙ
+- **Rank IC = 0.0816, LS Sharpe = 4.12**
+- 50% HIST + 50% LGB (normalized)
+
+### MASTER Transformer (написан, ждёт запуска)
+- Архитектура: gated_feat → dynamic_routing(4 centroids) → inter_stock_attn(2L,4H) → market_modulation(FiLM) → head
+- Отличия от HIST: нет предопределённых категорий, market-guided modulation (BTC/ETH/vol → gamma,beta)
+- 3 loss: MSE(40%) + IC(40%) + RankLoss(20%)
+- Cosine LR schedule + warmup + early stopping
+- Auto-обнаружение LGB/HIST предсказаний для 3-model ensemble
+- Запуск: `python run_master_model.py --device cuda`
 
 ### Что нужно дальше
-1. **v4**: HPO (ICIR objective) + advanced regime (composite 5-factor) + multi-seed ensemble
-2. **HIST**: трансформер с cross-stock attention на A100 GPU
-3. **Ensemble**: HIST + LightGBM → финальная модель
-4. Paper trading на OKX
+1. **Запустить MASTER на кластере** (GPU, H100)
+2. **Fix optuna** на кластере (pip install optuna в правильный Python)
+3. **Final 3-model ensemble** — MASTER + HIST + LightGBM
+4. **Fix HIST eval** — 3D evaluation даёт inf/nan
+5. Paper trading на OKX
 
 ---
 
@@ -56,6 +82,7 @@ invest/
 ├── run_pipeline_v3.py             # v3 pipeline (multi-horizon + cross-asset + regime)
 ├── run_pipeline_v4.py             # v4 pipeline (HPO ICIR + advanced regime + multi-seed)
 ├── run_hist_model.py              # HIST transformer (PyTorch, cross-stock attention)
+├── run_master_model.py            # MASTER transformer (market-guided, dynamic routing)
 ├── requirements-cluster.txt       # Зависимости для кластера (CPU)
 ├── requirements-gpu.txt           # Зависимости для GPU (torch + всё остальное)
 ├── data/
@@ -158,46 +185,56 @@ gk_vol_168h, macd_signal, ret_skew_168h, ret_sharpe_168h, ret_std_168h,
 ret_kurt_168h, atr_48, gk_vol_48h, vol_price_corr_48h
 ```
 
-### 🔄 v4 готова к запуску
+### ✅ v4 обучена на кластере
 **Скрипт:** `run_pipeline_v4.py`
 
-**Улучшения v4 vs v3:**
-1. **Optuna HPO с ICIR objective** — оптимизируем стабильность сигнала, не силу
-2. **Advanced multi-factor regime** (5 сигналов):
-   - BTC vs 720h (30d) MA
-   - Slope 720h MA (тренд растёт?)
-   - Market breadth (>50% монет в плюсе за 24h)
-   - BTC drawdown от 30d high (< -15% = crash)
-   - BTC vol regime (< 2× медиана)
-3. **Dynamic position sizing** (≥0.8 → 100%, ≥0.6 → 60%, ≥0.4 → 25%, <0.4 → 0%)
-4. **Multi-seed ensemble** (5 seeds, avg predictions)
-5. **Feature selection** (drop bottom 20% by importance)
-6. **Purged walk-forward** (48h gap between splits)
-7. **Score-weighted portfolio** (softmax weights, не equal-weight)
+**Результаты (сравнительная таблица):**
 
-**Запуск:**
-```bash
-python run_pipeline_v4.py --hpo-trials 50          # ~15-30 мин
-python run_pipeline_v4.py --hpo-trials 100         # ~30-60 мин
-python run_pipeline_v4.py --skip-hpo               # быстрый тест без HPO
+| Model | Rank IC | ICIR | Rank ICIR | LS Sharpe | LS Ann Ret | LS MaxDD |
+|-------|---------|------|-----------|-----------|------------|----------|
+| baseline | 0.0285 | 0.347 | 0.550 | 3.89 | 155% | -57.8% |
+| feat_selected (94 feat) | 0.0291 | 0.358 | 0.564 | 3.94 | 158% | -55.9% |
+| **ensemble (5 seeds)** | **0.0290** | **0.354** | **0.555** | **4.00** | **159%** | **-56.3%** |
+
+**Regime comparison (Long-Only Top-5):**
+| Strategy | Sharpe | Final $ |
+|----------|--------|---------|
+| No filter | -2.00 | $0.11 |
+| v3 regime (BTC 72h MA) | -1.69 | $14.05 |
+| v4 regime (composite) | -2.41 | $2.21 |
+
+⚠️ v4 composite regime ХУЖЕ v3 simple regime. Слишком агрессивный фильтр.
+⚠️ Optuna HPO skipped — optuna не найден в Python 3.11 на кластере.
+
+**Regime Breakdown:** Full 38.6%, Partial60 7.7%, Partial25 19.2%, Out 34.5%
+
+**Top 10 фичей (v4):**
+```
+breadth_pct_positive (607), close_ma720_ratio (477), close_ma24_ratio (457),
+ret_sharpe_168h (427), close_ma336_ratio (398), ret_sharpe_24h (330),
+regime_btc_dd_720 (324), vol_price_corr_168h (323), ret_std_168h (316), btc_vol_24h (307)
 ```
 
-### 🔄 HIST Transformer готов к запуску
+### ✅ HIST Transformer обучен на H100
 **Скрипт:** `run_hist_model.py`
 
-**Архитектура (adapted from Xu et al., KDD 2021):**
-1. Feature Embedding: MLP(109 → 128)
-2. Concept Attention: 8 crypto категорий (BTC, L1, DeFi, Gaming, L2, Infra, Meme, Other)
-3. Cross-Stock Self-Attention: 2 layers, 4 heads — учит зависимости между 50 монетами
-4. Prediction Head: MLP → score per coin
-5. Loss: 0.5×MSE + 0.5×IC_loss (дифференцируемая корреляция)
+**Архитектура:**
+- 502K params, embed(105→128) + concept(8 crypto categories) + cross_attn(2L,4H) + head
+- Loss: 0.5×MSE + 0.5×IC_loss
+- Best epoch: 9/80, early stop at 24
+- Val Rank IC: 0.0708
 
-**Запуск (нужен GPU):**
-```bash
-pip install -r requirements-gpu.txt
-python run_hist_model.py --device cuda --epochs 80               # ~2-5 мин на A100
-python run_hist_model.py --lgb-preds results_v4/test_predictions_v4.parquet  # + ensemble
-```
+**Test Results (flat eval, comparable to LGB):**
+
+| Model | Rank IC | LS Sharpe |
+|-------|---------|-----------|
+| HIST standalone | 0.0752 | 3.71 |
+| LGB ensemble | 0.0290 | 4.00 |
+| **HIST+LGB ensemble** | **0.0816** | **4.12** |
+
+⚠️ HIST 3D eval даёт LS Sharpe=14.85 (баг: inf/nan). Flat eval = 3.71 — реальный результат.
+✅ HIST Rank IC = 0.0752 — в 2.6× лучше LightGBM! Трансформер работает.
+✅ Ensemble HIST+LGB = 0.0816 Rank IC — лучший результат проекта.
 
 ---
 
