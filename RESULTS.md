@@ -1,4 +1,4 @@
-# Результаты проекта invest — 8 марта 2026
+# Результаты проекта invest — 9 марта 2026
 
 ## Текущее состояние
 
@@ -10,10 +10,10 @@
 | LGB v5 | 50 крипто, 1h OHLCV, 143 фичи, target_ret_4h | train→2024-06, test 2025+ | ✅ обучена на кластере |
 | HIST v1 | transformer, тот же датасет | test 2025+ | ✅ обучена на кластере |
 | HIST v2 | sentiment-aware | test 2025+ | ✅ обучена на кластере |
-| **LGB v6** | **12h target + 10 новых фич**, 121 selected features | train→2024-06, test 2025+ | **✅ в ансамбле** |
-| LGB v7 | blended target + HPO + 8 новых фич, 127 selected features | train→2024-06, test 2025+ | ✅ в ансамбле |
+| **LGB v6** | **12h target + 10 новых фич**, 121 selected features, **без news** | train→2024-06, test 2025+ | **✅ в ансамбле** |
+| **LGB v7** | blended target + HPO + 8 новых фич, 127 selected features, **без news** | train→2024-06, test 2025+ | **✅ в ансамбле** |
 | LGB v8 | 2017+ данные (8 лет), 5 purged WF windows, per-window HPO, ensemble FS, 122 features | train→2024-07, test 2025+ | ❌ хуже v6 |
-| **CatBoost** | **ordered boosting**, 122 selected features, 12h target, same pipeline as v6 | 3 WF windows, HPO 50 trials | **✅ в ансамбле** |
+| **CatBoost** | **ordered boosting**, 130 selected features (8 news), 12h target | 3 WF windows, HPO 50 trials | **✅ в ансамбле** |
 
 ---
 
@@ -90,7 +90,7 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 |------------|---------------|-------|
 | HIST v1 + LGB v5 | 2.93 | -56.5% |
 
-### CatBoost (3 WF windows, 12h target, HPO 50 trials, кластер)
+### CatBoost без news (3 WF windows, 12h target, HPO 50 trials, кластер)
 | Метрика | W1 (→2024-12) | W2 (→2025-03) | W3 (→latest) | **AVG** |
 |---------|:---:|:---:|:---:|:---:|
 | Rank IC | 0.0324 | 0.0266 | 0.0300 | **0.0297** |
@@ -99,9 +99,27 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 | DDStop Sharpe | 1.04 | 1.15 | 1.01 | **1.07** |
 | DDStop MaxDD | -53.5% | -39.3% | -73.3% | **-55.4%** |
 
-> CatBoost standalone слабее LGB (Sharpe 0.95 vs 1.12), но Rank ICIR идентичен (0.41).
-> **Ценность** — в декорреляции: ordered boosting ошибается в других местах, чем leaf-wise LGB → ансамбль сильнее.
-> Top features другие: `close_ma336_ratio` #1 (у LGB — `fng_ma30`), `vol_12h_cs_rank` #2 → дополняет LGB.
+### CatBoost с news (3 WF windows, GPU cluster, 130 features — 8 news)
+| Метрика | W1 (→2024-12) | W2 (→2025-03) | W3 (→latest) | **AVG** |
+|---------|:---:|:---:|:---:|:---:|
+| Rank IC | — | — | — | — |
+| Rank ICIR | 0.3464 | 0.3687 | 0.3912 | **0.3688** |
+| LS Sharpe net | 0.99 | 0.92 | 1.29 | **1.07** |
+| DDStop Sharpe | 0.98 | 1.57 | **1.97** | **1.51** |
+| DDStop MaxDD | -36.7% | -34.5% | **-42.7%** | **-38.0%** |
+
+> **News помогли CatBoost**: DDStop Sharpe 1.07→1.51 (+41%), MaxDD -55%→-38%.
+> News features: `news_count_1h/24h/7d`, `news_sentiment_1h/7d`, `news_sentiment_momentum`, `market_news_count_24h`, `market_news_sentiment_24h`.
+
+### News A/B тест — pipeline бэктест
+| Модель | Без news (DDStop) | С news (DDStop) | Δ | Вердикт |
+|--------|:---:|:---:|:---:|:---:|
+| LGB v6 | **1.81** | 0.96 | -47% | ❌ News вредят |
+| LGB v7 | **1.88** | 1.20 | -36% | ❌ News вредят |
+| CatBoost | 1.07 | **1.51** | +41% | ✅ News помогают |
+
+> **Вывод**: LGB (leaf-wise) не умеет использовать шумные news фичи — переоценивает их важность. CatBoost (ordered boosting) лучше справляется с шумом.
+> **Оптимальный микс**: LGB v6 (без news) + LGB v7 (без news) + CatBoost (с news) → каждая модель использует свой набор фичей через `feature_names.json`.
 
 HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит оптимум)
 
@@ -143,7 +161,7 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 
 > **Обновлённые результаты** (8 марта 2026, новое 60d окно). v7 лидирует по Sharpe, v6 — по MaxDD. v8 (8 лет данных) — худший по всем метрикам. **v6 остаётся основной моделью** (лучший баланс доходность/риск).
 
-### 🏆 Ensemble v6+v7 + leverage (финальные результаты, 60d, $500)
+### 🏆 Ensemble v6+v7 + leverage (старые результаты, 60d, $500, 8 марта)
 
 | Config | Rebal | Lev | Edge | Return | Sharpe | WR | MaxDD | Calmar | Costs |
 |--------|-------|-----|------|--------|--------|-----|-------|--------|-------|
@@ -157,24 +175,50 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 | ens 5x 24h boost | 24h | 5x | boost | +46.4% | 5.21 | 71% | -26.9% | 10.49 | 16.9% |
 | 🏆 **ens 3x 24h boost +CB** | **24h** | **3x** | **boost** | **+37.2%** | **8.04** | **67%** | **-18.7%** | **12.08** | **10.5%** |
 
-> **🔥 Edge-boost + CatBoost = новый чемпион!**
-> - Edge-boost: weight = 1 + min(edge/P75, 3) → высоко-edge позиции получают больше капитала
-> - CatBoost добавлен в ансамбль: LGB v6 (5) + LGB v7 (5) + CatBoost (5) = **15 моделей**
+> ⚠️ **Sharpe 8.04 измерен на коротком 60d окне с 3x leverage.** На полном 365d тесте тот же конфиг даёт Sharpe 4.55 (см. ниже). Короткое окно попало на отличный участок рынка → завышенная оценка.
+
+---
+
+### 🔥 News A/B тест — Fast Sim (9 марта 2026, 365d, 1x, 12h, edge-boost, min-conf=0.85)
+
+| Конфиг | Sharpe | MaxDD | WR | PF | Return | Calmar |
+|--------|--------|-------|-----|------|--------|--------|
+| A: все без news | 2.57 | -9.3% | 55% | 1.30 | +9.8% | 1.05 |
+| B: все с news | 2.76 | -8.9% | 54% | 1.32 | +9.7% | 1.08 |
+| 🏆 **C: LGB без news + CB с news** | **3.77** | **-5.1%** | **63%** | **1.46** | **+15.1%** | **2.96** |
+| D: LGB с news + CB без news | 2.12 | -8.4% | 50% | 1.24 | +6.5% | 0.77 |
+
+> **Конфиг C (текущий) = лучший.** Sharpe в 1.5x выше следующего, MaxDD в 1.7x ниже.
+> News вредят LGB, но помогают CatBoost. Гибридный микс оптимален.
+
+---
+
+### 📊 Полная сетка Fast Sim (9 марта 2026, LGB без news + CB с news)
+
+| # | Период | Lev | Rebal | min-conf | Return | Sharpe | WR | PF | MaxDD | Calmar | Trades | Costs |
+|---|--------|-----|-------|----------|--------|--------|-----|------|-------|--------|--------|-------|
+| 1 | 60d | 3x | 24h | — | +21.7% | 2.03 | 62% | 1.33 | -21.7% | 6.10 | 486 | 10.8% |
+| 2 | 60d | 3x | 24h | 0.85 | +1.2% | 0.73 | 62% | 1.12 | -18.1% | 0.41 | 282 | 11.2% |
+| 3 | 60d | 1x | 12h | 0.85 | +6.7% | 2.23 | 66% | 1.25 | -5.6% | 7.26 | 669 | 6.6% |
+| 4 | 60d | 1x | 12h | — | +8.3% | 2.69 | 60% | 1.30 | -6.5% | 7.78 | 1128 | 4.7% |
+| 5 | **365d** | **1x** | **12h** | **0.85** | **+15.1%** | **3.77** | **63%** | **1.46** | **-5.1%** | **2.96** | **685** | **7.0%** |
+| 6 | 🏆 **365d** | **1x** | **12h** | **—** | **+21.3%** | **6.61** | **61%** | **1.86** | **-5.4%** | **3.95** | **1140** | **5.1%** |
+| 7 | 365d | 3x | 24h | — | +48.7% | 4.55 | 65% | 1.85 | -18.1% | 2.70 | 582 | 12.2% |
+
+> **Ключевые выводы:**
+> 1. 🏆 **Лучший конфиг: 365d, 1x, 12h, без min-conf** — Sharpe 6.61, PF 1.86, MaxDD -5.4%
+> 2. **min-conf 0.85 вредит на 365d**: Sharpe 6.61→3.77 (-43%), Return 21.3%→15.1%, PF 1.86→1.46. Фильтр выкидывает прибыльные сделки.
+> 3. **60d vs 365d**: 60d = зависит от конкретного окна, нестабильно. 365d = надёжная оценка.
+> 4. **Leverage 3x** увеличивает return (21→49%) но MaxDD растёт (5→18%) — risk/reward ухудшается.
+> 5. **Sharpe 8.04 (старый) vs 6.61 (новый)**: модели не ухудшились! Разница: 60d cherry-pick vs 365d full test + добавление CatBoost с news.
 >
-> **Эволюция ансамбля (3x 24h boost):**
-> | Ансамбль | Sharpe | WR | PF | Return | MaxDD |
-> |----------|--------|-----|-----|--------|-------|
-> | v6+v7 (10 моделей) | 5.93 | 70% | 2.17 | +31.2% | -15.2% |
-> | **v6+v7+CB (15 моделей)** | **8.04** | **67%** | **2.85** | **+37.2%** | **-18.7%** |
-> | Δ | **+36%** | -3pp | **+31%** | **+19%** | -3.5pp |
->
-> **Ключевые открытия:**
-> 1. **CatBoost декорреляция**: +36% Sharpe, +31% PF — разные алгоритмы ошибаются в разных местах
-> 2. **Edge-boost sizing**: Sharpe 2.88→8.04 (от baseline), PF 1.47→2.85
-> 3. **24h ребалансировка** оптимальна для leverage (costs -35%)
-> 4. **3x = optimal leverage**: $500→$686 за 60d
-> 5. **WR 67% vs 70%**: CatBoost слегка снизил WR, но avg win вырос ($17.55 vs loss $12.33)
-> 6. **Adaptive rebalance (P90 trigger) не помогает**: costs +130%
+> **Почему Sharpe 8 → 6.61 → 3.77:**
+> | Фактор | Sharpe | Причина |
+> |--------|--------|----------|
+> | 8.04 | 60d, 3x lev, 24h, старые CatBoost без news | Короткое удачное окно + leverage |
+> | 6.61 | 365d, 1x, 12h, без min-conf, CB с news | Полный год — реалистичная оценка |
+> | 4.55 | 365d, 3x, 24h, без min-conf | Leverage + larger costs |
+> | 3.77 | 365d, 1x, 12h, min-conf=0.85 | Фильтр режет хорошие сделки |
 
 ---
 
@@ -344,23 +388,25 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 9. ✅ 24h ребалансировка для leverage → costs -35%
 10. ✅ **Edge-boost sizing** → Sharpe 5.93, **WR 70%**, PF 2.17 ← 🔥 ПРОРЫВ
 11. ❌ Adaptive rebalance (P90 trigger) → слишком много ранних ребалансов, costs +130%
-12. ✅ **CatBoost в ансамбль** → Sharpe **8.04**, PF **2.85**, +37.2% ← 🔥🔥 НОВЫЙ ЧЕМПИОН
-13. ❌ **Dynamic leverage (3x→5x/7x)** → DD резко растёт: -35.5% (5x), -49.1% (7x). Причина: "model is confident" ≠ "model is right". Одна ошибка на 5-7x стирает недели прибыли. **ОТВЕРГНУТО.**
-14. ✅ **Event filter (FOMC/CPI)** → снижение leverage до 30% за 18ч до / 6ч после макро-событий. 48 дат на 2025-2026. В тесте 60d: 2 события поймано, минимальное влияние на текущий период, но страховка на будущее.
-15. 🔄 **News sentiment pipeline** → CryptoCompare historical news + VADER NLP → 10 новых фич per-coin. Скрипт готов (`fetch_crypto_news.py`), данные качаются.
-16. ⬜ Retrain с news features → сравнить с текущим чемпионом
-17. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
-18. ⬜ Retrain HIST v2 с 12h target → 4-way ensemble
-19. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
-20. ⬜ OKX API key → paper trading → live с плечом
+12. ✅ **CatBoost в ансамбль** → Sharpe **8.04** (60d) / **6.61** (365d), PF **1.86** ← 🔥🔥 ЧЕМПИОН
+13. ❌ **Dynamic leverage (3x→5x/7x)** → DD резко растёт: -35.5% (5x), -49.1% (7x). **ОТВЕРГНУТО.**
+14. ✅ **Event filter (FOMC/CPI)** → снижение leverage до 30% возле макро-событий.
+15. ✅ **News sentiment pipeline** → CryptoCompare news + VADER NLP → 8 news фичей per-coin
+16. ✅ **Retrain с news** → news ВРЕДЯТ LGB (DDStop -36..47%), но ПОМОГАЮТ CatBoost (DDStop +41%)
+17. ✅ **News A/B тест (fast sim, 365d)** → оптимально: LGB без news + CatBoost с news = Sharpe 3.77 (с conf filter) / **6.61** (без)
+18. ❌ **min-conf 0.85 на 365d** → Sharpe 6.61→3.77, фильтр выкидывает прибыльные сделки. На 60d выглядел хорошо, но на полном году вредит.
+19. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
+20. ⬜ Retrain HIST v2 с 12h target → 4-way ensemble
+21. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
+22. ⬜ OKX API key → paper trading → live с плечом
 21. ✅ **Confidence metric** — model agreement weighting (1/(1+std)), A/B tested positive
 22. ✅ **Entry scores fix** — dashboard показывает score на момент входа, не текущий
 23. ✅ **Pending orders** — отображение незаполненных ордеров на dashboard
 24. ✅ **Dual training mode** — `--production` для max data, `--research` (default) для тестов
 25. ⬜ **Production retrain** — обучить v6+v7+CB на train→2025-09 (запланировано 10 марта)
-26. ✅ **Position concentration cap** — аллокация по confidence (не даём 100% капитала одной позиции)
-27. ⬜ **Confidence filter (min-conf)** — 🔥 Sharpe ×4, WR 70%, PF 2.91 при conf≥0.85. Нужно больше тестов + live валидация
-28. ⬜ **Adaptive confidence threshold** — динамический порог conf по волатильности рынка
+26. ✅ **Position concentration cap** — аллокация по confidence
+27. ❌ **Confidence filter (min-conf 0.85)** — на 60d выглядел отлично (Sharpe 10.02), но на **365d вредит**: Sharpe 6.61→3.77. Фильтр слишком агрессивно режет сделки.
+28. ⬜ **Adaptive confidence threshold** — возможно мягкий порог (0.70-0.75?) не будет вредить
 29. ⬜ **Confidence + leverage** — при conf≥0.90 повысить leverage до 4-5x (осторожно, см. #13)
 
 ## $500 → $5000 анализ
@@ -401,21 +447,25 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 - **Статус**: fetcher ready, данные за 3 дня протестированы (1600 news, 56% mapped to coins)
 - **Скрипт**: `python fetch_crypto_news.py --days 730` (2 года, ~2.5 часа при rate limit)
 
-## Конфигурация (текущая — ensemble + edge-boost + leverage)
+## Конфигурация (текущая — 9 марта 2026)
 - **Capital**: $5,000, OKX futures (demo)
-- **Model**: Ensemble LGB v6 (5) + LGB v7 (5) + CatBoost (5) = **15 models**
-- **Sizing**: Edge-boost (weight ∝ 1 + edge/P75, cap 4x) → высоко-edge позиции получают больше капитала
+- **Model**: Ensemble LGB v6 (5, без news, 121 фичей) + LGB v7 (5, без news, 127 фичей) + CatBoost (5, **с news**, 130 фичей) = **15 models**
+- **Sizing**: Edge-boost (weight ∝ 1 + edge/P75, cap 4x)
 - **Positions**: 5 long + 5 short
 - **Rebalance**: every 12h
-- **Leverage**: 3x
-- **Threshold**: min_score ≥ 1.0 (skip signals with |score| < 1.0)
+- **Leverage**: 1x (рекомендовано по 365d тесту; 3x опционально для агрессивного профиля)
+- **min-conf**: 0 (❌ отключен — на 365d вредит: Sharpe 6.61→3.77)
+- **Threshold**: min_score ≥ 1.0
 - **Risk**: kelly=100%, DD_stop=-20%, DD_resume=-8%
-- **Features**: 171 (включая funding_rate, long_short_ratio, cross_coin_dispersion, FNG)
-- **Sentiment data**: cron каждые 8h обновляет funding rates, L/S ratio, FNG
+- **Features**: LGB: 121-127 (OHLCV, FNG, vol, momentum); CatBoost: 130 (+8 news)
+- **Sentiment data**: cron каждые 8h (funding rates, L/S ratio, FNG, news)
 - **Cost model**: 4 bps/side (taker + slippage) + 1bp/8h funding
-- **Dashboard**: invest.arturt.com (scores, threshold, edge-boost, model stats)
+- **Dashboard**: invest.arturt.com
 - **VPS**: 185.42.163.63, systemd service `crypto-trader`
-- **Запуск**: `python run_trading.py --mode paper --loop --capital 5000 --rebal 12`
+- **Training data**: train→2024-06, val→2024-12, test 2025+ (W3). Fast sim: 365d = мар 2025→мар 2026, **полностью OOS** (9 месяцев после train end)
+- **Best backtest (365d)**: Sharpe **6.61**, Return +21.3%, MaxDD -5.4%, PF 1.86, WR 61%
+- **Запуск sim**: `python run_fast_sim.py --ensemble --edge-boost --days 365`
+- **Запуск live**: `python run_trading.py --mode paper --loop --capital 5000 --rebal 12`
 
 ## Production Log (9 марта 2026)
 
@@ -492,21 +542,28 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
   - Капитал пропорционален уверенности модели: выше conf → больше аллокация
   - Остаток неиспользован (безопаснее, чем 100% на 1 позицию)
 
-### Confidence filter — A/B тест (🔥 перспективное направление)
+### Confidence filter — A/B тест (⚠️ полезно на 60d, ВРЕДНО на 365d)
 - **Идея**: не торговать сигналы с низкой confidence (модели не согласны)
+- **Механизм**: confidence = 1 / (1 + std) по всем 15 моделям. min-conf ≥ 0.85 = пропуск сигналов с низким agreement.
 - **Флаг**: `--min-conf` в `run_fast_sim.py`
 - **Результаты** (60d backtest, $5000, 3x leverage, 12h rebal):
 
 | min-conf | Return | Sharpe | WR | PF | Trades | Max DD | Примечание |
 |----------|--------|--------|-----|------|--------|--------|------------|
 | — (base) | +24.5% | 2.48 | 63% | 1.30 | 1060 | -10.5% | текущий production |
-| **0.85** | +22.2% | **10.02** | **70%** | **2.91** | 663 | **-2.2%** | 🔥 sweet spot |
-| 0.90 | +33.9% | 6.11 | 61% | 1.79 | 374 | -5.3% | хороший, но мало сделок |
+| **0.85** | +22.2% | **10.02** | **70%** | **2.91** | 663 | **-2.2%** | 🔥 на 60d |
+| 0.90 | +33.9% | 6.11 | 61% | 1.79 | 374 | -5.3% | |
 | 0.93 | -48.7% | -3.58 | 49% | 0.59 | 176 | — | ❌ мало данных |
-| 0.95 | -11.3% | -0.68 | 46% | 0.78 | 62 | — | ❌ мало данных |
 
-- **Лучший вариант**: conf ≥ 0.85 → Sharpe ×4 (2.48 → 10.02), WR +7pp, PF ×2.2, MaxDD с -10.5% до -2.2%
-- **Компромисс**: -37% сделок (1060 → 663) — капитал чаще сидит без дела
-- **Почему не deployed**: нужна валидация на live данных + тесты на других периодах
-- **План**: исследовать адаптивный порог (выше в тренде, ниже во флэте)
+- **Но на 365d** (полный год, 1x, 12h):
+
+| min-conf | Return | Sharpe | WR | PF | Trades | Max DD |
+|----------|--------|--------|-----|------|--------|--------|
+| — | **+21.3%** | **6.61** | 61% | **1.86** | **1140** | -5.4% |
+| 0.85 | +15.1% | 3.77 | 63% | 1.46 | 685 | **-5.1%** |
+| Δ | **-29%** | **-43%** | +2pp | **-22%** | -40% | +0.3pp |
+
+- **Вывод**: min-conf 0.85 удаляет 40% сделок и теряет 43% Sharpe на полном году.
+  На 60d попало удачное окно. **НЕ ИСПОЛЬЗОВАТЬ в production.**
+- **Возможно**: мягкий порог 0.70-0.75 будет полезен — нужно проверить.
 
