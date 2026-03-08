@@ -48,6 +48,7 @@ from run_pipeline_v6 import (
 )
 
 N_SEEDS = 5
+_task_type = 'CPU'  # overridden by --gpu flag at runtime
 
 
 # ============================================================
@@ -80,7 +81,7 @@ def run_optuna_hpo(X_train, y_train, X_val, y_val, val_dates, n_trials=50):
                                                       ['SymmetricTree', 'Depthwise']),
             'random_seed': 42,
             'verbose': 0,
-            'task_type': 'CPU',
+            'task_type': _task_type,
             'loss_function': 'RMSE',
         }
 
@@ -140,7 +141,7 @@ def train_catboost(X_train, y_train, X_val, y_val,
         'grow_policy': 'SymmetricTree',
         'random_seed': seed,
         'verbose': 0,
-        'task_type': 'CPU',
+        'task_type': _task_type,
         'loss_function': 'RMSE',
         'eval_metric': 'RMSE',
     }
@@ -217,7 +218,12 @@ def main():
     parser.add_argument('--val-end', type=str, default=None,
                         help='Override val end date (YYYY-MM-DD) for --production')
     parser.add_argument('--seeds', type=int, default=N_SEEDS)
+    parser.add_argument('--gpu', action='store_true',
+                        help='Use GPU for CatBoost training (requires CUDA)')
     args = parser.parse_args()
+
+    global _task_type
+    _task_type = 'GPU' if args.gpu else 'CPU'
 
     project_root = os.path.dirname(os.path.abspath(__file__))
     data_dir = args.data or os.path.join(project_root, 'data', 'features')

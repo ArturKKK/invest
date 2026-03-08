@@ -1154,22 +1154,44 @@ def main():
             resume_ts = None
             checkpoint_df = None
             
-            if args.resume:
-                checkpoint_df, resume_ts = _load_checkpoint()
-                if resume_ts:
-                    print(f"📂 Resuming from {datetime.fromtimestamp(resume_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
+            # ALWAYS check existing data — don't re-download what we have
+            existing_df, existing_oldest_ts = _load_checkpoint()
+            if existing_df is not None and len(existing_df) > 0:
+                checkpoint_df = existing_df
+                existing_newest_ts = int(existing_df["published_on"].max())
+                existing_newest = datetime.fromtimestamp(existing_newest_ts, tz=timezone.utc)
+                now_dt = datetime.now(timezone.utc)
+                gap_hours = (now_dt - existing_newest).total_seconds() / 3600
+                
+                if gap_hours < 24:
+                    print(f"✅ Data already up to date ({existing_newest.strftime('%Y-%m-%d %H:%M')}, "
+                          f"{gap_hours:.0f}h ago). Nothing to fetch.")
+                    cc_news = []
+                else:
+                    # Only fetch the missing tail (from newest existing → now)
+                    print(f"📂 Existing data up to {existing_newest.strftime('%Y-%m-%d')} "
+                          f"({gap_hours/24:.0f} days ago). Fetching only the gap...")
+                    # resume_from_ts is where to START paginating backward from (= now)
+                    # The fetch function goes backward; we stop it at existing_newest_ts
+                    cc_news = fetch_cryptocompare_news(
+                        days=int(gap_hours / 24) + 1,
+                        resume_from_ts=None,  # start from NOW, go backward
+                        api_key=args.cc_api_key, workers=args.workers
+                    )
+            else:
+                # No existing data — full fetch
+                cc_news = fetch_cryptocompare_news(
+                    days=args.days, resume_from_ts=None,
+                    api_key=args.cc_api_key, workers=args.workers
+                )
             
-            cc_news = fetch_cryptocompare_news(
-                days=args.days, resume_from_ts=resume_ts,
-                api_key=args.cc_api_key, workers=args.workers
-            )
             all_news.extend(cc_news)
             
-            # Merge with checkpoint data
+            # Merge with existing data
             if checkpoint_df is not None and len(checkpoint_df) > 0:
                 checkpoint_items = checkpoint_df.to_dict("records")
                 all_news.extend(checkpoint_items)
-                print(f"   📂 Merged {len(checkpoint_items):,} items from checkpoint")
+                print(f"   📂 Merged {len(checkpoint_items):,} existing items")
         
         # GDELT (political/macro news) — free, unlimited, no key!
         if args.source in ("political", "all"):
