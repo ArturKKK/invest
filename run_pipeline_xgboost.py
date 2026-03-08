@@ -337,7 +337,7 @@ def main():
 
     global _tree_method, _device
     if args.gpu:
-        _tree_method = 'gpu_hist'
+        _tree_method = 'hist'
         _device = 'cuda'
 
     project_root = os.path.dirname(os.path.abspath(__file__))
