@@ -1,0 +1,15 @@
+{
+  "IC": 0.0047,
+  "Rank_IC": -0.0123,
+  "ICIR": -0.0652,
+  "Daily_IC_mean": -0.0152,
+  "Daily_IC_std": 0.2334,
+  "Direction_Accuracy": 0.4946,
+  "LS_Sharpe": -1.0067,
+  "LS_Ann_Return": -0.3013,
+  "LS_Max_Drawdown": -0.3391,
+  "N_test_samples": 282104,
+  "timestamp": "2026-03-07T03:39:01.272936",
+  "model": "LightGBM_baseline",
+  "features": 96
+}

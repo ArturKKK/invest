@@ -1302,6 +1302,133 @@ def save_state(state, path):
 
 
 # ============================================================
+# DASHBOARD JSON EXPORT
+# ============================================================
+
+DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard', 'data')
+
+def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_hours, exchange=None):
+    """Write dashboard.json for the web UI. Safe — never crashes the bot."""
+    try:
+        os.makedirs(DASHBOARD_DIR, exist_ok=True)
+        now = datetime.now(timezone.utc)
+
+        # Equity history from state
+        eq_hist = state.get('equity_history', [])
+
+        # Trade stats
+        stats = tracker.get_stats() if tracker else {}
+
+        # Closed trades (newest first, last 50)
+        closed_trades = []
+        if tracker and len(tracker.df) > 0:
+            closed_df = tracker.df[tracker.df['status'] == 'closed'].copy()
+            if len(closed_df) > 0:
+                closed_df = closed_df.sort_values('exit_time', ascending=False).head(50)
+                for _, row in closed_df.iterrows():
+                    closed_trades.append({
+                        'symbol': row.get('symbol', ''),
+                        'side': row.get('side', ''),
+                        'pnl': float(row.get('pnl_usd', 0) or 0),
+                        'pnl_pct': float(row.get('pnl_pct', 0) or 0),
+                        'usd': float(row.get('usd', 0) or 0),
+                        'closed': row.get('exit_time', ''),
+                        'hold_h': float(row.get('hold_hours', 0) or 0),
+                    })
+
+        # Open positions — try live from OKX, fallback to target
+        pos_data = []
+        if exchange:
+            try:
+                live = exchange.fetch_positions()
+                for p in live:
+                    contracts = float(p.get('contracts', 0))
+                    if contracts > 0:
+                        pos_data.append({
+                            'symbol': p.get('symbol', '').replace(':USDT', ''),
+                            'side': p.get('side', ''),
+                            'notional': abs(float(p.get('notional', 0))),
+                            'upnl': float(p.get('unrealizedPnl', 0) or 0),
+                            'upnl_pct': float(p.get('percentage', 0) or 0),
+                        })
+            except Exception:
+                pass
+
+        if not pos_data and positions:
+            for p in positions:
+                pos_data.append({
+                    'symbol': p['symbol'],
+                    'side': p['side'],
+                    'notional': p['usd'],
+                    'upnl': 0,
+                    'upnl_pct': 0,
+                })
+
+        # Signals from latest model run
+        sig_data = []
+        if signals is not None and len(signals) > 0:
+            top = signals.head(10)
+            bot = signals.tail(10)
+            combined = pd.concat([top, bot]).drop_duplicates()
+            for _, row in combined.iterrows():
+                sig_data.append({
+                    'symbol': row.get('symbol', ''),
+                    'score': round(float(row.get('score', 0)), 4),
+                })
+
+        # Compute max DD
+        equity = state.get('equity', args.capital)
+        peak = state.get('peak', args.capital)
+        max_dd = (equity / peak - 1) if peak > 0 else 0
+
+        # Next rebal
+        hour_slot = (now.hour // rebal_hours + 1) * rebal_hours
+        next_time = now.replace(hour=0, minute=5, second=0, microsecond=0) + timedelta(hours=hour_slot)
+        if next_time <= now:
+            next_time += timedelta(hours=rebal_hours)
+        hours_left = (next_time - now).total_seconds() / 3600
+
+        # Margin used
+        margin_used = sum(p.get('notional', 0) for p in pos_data) / risk_cfg.get('leverage', 3)
+
+        dashboard = {
+            'updated': now.isoformat(),
+            'mode': args.mode,
+            'capital': args.capital,
+            'equity': round(equity, 2),
+            'leverage': risk_cfg.get('leverage', 3),
+            'margin_used': round(margin_used, 0),
+            'rebal_hours': rebal_hours,
+            'next_rebal': f"{hours_left:.1f}h",
+            'cycle': state.get('cycle', 0),
+            'max_dd': round(max_dd, 4),
+            'dd_stop': risk_cfg.get('dd_stop', -0.20),
+            'models': '15 (LGB v6×5 + v7×5 + CB×5)',
+
+            # Stats
+            'total_trades': stats.get('total_trades', 0),
+            'win_rate': round(stats.get('win_rate', 0), 3),
+            'total_pnl': stats.get('total_pnl', 0),
+            'avg_win': stats.get('avg_win', 0),
+            'avg_loss': stats.get('avg_loss', 0),
+
+            # Data
+            'equity_history': eq_hist[-500:],  # last 500 points
+            'positions': pos_data,
+            'trades': closed_trades,
+            'signals': sig_data,
+        }
+
+        dash_path = os.path.join(DASHBOARD_DIR, 'dashboard.json')
+        with open(dash_path, 'w') as f:
+            json.dump(dashboard, f, default=str)
+        print(f"   📊 Dashboard updated")
+
+    except Exception as e:
+        print(f"   ⚠️  Dashboard export failed: {e}")
+
+
+# ============================================================
 # TRADE TRACKER — per-trade P&L logging
 # ============================================================
 
@@ -1684,6 +1811,13 @@ def main():
 
         save_state(state, state_path)
         print(f"\n   📝 Log: {os.path.basename(log_path)}")
+
+        # 8. Dashboard JSON export
+        _export_dashboard(
+            state=state, positions=positions, signals=signals,
+            tracker=tracker, risk_cfg=risk_cfg, args=args,
+            rebal_hours=rebal_hours, exchange=exchange,
+        )
 
     # Run
     if args.loop:

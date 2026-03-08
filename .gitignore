@@ -8,10 +8,7 @@ data/
 # Source data scripts (not actual data)
 !src/data/
 
-# Results
-results/
-results_v2/
-results_v3/
+# Results (all tracked — repo is private)
 
 # Python
 venv/

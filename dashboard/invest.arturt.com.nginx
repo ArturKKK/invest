@@ -1,0 +1,35 @@
+server {
+    listen 80;
+    server_name invest.arturt.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name invest.arturt.com;
+
+    ssl_certificate /etc/letsencrypt/live/arturt.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/arturt.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    root /home/trader/invest/dashboard;
+    index index.html;
+
+    auth_basic "ML Trader Dashboard";
+    auth_basic_user_file /etc/nginx/.htpasswd_invest;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /data/ {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires 0;
+        add_header Access-Control-Allow-Origin "*";
+    }
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+}

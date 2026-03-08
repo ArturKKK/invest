@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto ML Trading Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+                    colors: {
+                        dark: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8', 500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a', 950: '#020617' },
+                        accent: { DEFAULT: '#6366f1', light: '#818cf8', dark: '#4f46e5' },
+                        profit: '#22c55e',
+                        loss: '#ef4444',
+                        warn: '#f59e0b',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #0a0e1a; }
+        .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(20px); border: 1px solid rgba(99, 102, 241, 0.1); }
+        .glass-card { background: rgba(30, 41, 59, 0.5); backdrop-filter: blur(10px); border: 1px solid rgba(99, 102, 241, 0.08); }
+        .glow { box-shadow: 0 0 30px rgba(99, 102, 241, 0.08); }
+        .glow-text { text-shadow: 0 0 20px rgba(99, 102, 241, 0.3); }
+        .stat-value { font-variant-numeric: tabular-nums; }
+        .pulse-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .fade-in { animation: fadeIn 0.6s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 3px; }
+        .position-row:hover { background: rgba(99, 102, 241, 0.05); }
+        .tab-active { border-bottom: 2px solid #6366f1; color: #818cf8; }
+        .tab-inactive { border-bottom: 2px solid transparent; color: #64748b; }
+        .tab-inactive:hover { color: #94a3b8; }
+        .badge { font-size: 0.65rem; padding: 2px 8px; border-radius: 9999px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+        .long-badge { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+        .short-badge { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+        .demo-badge { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+        .live-badge { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    </style>
+</head>
+<body class="font-sans text-dark-200 min-h-screen">
+
+    <!-- Header -->
+    <header class="glass sticky top-0 z-50 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <svg class="w-8 h-8 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                    <h1 class="text-xl font-bold text-white glow-text">ML Trader</h1>
+                </div>
+                <span id="mode-badge" class="badge demo-badge">DEMO</span>
+            </div>
+            <div class="flex items-center gap-6 text-sm">
+                <div class="flex items-center gap-2">
+                    <span class="pulse-dot w-2 h-2 rounded-full bg-profit inline-block"></span>
+                    <span class="text-dark-400">Bot Active</span>
+                </div>
+                <div class="text-dark-400">
+                    Updated: <span id="last-update" class="text-dark-200 font-mono">—</span>
+                </div>
+                <div class="text-dark-400">
+                    Next rebal: <span id="next-rebal" class="text-accent-light font-mono">—</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 space-y-6">
+
+        <!-- Top Stats Row -->
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 fade-in">
+            <div class="glass-card rounded-xl p-4 glow">
+                <div class="text-dark-500 text-xs font-medium uppercase tracking-wider mb-1">Equity</div>
+                <div id="stat-equity" class="stat-value text-2xl font-bold text-white">$—</div>
+                <div id="stat-equity-change" class="text-xs font-mono mt-1">—</div>
+            </div>
+            <div class="glass-card rounded-xl p-4">
+                <div class="text-dark-500 text-xs font-medium uppercase tracking-wider mb-1">Total PnL</div>
+                <div id="stat-pnl" class="stat-value text-2xl font-bold">$—</div>
+                <div id="stat-return" class="text-xs font-mono mt-1">—</div>
+            </div>
+            <div class="glass-card rounded-xl p-4">
+                <div class="text-dark-500 text-xs font-medium uppercase tracking-wider mb-1">Win Rate</div>
+                <div id="stat-wr" class="stat-value text-2xl font-bold text-white">—%</div>
+                <div id="stat-trades" class="text-xs text-dark-400 mt-1">— trades</div>
+            </div>
+            <div class="glass-card rounded-xl p-4">
+                <div class="text-dark-500 text-xs font-medium uppercase tracking-wider mb-1">Max DD</div>
+                <div id="stat-dd" class="stat-value text-2xl font-bold">—%</div>
+                <div id="stat-dd-label" class="text-xs text-dark-400 mt-1">stop: -20%</div>
+            </div>
+            <div class="glass-card rounded-xl p-4">
+                <div class="text-dark-500 text-xs font-medium uppercase tracking-wider mb-1">Leverage</div>
+                <div id="stat-leverage" class="stat-value text-2xl font-bold text-white">—x</div>
+                <div id="stat-margin" class="text-xs text-dark-400 mt-1">—</div>
+            </div>
+            <div class="glass-card rounded-xl p-4">
+                <div class="text-dark-500 text-xs font-medium uppercase tracking-wider mb-1">Positions</div>
+                <div id="stat-positions" class="stat-value text-2xl font-bold text-white">—</div>
+                <div id="stat-positions-detail" class="text-xs mt-1"><span class="text-profit">—L</span> / <span class="text-loss">—S</span></div>
+            </div>
+        </div>
+
+        <!-- Equity Chart -->
+        <div class="glass-card rounded-xl p-6 fade-in">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-white">Equity Curve</h2>
+                <div class="flex gap-2" id="chart-tabs">
+                    <button onclick="setChartRange('all')" class="text-xs px-3 py-1 rounded-lg bg-accent/20 text-accent-light">All</button>
+                    <button onclick="setChartRange(7)" class="text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200">7d</button>
+                    <button onclick="setChartRange(30)" class="text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200">30d</button>
+                </div>
+            </div>
+            <div class="relative h-72">
+                <canvas id="equityChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Positions + Trade History -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            <!-- Open Positions -->
+            <div class="glass-card rounded-xl p-6 fade-in">
+                <h2 class="text-lg font-semibold text-white mb-4">Open Positions</h2>
+                <div class="space-y-2" id="positions-list">
+                    <div class="text-dark-500 text-sm">Loading...</div>
+                </div>
+                <div id="positions-total" class="mt-4 pt-3 border-t border-dark-700/50 flex justify-between text-sm">
+                    <span class="text-dark-400">Total uPnL</span>
+                    <span id="total-upnl" class="font-mono font-semibold">—</span>
+                </div>
+            </div>
+
+            <!-- Recent Trades -->
+            <div class="glass-card rounded-xl p-6 fade-in">
+                <h2 class="text-lg font-semibold text-white mb-4">Recent Trades</h2>
+                <div class="overflow-y-auto max-h-80 space-y-1" id="trades-list">
+                    <div class="text-dark-500 text-sm">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Signals -->
+        <div class="glass-card rounded-xl p-6 fade-in">
+            <h2 class="text-lg font-semibold text-white mb-4">Latest Model Signals</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <h3 class="text-profit text-xs font-semibold uppercase tracking-wider mb-3">🟢 Top Longs</h3>
+                    <div class="space-y-2" id="signals-long">
+                        <div class="text-dark-500 text-sm">—</div>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-loss text-xs font-semibold uppercase tracking-wider mb-3">🔴 Top Shorts</h3>
+                    <div class="space-y-2" id="signals-short">
+                        <div class="text-dark-500 text-sm">—</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Info -->
+        <div class="glass-card rounded-xl p-6 fade-in">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-white">System</h2>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                    <span class="text-dark-500">Models</span>
+                    <div id="sys-models" class="font-mono text-dark-200">—</div>
+                </div>
+                <div>
+                    <span class="text-dark-500">Rebalance</span>
+                    <div id="sys-rebal" class="font-mono text-dark-200">—</div>
+                </div>
+                <div>
+                    <span class="text-dark-500">Risk</span>
+                    <div id="sys-risk" class="font-mono text-dark-200">—</div>
+                </div>
+                <div>
+                    <span class="text-dark-500">Cycle</span>
+                    <div id="sys-cycle" class="font-mono text-dark-200">#—</div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="text-center py-6 text-dark-600 text-xs">
+        ML Crypto Trading System &mdash; 15 Model Ensemble (LGB v6 + v7 + CatBoost)
+    </footer>
+
+    <script>
+    // ─── Chart Setup ─────────────────────────────────────────
+    let equityChart;
+    let allEquityData = [];
+
+    function initChart() {
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, 288);
+        gradient.addColorStop(0, 'rgba(99, 102, 241, 0.15)');
+        gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
+
+        equityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Equity',
+                    data: [],
+                    borderColor: '#6366f1',
+                    backgroundColor: gradient,
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#6366f1',
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        borderColor: 'rgba(99, 102, 241, 0.3)',
+                        borderWidth: 1,
+                        titleFont: { family: 'JetBrains Mono', size: 11 },
+                        bodyFont: { family: 'JetBrains Mono', size: 12 },
+                        callbacks: {
+                            label: (ctx) => `$${ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2})}`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { unit: 'day', displayFormats: { day: 'MMM d' } },
+                        grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                        ticks: { color: '#64748b', font: { size: 10 } },
+                    },
+                    y: {
+                        grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                        ticks: {
+                            color: '#64748b',
+                            font: { size: 10, family: 'JetBrains Mono' },
+                            callback: (v) => '$' + v.toLocaleString()
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function setChartRange(days) {
+        let data = allEquityData;
+        if (days !== 'all' && data.length > 0) {
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            data = data.filter(d => new Date(d.x) >= cutoff);
+        }
+        equityChart.data.datasets[0].data = data;
+        equityChart.update('none');
+
+        // Update tab styles
+        document.querySelectorAll('#chart-tabs button').forEach(btn => {
+            btn.className = 'text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200';
+        });
+        event.target.className = 'text-xs px-3 py-1 rounded-lg bg-accent/20 text-accent-light';
+    }
+
+    // ─── Data Loading ────────────────────────────────────────
+    function colorPnl(value, prefix = '$') {
+        if (value > 0) return `<span class="text-profit">${prefix}+${Math.abs(value).toFixed(2)}</span>`;
+        if (value < 0) return `<span class="text-loss">${prefix}-${Math.abs(value).toFixed(2)}</span>`;
+        return `<span class="text-dark-400">${prefix}0.00</span>`;
+    }
+
+    function colorPct(value) {
+        if (value > 0) return `<span class="text-profit">+${value.toFixed(1)}%</span>`;
+        if (value < 0) return `<span class="text-loss">${value.toFixed(1)}%</span>`;
+        return `<span class="text-dark-400">0.0%</span>`;
+    }
+
+    function timeAgo(isoStr) {
+        const diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
+        if (diff < 60) return `${Math.floor(diff)}s ago`;
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        return `${Math.floor(diff / 86400)}d ago`;
+    }
+
+    async function loadDashboard() {
+        try {
+            const resp = await fetch('data/dashboard.json?' + Date.now());
+            if (!resp.ok) throw new Error('Failed to load');
+            const d = await resp.json();
+
+            // ── Mode badge ──
+            const badge = document.getElementById('mode-badge');
+            badge.textContent = (d.mode || 'demo').toUpperCase();
+            badge.className = `badge ${d.mode === 'live' ? 'live-badge' : 'demo-badge'}`;
+
+            // ── Header ──
+            document.getElementById('last-update').textContent = d.updated ? timeAgo(d.updated) : '—';
+            document.getElementById('next-rebal').textContent = d.next_rebal || '—';
+
+            // ── Stats ──
+            const eq = d.equity || 0;
+            const cap = d.capital || 5000;
+            const pnl = eq - cap;
+            const ret = cap > 0 ? ((eq / cap - 1) * 100) : 0;
+
+            document.getElementById('stat-equity').textContent = `$${eq.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('stat-equity-change').innerHTML = colorPct(ret);
+
+            document.getElementById('stat-pnl').textContent = `$${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`;
+            document.getElementById('stat-pnl').className = `stat-value text-2xl font-bold ${pnl >= 0 ? 'text-profit' : 'text-loss'}`;
+            document.getElementById('stat-return').innerHTML = colorPct(ret);
+
+            const wr = d.win_rate || 0;
+            document.getElementById('stat-wr').textContent = `${(wr * 100).toFixed(0)}%`;
+            document.getElementById('stat-wr').className = `stat-value text-2xl font-bold ${wr >= 0.5 ? 'text-profit' : 'text-loss'}`;
+            document.getElementById('stat-trades').textContent = `${d.total_trades || 0} trades`;
+
+            const dd = (d.max_dd || 0) * 100;
+            document.getElementById('stat-dd').textContent = `${dd.toFixed(1)}%`;
+            document.getElementById('stat-dd').className = `stat-value text-2xl font-bold ${dd > -10 ? 'text-profit' : dd > -15 ? 'text-warn' : 'text-loss'}`;
+
+            document.getElementById('stat-leverage').textContent = `${d.leverage || 3}x`;
+            document.getElementById('stat-margin').textContent = d.margin_used ? `$${d.margin_used.toFixed(0)} used` : '—';
+
+            const longs = (d.positions || []).filter(p => p.side === 'long').length;
+            const shorts = (d.positions || []).filter(p => p.side === 'short').length;
+            document.getElementById('stat-positions').textContent = `${longs + shorts}`;
+            document.getElementById('stat-positions-detail').innerHTML = `<span class="text-profit">${longs}L</span> / <span class="text-loss">${shorts}S</span>`;
+
+            // ── Positions ──
+            const posList = document.getElementById('positions-list');
+            const positions = d.positions || [];
+            if (positions.length === 0) {
+                posList.innerHTML = '<div class="text-dark-500 text-sm">No open positions</div>';
+            } else {
+                posList.innerHTML = positions.map(p => {
+                    const isLong = p.side === 'long';
+                    return `
+                    <div class="position-row flex items-center justify-between py-2 px-3 rounded-lg transition-colors">
+                        <div class="flex items-center gap-3">
+                            <span class="badge ${isLong ? 'long-badge' : 'short-badge'}">${p.side}</span>
+                            <span class="font-medium text-white text-sm">${p.symbol}</span>
+                        </div>
+                        <div class="flex items-center gap-4 text-sm">
+                            <span class="text-dark-400 font-mono">$${(p.notional || p.usd || 0).toFixed(0)}</span>
+                            <span class="font-mono font-semibold w-20 text-right ${(p.upnl || 0) >= 0 ? 'text-profit' : 'text-loss'}">
+                                $${(p.upnl || 0) >= 0 ? '+' : ''}${(p.upnl || 0).toFixed(2)}
+                            </span>
+                            <span class="font-mono text-xs w-12 text-right ${(p.upnl_pct || 0) >= 0 ? 'text-profit' : 'text-loss'}">
+                                ${(p.upnl_pct || 0) >= 0 ? '+' : ''}${(p.upnl_pct || 0).toFixed(1)}%
+                            </span>
+                        </div>
+                    </div>`;
+                }).join('');
+            }
+
+            const totalUpnl = positions.reduce((sum, p) => sum + (p.upnl || 0), 0);
+            document.getElementById('total-upnl').innerHTML = colorPnl(totalUpnl);
+
+            // ── Trades ──
+            const tradesList = document.getElementById('trades-list');
+            const trades = d.trades || [];
+            if (trades.length === 0) {
+                tradesList.innerHTML = '<div class="text-dark-500 text-sm">No trades yet</div>';
+            } else {
+                tradesList.innerHTML = trades.slice(0, 30).map(t => {
+                    const isWin = (t.pnl || 0) >= 0;
+                    return `
+                    <div class="flex items-center justify-between py-2 px-3 rounded-lg position-row transition-colors text-sm">
+                        <div class="flex items-center gap-3">
+                            <span class="w-2 h-2 rounded-full ${isWin ? 'bg-profit' : 'bg-loss'}"></span>
+                            <span class="badge ${t.side === 'long' ? 'long-badge' : 'short-badge'}">${t.side || '?'}</span>
+                            <span class="text-white font-medium">${t.symbol}</span>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="font-mono w-20 text-right ${isWin ? 'text-profit' : 'text-loss'}">
+                                $${(t.pnl || 0) >= 0 ? '+' : ''}${(t.pnl || 0).toFixed(2)}
+                            </span>
+                            <span class="text-dark-500 text-xs w-16 text-right">${t.closed ? timeAgo(t.closed) : '—'}</span>
+                        </div>
+                    </div>`;
+                }).join('');
+            }
+
+            // ── Signals ──
+            const slongs = (d.signals || []).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
+            const sshorts = (d.signals || []).filter(s => s.score < 0).sort((a, b) => a.score - b.score).slice(0, 5);
+
+            document.getElementById('signals-long').innerHTML = slongs.length ? slongs.map(s => `
+                <div class="flex justify-between items-center text-sm">
+                    <span class="text-dark-200">${s.symbol}</span>
+                    <div class="flex items-center gap-2">
+                        <div class="w-24 h-1.5 bg-dark-800 rounded-full overflow-hidden">
+                            <div class="h-full bg-profit rounded-full" style="width: ${Math.min(s.score / 2 * 100, 100)}%"></div>
+                        </div>
+                        <span class="font-mono text-xs text-profit w-12 text-right">+${s.score.toFixed(3)}</span>
+                    </div>
+                </div>`).join('') : '<div class="text-dark-500 text-sm">—</div>';
+
+            document.getElementById('signals-short').innerHTML = sshorts.length ? sshorts.map(s => `
+                <div class="flex justify-between items-center text-sm">
+                    <span class="text-dark-200">${s.symbol}</span>
+                    <div class="flex items-center gap-2">
+                        <div class="w-24 h-1.5 bg-dark-800 rounded-full overflow-hidden">
+                            <div class="h-full bg-loss rounded-full" style="width: ${Math.min(Math.abs(s.score) / 2 * 100, 100)}%"></div>
+                        </div>
+                        <span class="font-mono text-xs text-loss w-12 text-right">${s.score.toFixed(3)}</span>
+                    </div>
+                </div>`).join('') : '<div class="text-dark-500 text-sm">—</div>';
+
+            // ── Equity Chart ──
+            allEquityData = (d.equity_history || []).map(e => ({ x: e.time, y: e.equity }));
+            equityChart.data.datasets[0].data = allEquityData;
+            equityChart.update('none');
+
+            // ── System ──
+            document.getElementById('sys-models').textContent = d.models || '15 (LGB×10 + CB×5)';
+            document.getElementById('sys-rebal').textContent = d.rebal_hours ? `${d.rebal_hours}h` : '12h';
+            document.getElementById('sys-risk').textContent = `DD stop: ${((d.dd_stop || -0.20) * 100).toFixed(0)}%`;
+            document.getElementById('sys-cycle').textContent = `#${d.cycle || 0}`;
+
+        } catch (err) {
+            console.error('Dashboard load error:', err);
+            document.getElementById('stat-equity').textContent = 'Offline';
+        }
+    }
+
+    // ─── Init ──────────────────────────────────────────
+    initChart();
+    loadDashboard();
+    setInterval(loadDashboard, 60000); // refresh every 60s
+    </script>
+</body>
+</html>
