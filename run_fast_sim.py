@@ -54,6 +54,8 @@ def main():
                     help="Edge percentile filter: 0=off, 75=P75 (recommended)")
     ap.add_argument("--min-edge", type=float, default=0.0,
                     help="Manual min edge threshold (overrides --edge-pct)")
+    ap.add_argument("--ensemble", action="store_true",
+                    help="Ensemble v6+v7 models (average scores from both)")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -107,22 +109,48 @@ def main():
 
     # ── 3  models ─────────────────────────────────────────────────
     print("📡 Models …")
-    model_dir = args.model_dir
-    if not model_dir:
-        # Try v8 first, fallback to v7, v6
-        for d in ["results_v8", "results_v7", "results_v6"]:
+    model_groups = []   # list of (models, feature_names) tuples
+
+    if args.ensemble:
+        # Load both v6 and v7
+        for d in ["results_v6", "results_v7"]:
             p = os.path.join(root, d)
-            if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
-                model_dir = p; break
-    if not model_dir:
-        model_dir = os.path.join(root, "results_v6")
-    models = load_lgb_models(model_dir)
-    if not models:
-        print("❌ no models"); return
-    mf = models[0].feature_name()
-    for c in [c for c in mf if c not in df.columns]:
-        df[c] = 0.0
-    print(f"   {len(models)} models, {len(mf)} feats")
+            if os.path.isdir(p):
+                ms = load_lgb_models(p)
+                if ms:
+                    mf_g = ms[0].feature_name()
+                    for c in [c for c in mf_g if c not in df.columns]:
+                        df[c] = 0.0
+                    model_groups.append((ms, mf_g))
+                    print(f"   {d}: {len(ms)} models, {len(mf_g)} feats")
+        if not model_groups:
+            print("❌ no models for ensemble"); return
+    else:
+        model_dir = args.model_dir
+        if not model_dir:
+            for d in ["results_v8", "results_v7", "results_v6"]:
+                p = os.path.join(root, d)
+                if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
+                    model_dir = p; break
+        if not model_dir:
+            model_dir = os.path.join(root, "results_v6")
+        models = load_lgb_models(model_dir)
+        if not models:
+            print("❌ no models"); return
+        mf = models[0].feature_name()
+        for c in [c for c in mf if c not in df.columns]:
+            df[c] = 0.0
+        model_groups.append((models, mf))
+        print(f"   {len(models)} models, {len(mf)} feats")
+
+    def predict_ensemble(snap_df):
+        """Average predictions across all model groups."""
+        all_scores = []
+        for ms, mf_g in model_groups:
+            X = snap_df[mf_g].values
+            scores = np.mean([m.predict(X) for m in ms], axis=0)
+            all_scores.append(scores)
+        return np.mean(all_scores, axis=0)
 
     # ── 4  timestamps (rebal_h apart) ─────────────────────────────
     all_ts = sorted(df["timestamp"].unique())
@@ -139,8 +167,7 @@ def main():
             snap = df[df["timestamp"] == ts]
             if len(snap) < 20:
                 continue
-            X = snap[mf].values
-            scores = np.mean([m.predict(X) for m in models], axis=0)
+            scores = predict_ensemble(snap)
             median_s = np.median(scores)
             edges_abs = np.abs(scores - median_s)
             edge_samples.extend(edges_abs.tolist())
@@ -190,8 +217,7 @@ def main():
         dollar_mtm = mtm_pnl * usd_old
 
         # ── predict & rank at ts0 ────────────────────────────────
-        X = snap0[mf].values
-        scores = np.mean([m.predict(X) for m in models], axis=0)
+        scores = predict_ensemble(snap0)
         syms = snap0["symbol"].values
 
         # Edge filtering: |score − median| > min_edge

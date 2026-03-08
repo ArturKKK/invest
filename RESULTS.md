@@ -127,6 +127,30 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 
 > **Обновлённые результаты** (8 марта 2026, новое 60d окно). v7 лидирует по Sharpe, v6 — по MaxDD. v8 (8 лет данных) — худший по всем метрикам. **v6 остаётся основной моделью** (лучший баланс доходность/риск).
 
+### 🏆 Ensemble v6+v7 + leverage (финальные результаты, 60d, $500)
+
+| Config | Rebal | Lev | Edge | Return | Sharpe | WR | MaxDD | Calmar | Costs |
+|--------|-------|-----|------|--------|--------|-----|-------|--------|-------|
+| v6 baseline | 12h | 1x | — | +7.4% | 2.54 | 55% | -4.9% | 9.10 | 4.7% |
+| v7 baseline | 12h | 1x | — | +7.8% | 2.73 | 59% | -4.4% | 10.74 | 4.4% |
+| v6 P75 N=3 | 12h | 1x | P75 | +9.9% | 2.35 | 62% | -6.8% | 8.83 | 4.9% |
+| v6 P75 N=3 3x | 12h | 3x | P75 | +22.5% | 1.60 | 62% | -19.6% | 7.01 | 20.9% |
+| **ens base** | 12h | 1x | — | +7.7% | **2.79** | 56% | **-4.3%** | 10.89 | 4.6% |
+| ens P75 N=5 | 12h | 1x | P75 | +8.1% | 2.49 | 57% | **-4.1%** | **12.07** | 4.7% |
+| ens 3x | 12h | 3x | — | +18.3% | 2.02 | 55% | -13.0% | 8.56 | 19.4% |
+| 🟢 **ens 2x 24h** | **24h** | **2x** | — | **+22.2%** | **3.52** | 52% | **-9.3%** | **14.58** | **8.0%** |
+| 🟡 **ens 3x 24h** | **24h** | **3x** | — | **+33.7%** | **3.35** | 52% | -13.7% | **14.94** | 12.7% |
+| ens 5x 24h | 24h | 5x | — | +57.2% | 2.79 | 53% | -22.2% | 15.65 | 22.8% |
+| ens P75 N=3 3x 24h | 24h | 3x | P75 | +38.3% | 2.08 | 59% | -22.3% | 10.45 | 12.5% |
+
+> **Ключевые открытия (ensemble)**:
+> 1. **24h ребалансировка** с leverage стратегически лучше 12h: Sharpe 3.35 vs 2.02 (→ -35% costs)
+> 2. **Ensemble v6+v7** стабильнее любой одиночной модели: min MaxDD -4.3% vs -4.9% (v6) / -4.4% (v7)
+> 3. **ens 2x 24h** = **лучший Sharpe вообще** (3.52) при DD -9.3%. $500→$611 за 60d.
+> 4. **ens 3x 24h** = **лучший Calmar** (14.94). $500→$668 за 60d (~205% ann).
+> 5. 5x ликвидационный порог -20% DD, фактический MaxDD -22.2% → **слишком опасно**.
+> 6. P75 edge с leverage **не помогает** — меньше позиций → выше идиосинкратический риск.
+
 ---
 
 ## 🔥 Leverage × Selectivity (ключевое открытие)
@@ -272,21 +296,22 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 3. ✅ Kelly 30% → 100% (Sharpe стабильный, MaxDD <6%)
 4. ❌ LGB v7: blended target + HPO + funding features → не помогло, v6 лучше
 5. ❌ LGB v8: 2017+ данные + purged WF + per-window HPO → хуже, старые данные вредят
-6. ✅ Confidence-weighted position sizing (softmax) → добавлено в sim
-7. ✅ Edge-based selectivity (P75 filter) → Sharpe +34%, WR 55%→62%
-8. ⬜ **Интегрировать P75 edge в run_fast_sim.py** (+ --leverage, --min-edge CLI args)
-9. ⬜ Ensemble v6 + v7 (v7 лучше на последнем окне, вместе могут быть ещё лучше)
-10. ⬜ Retrain HIST v2 с 12h target → ensemble с LGB
-11. ⬜ On-chain / order book features (funding rate live, OI)
-12. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
+6. ✅ Confidence-weighted position sizing (softmax)
+7. ✅ Edge-based selectivity (P75 filter) → WR 55%→62%, но с leverage не помогает
+8. ✅ Ensemble v6+v7 → Sharpe 2.79 (лучше любой одиночной модели)
+9. ✅ 24h ребалансировка для leverage → costs -35%, Sharpe 3.52 (best ever!)
+10. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
+11. ⬜ Retrain HIST v2 с 12h target → 3-way ensemble с LGB v6 + v7
+12. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
 13. ⬜ OKX API key → paper trading → live с плечом
+14. ⬜ Dynamic leverage: 2x по умолчанию, 3x когда edge > P75
 
-## Конфигурация (текущая — v6 + leverage)
+## Конфигурация (текущая — ensemble + leverage)
 - **Capital**: $500 стартовый, OKX futures
+- **Model**: Ensemble LGB v6 (5 seeds, 121 feats) + LGB v7 (5 seeds, 127 feats)
+- **Positions**: 5 long + 5 short (confidence-weighted softmax sizing)
+- **Rebalance**: every 24h (оптимально для leverage — снижает costs)
+- **Leverage**: 2-3x (2x = Sharpe 3.52 / 3x = Calmar 14.94)
 - **Risk**: kelly=100%, vol_target=1.5%, DD_stop=-20%, DD_resume=-8%
-- **Positions**: 3-5 long + 3-5 short (P75 edge filter)
-- **Edge filter**: |score − median| > P75 (0.031)
-- **Leverage**: 3x (рекомендуемый) / до 5x (агрессивный)
-- **Rebalance**: every 12h
 - **Cost model**: 4 bps/side (taker + slippage) + 1bp/8h funding
-- **Model**: LGB v6, 5 seeds, 121 features, confidence-weighted sizing
+- **Запуск**: `python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --npos 5 --days 60 --capital 500`
