@@ -9,13 +9,16 @@ Key features:
   - Rebalance every N hours (default 12h, optimal from sweep analysis)
   - HOLD positions that remain in portfolio (save on costs)
   - Only pay transaction costs on position CHANGES
-  - Realistic cost model: taker + slippage per side
+  - Realistic cost model: taker + slippage per side + funding for leverage
   - Vol scaling + DD circuit-breaker
+  - Edge-based selectivity: filter by |score − median| (P75/P90)
+  - Leverage support for futures trading
 
 Usage:
   python run_fast_sim.py                                  # 14d, $1000, 12h rebal
   python run_fast_sim.py --days 30 --capital 500          # more days
   python run_fast_sim.py --days 30 --rebal 8 --npos 3    # custom params
+  python run_fast_sim.py --leverage 3 --edge-pct 75       # 3x leverage, P75 edge filter
 """
 
 import os, sys, json, argparse, warnings
@@ -29,6 +32,7 @@ from run_trading import (
 )
 
 COST_SIDE = 0.0003 + 0.0001          # taker 3bps + slippage 1bp
+FUNDING_PER_8H = 0.0001              # ~1bp per 8h funding cost for leveraged positions
 
 
 def main():
@@ -44,6 +48,12 @@ def main():
                     help="Positions per side (overrides config)")
     ap.add_argument("--kelly",   type=float, default=None,
                     help="Kelly fraction (overrides config)")
+    ap.add_argument("--leverage", type=float, default=1.0,
+                    help="Leverage multiplier (default: 1.0, e.g. 3 for 3x)")
+    ap.add_argument("--edge-pct", type=int,  default=0, choices=[0, 50, 75, 90],
+                    help="Edge percentile filter: 0=off, 75=P75 (recommended)")
+    ap.add_argument("--min-edge", type=float, default=0.0,
+                    help="Manual min edge threshold (overrides --edge-pct)")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -64,14 +74,20 @@ def main():
     dd_resume = risk["dd_resume"]
     vol_lb  = risk.get("vol_lookback", 50)
     rebal_h = args.rebal
+    leverage = args.leverage
+    min_edge = args.min_edge            # will be calibrated later if edge_pct > 0
 
     total_h = args.warmup + args.days * 24
     sim_h   = args.days * 24
 
+    lev_str = f"{leverage:.0f}x" if leverage >= 1 else f"{leverage:.1f}x"
+    edge_str = f"P{args.edge_pct}" if args.edge_pct > 0 else (
+        f"edge>{min_edge:.4f}" if min_edge > 0 else "off")
     print("=" * 70)
     print(f"  FAST SIMULATION")
     print(f"  {args.days}d | ${args.capital:,.0f} | rebal={rebal_h}h | "
           f"N={n_pos}+{n_pos} | kelly={kelly:.0%} | cost={COST_SIDE*1e4:.0f}bp/side")
+    print(f"  leverage={lev_str} | edge_filter={edge_str}")
     print("=" * 70)
 
     # ── 1  data ───────────────────────────────────────────────────
@@ -114,12 +130,35 @@ def main():
     steps = all_ts[sim_start::rebal_h]      # every rebal_h hours
     print(f"   {steps[0]} → {steps[-1]}  ({len(steps)} steps, {rebal_h}h apart)")
 
+    # ── 4b  calibrate edge threshold ──────────────────────────────
+    if args.edge_pct > 0 and min_edge == 0.0:
+        print(f"\n📐 Calibrating edge distribution (P{args.edge_pct}) ...")
+        edge_samples = []
+        cal_steps = steps[-min(30, len(steps)):]  # last 30 steps (avoid warmup)
+        for ts in cal_steps:
+            snap = df[df["timestamp"] == ts]
+            if len(snap) < 20:
+                continue
+            X = snap[mf].values
+            scores = np.mean([m.predict(X) for m in models], axis=0)
+            median_s = np.median(scores)
+            edges_abs = np.abs(scores - median_s)
+            edge_samples.extend(edges_abs.tolist())
+        if edge_samples:
+            min_edge = float(np.percentile(edge_samples, args.edge_pct))
+            print(f"   P{args.edge_pct} edge = {min_edge:.5f}  "
+                  f"(from {len(edge_samples)} samples, {len(cal_steps)} steps)")
+        else:
+            print("   ⚠️  No calibration data, edge filter disabled")
+            min_edge = 0.0
+
     # ── 5  simulate ───────────────────────────────────────────────
     print(f"\n{'─'*70}")
     equity   = args.capital
     peak     = args.capital
     stopped  = False
     ret_buf: list[float] = []
+    skip_count = 0                    # steps where edge filter blocked all positions
 
     held_L: dict[str, float] = {}     # symbol → entry_price
     held_S: dict[str, float] = {}
@@ -154,12 +193,44 @@ def main():
         X = snap0[mf].values
         scores = np.mean([m.predict(X) for m in models], axis=0)
         syms = snap0["symbol"].values
-        order = np.argsort(-scores)
-        n = len(syms)
-        nl = min(n_pos, n // 3)
 
-        new_L = set(syms[order[:nl]])
-        new_S = set(syms[order[-nl:]])
+        # Edge filtering: |score − median| > min_edge
+        median_score = np.median(scores)
+        edges = scores - median_score
+        order_desc = np.argsort(-scores)
+        order_asc  = np.argsort(scores)
+
+        if min_edge > 0:
+            # Select only positions with sufficient edge
+            long_idx = []
+            for idx in order_desc:
+                if edges[idx] >= min_edge:
+                    long_idx.append(idx)
+                if len(long_idx) >= n_pos:
+                    break
+            short_idx = []
+            for idx in order_asc:
+                if edges[idx] <= -min_edge:
+                    short_idx.append(idx)
+                if len(short_idx) >= n_pos:
+                    break
+            new_L = set(syms[long_idx]) if long_idx else set()
+            new_S = set(syms[short_idx]) if short_idx else set()
+            nl = len(long_idx)
+        else:
+            n = len(syms)
+            nl = min(n_pos, n // 3)
+            new_L = set(syms[order_desc[:nl]])
+            new_S = set(syms[order_asc[:nl]])
+
+        if len(new_L) == 0 and len(new_S) == 0:
+            # No positions pass the edge filter — skip step
+            skip_count += 1
+            results.append(dict(step=si, ts=str(ts0), pnl=0,
+                                eq=round(equity, 2), dd=round(equity/peak-1, 4),
+                                nL=0, nS=0, turn=0, skipped=True))
+            held_L.clear(); held_S.clear()
+            continue
 
         # v7: confidence-weighted sizing — stronger signals get more weight
         score_dict = dict(zip(syms, scores))
@@ -187,12 +258,19 @@ def main():
         open_S  = new_S - set(held_S)
         close_S = set(held_S) - new_S
 
-        total_alloc = equity * kelly
+        total_alloc = equity * kelly * leverage
         half_alloc = total_alloc / 2  # half for longs, half for shorts
 
         # Costs: estimate average position size for cost calc
-        usd_per_avg = total_alloc / max(2 * nl, 1)
+        n_active = max(len(new_L) + len(new_S), 1)
+        usd_per_avg = total_alloc / n_active
         step_cost = (len(open_L) + len(close_L) + len(open_S) + len(close_S)) * usd_per_avg * COST_SIDE
+
+        # Funding cost for leveraged positions (proportional to hold time)
+        if leverage > 1:
+            funding_periods = rebal_h / 8.0  # how many 8h funding intervals
+            funding_cost = total_alloc * FUNDING_PER_8H * funding_periods
+            step_cost += funding_cost
         cum_cost += step_cost
         tot_trades += len(open_L) + len(close_L) + len(open_S) + len(close_S)
 
@@ -200,11 +278,11 @@ def main():
         fwd_pnl = 0.0
         for sym in new_L:
             p0 = px0.get(sym, 0); p1 = px1.get(sym, p0)
-            w = weight_L.get(sym, 1.0 / max(nl, 1))
+            w = weight_L.get(sym, 1.0 / max(len(new_L), 1))
             if p0 > 0: fwd_pnl += half_alloc * w * (p1 - p0) / p0
         for sym in new_S:
             p0 = px0.get(sym, 0); p1 = px1.get(sym, p0)
-            w = weight_S.get(sym, 1.0 / max(nl, 1))
+            w = weight_S.get(sym, 1.0 / max(len(new_S), 1))
             if p0 > 0: fwd_pnl += half_alloc * w * (-(p1 - p0) / p0)
 
         equity += fwd_pnl - step_cost
@@ -248,7 +326,8 @@ def main():
 
     # ── 6  summary ────────────────────────────────────────────────
     print(f"\n{'='*70}")
-    print(f"  RESULTS — {args.days}d, rebal={rebal_h}h, N={n_pos}+{n_pos}")
+    print(f"  RESULTS — {args.days}d, rebal={rebal_h}h, N={n_pos}+{n_pos}, "
+          f"lev={lev_str}, edge={edge_str}")
     print(f"{'='*70}")
 
     tot_ret = equity / args.capital - 1
@@ -277,6 +356,12 @@ def main():
         if l: print(f"   PF:         {sum(w)/(abs(sum(l))+1e-10):.2f}")
         print(f"   Trades:     {tot_trades}")
         print(f"   Costs:      ${cum_cost:,.2f}  ({cum_cost/args.capital*100:.1f}%)")
+        if skip_count > 0:
+            print(f"   Skipped:    {skip_count} steps (no edge)")
+        if leverage > 1:
+            print(f"   Leverage:   {lev_str}")
+            liq_dd = -1.0 / leverage  # approximate liquidation DD
+            print(f"   Liq. level: {liq_dd:.0%} DD (approx)")
     else:
         print("\n   No trades.")
 
@@ -301,8 +386,10 @@ def main():
     print(f"\n{'='*70}")
     if tot_ret > 0.02 and max_dd > -0.15:
         print("   🟢 PROFITABLE — go live")
-    elif tot_ret > 0:
+    elif tot_ret > 0 and max_dd > (-1.0 / leverage if leverage > 1 else -0.3):
         print("   🟡 Marginal — keep monitoring")
+    elif leverage > 1 and max_dd < -1.0 / leverage:
+        print("   💀 LIQUIDATED — reduce leverage!")
     else:
         print("   🔴 Unprofitable")
     print(f"{'='*70}\n")

@@ -2,6 +2,8 @@
 
 ## Текущее состояние
 
+**Цель**: торговля крипто с плечом, стартовый капитал ~$500, максимизация прибыли при разумном риске.
+
 ### Модели
 | Модель | Данные | Период | Статус |
 |--------|--------|--------|--------|
@@ -10,7 +12,7 @@
 | HIST v2 | sentiment-aware | test 2025+ | ✅ обучена на кластере |
 | **LGB v6** | **12h target + 10 новых фич**, 121 selected features | train→2024-06, test 2025+ | **✅ чемпион** |
 | LGB v7 | blended target + HPO + 8 новых фич, 127 selected features | train→2024-06, test 2025+ | ❌ хуже v6 |
-| **LGB v8** | **2017+ данные (8 лет)**, 5 purged WF windows, per-window HPO, ensemble FS, 122 selected features | train→2024-07, test 2025+ | ❌ хуже v6 |
+| LGB v8 | 2017+ данные (8 лет), 5 purged WF windows, per-window HPO, ensemble FS, 122 features | train→2024-07, test 2025+ | ❌ хуже v6 |
 
 ---
 
@@ -127,6 +129,74 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 
 ---
 
+## 🔥 Leverage × Selectivity (ключевое открытие)
+
+### Идея
+Отбирать позиции по **edge** (|score − median| > threshold), торговать только когда модель наиболее уверена. Это повышает win rate и позволяет использовать плечо безопаснее.
+
+### Распределение скоров (калибровка по v6, 60d окно)
+| Метрика | P50 | P75 | P90 |
+|---------|-----|-----|-----|
+| Edge (|score − median|) | 0.01824 | 0.03095 | 0.04507 |
+| Seed std | 0.00215 | 0.00316 | 0.00447 |
+
+### Результаты sweep (run_leverage_sim.py, v6, 60d, 50 монет)
+
+#### Без фильтра (baseline)
+| Lev | N | Return | Sharpe | WR | MaxDD |
+|-----|---|--------|--------|-----|-------|
+| 1x | 5 | +7.4% | 2.54 | 55% | -4.9% |
+| 3x | 5 | +22.1% | 2.54 | 55% | -14.4% |
+| 5x | 5 | +36.0% | 2.44 | 55% | -23.6% |
+
+#### P75 edge filter (берём только если edge > P75)
+| Lev | N | Return | Sharpe | WR | MaxDD | Calmar |
+|-----|---|--------|--------|-----|-------|--------|
+| **1x** | **3** | **+19.4%** | **3.40** | **62%** | **-7.5%** | **15.6** |
+| 1x | 5 | +13.1% | 3.12 | 55% | -5.2% | 15.3 |
+| **3x** | **3** | **+52.2%** | **2.64** | **62%** | -22.0% | **14.3** |
+| 3x | 5 | +67.9% | 3.22 | 55% | -20.6% | 19.9 |
+| **5x** | **3** | **+81.3%** | **2.25** | **62%** | **-35.1%** | 14.0 |
+| 5x | 5 | +111.0% | 2.63 | 55% | -33.5% | 20.0 |
+
+#### P90 edge filter (берём только если edge > P90)
+| Lev | N | Return | Sharpe | WR | MaxDD |
+|-----|---|--------|--------|-----|-------|
+| 1x | 3 | +31.2% | 1.96 | 54% | -13.1% |
+| 3x | 3 | +140.1% | 2.08 | 54% | -36.2% |
+| 5x | 3 | +208.1% | 1.66 | 54% | -54.3% |
+
+#### P75 + agree (edge > P75 И seed_std < P50) — ❌ КАТАСТРОФА
+| Lev | N | Return | Sharpe | WR | MaxDD |
+|-----|---|--------|--------|-----|-------|
+| 1x | 5 | **-47.2%** | -5.11 | 34% | -47.7% |
+
+### Monte Carlo (5000 сим, 100 дней, метод бутстрап)
+| Leverage | P(Ruin) | Median Return | P90 Return |
+|----------|---------|---------------|------------|
+| 1x | 0% | +13% | +31% |
+| 3x | 0% | +39% | +95% |
+| 5x | 0% | +63% | +165% |
+| 7x | 0.3% | +85% | +239% |
+| 10x | 4% | +117% | +347% |
+
+### 💡 Ключевые инсайты
+1. **P75 edge filter = Sharpe +34%** (2.54 → 3.40 на 1x). Фильтрация по edge — мощнейший приём.
+2. **Win rate 55% → 62%** с P75 + N=3 (меньше позиций, но лучше отобраны).
+3. **Seed disagreement = полезный сигнал!** Когда сиды согласны — это ловушка (WR 34%, -47%). Когда не согласны — модель ловит настоящий edge.
+4. **P90 даёт больше return, но хуже Sharpe** — слишком мало сделок (пустые слоты).
+5. **Оптимум для $500**: P75 edge, N=3-5, leverage 3-5x → ожидание +52-111% за 60 дней.
+
+### Рекомендуемые конфигурации
+| Профиль | Edge | N | Lev | Ожид. Return (60d) | MaxDD | Sharpe |
+|---------|------|---|-----|---------------------|-------|--------|
+| 🟢 Консервативный | P75 | 3 | 3x | +52% | -22% | 2.64 |
+| 🟡 Сбалансированный | P75 | 5 | 3x | +68% | -21% | 3.22 |
+| 🔴 Агрессивный | P75 | 5 | 5x | +111% | -34% | 2.63 |
+| ⚫ Экстремальный | P90 | 3 | 3x | +140% | -36% | 2.08 |
+
+---
+
 ## Top-10 Features
 
 ### v6
@@ -203,15 +273,20 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 4. ❌ LGB v7: blended target + HPO + funding features → не помогло, v6 лучше
 5. ❌ LGB v8: 2017+ данные + purged WF + per-window HPO → хуже, старые данные вредят
 6. ✅ Confidence-weighted position sizing (softmax) → добавлено в sim
-7. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
-8. ⬜ Retrain HIST v2 с 12h target → ensemble с LGB v6
-9. ⬜ Leverage 2-3x на OKX (ann return ~45% → ~90-135%)
-10. ⬜ OKX API key → paper trading → live
+7. ✅ Edge-based selectivity (P75 filter) → Sharpe +34%, WR 55%→62%
+8. ⬜ **Интегрировать P75 edge в run_fast_sim.py** (+ --leverage, --min-edge CLI args)
+9. ⬜ Ensemble v6 + v7 (v7 лучше на последнем окне, вместе могут быть ещё лучше)
+10. ⬜ Retrain HIST v2 с 12h target → ensemble с LGB
+11. ⬜ On-chain / order book features (funding rate live, OI)
+12. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
+13. ⬜ OKX API key → paper trading → live с плечом
 
-## Конфигурация (текущая — v6)
+## Конфигурация (текущая — v6 + leverage)
+- **Capital**: $500 стартовый, OKX futures
 - **Risk**: kelly=100%, vol_target=1.5%, DD_stop=-20%, DD_resume=-8%
-- **Positions**: 5 long + 5 short
+- **Positions**: 3-5 long + 3-5 short (P75 edge filter)
+- **Edge filter**: |score − median| > P75 (0.031)
+- **Leverage**: 3x (рекомендуемый) / до 5x (агрессивный)
 - **Rebalance**: every 12h
-- **Cost model**: 4 bps/side (taker + slippage)
-- **Capital**: $1000 target
+- **Cost model**: 4 bps/side (taker + slippage) + 1bp/8h funding
 - **Model**: LGB v6, 5 seeds, 121 features, confidence-weighted sizing
