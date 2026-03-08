@@ -464,8 +464,8 @@ def main():
                     conf_arr.append(c)
                 raw_w = np.array(raw_w)
                 w = raw_w / raw_w.sum()
-                # Cap per position at its confidence (floor 15%)
-                max_w = np.clip(np.array(conf_arr), 0.15, 1.0)
+                # Cap per position at its confidence (floor 15%, ceiling 40%)
+                max_w = np.clip(np.array(conf_arr), 0.15, 0.40)
                 w = np.minimum(w, max_w)
             else:
                 # Original softmax-like weighting

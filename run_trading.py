@@ -890,9 +890,9 @@ def construct_portfolio(signals, capital, risk_cfg, state):
         # Multiply by confidence: high-agreement positions get more capital
         raw_w = raw_w * conf_vals
         weights = raw_w / raw_w.sum()
-        # Cap per position: max share = that position's confidence
+        # Cap per position: max share = confidence, hard ceiling 40%
         # High confidence → allowed more capital; low confidence → capped tighter
-        max_weights = np.clip(conf_vals, 0.15, 1.0)  # floor 15% so low-conf still gets something
+        max_weights = np.clip(conf_vals, 0.15, 0.40)  # floor 15%, ceiling 40%
         capped = np.minimum(weights, max_weights)
         # Don't re-normalize — leftover capital stays idle (safer than over-concentrating)
         result = []

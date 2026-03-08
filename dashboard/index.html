@@ -160,17 +160,24 @@
 
         <!-- Model Signals -->
         <div class="glass-card rounded-xl p-6 fade-in">
-            <h2 class="text-lg font-semibold text-white mb-4">Latest Model Signals</h2>
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-white">Latest Model Signals</h2>
+                <div class="flex items-center gap-2">
+                    <span class="text-dark-500 text-xs">Sort:</span>
+                    <button id="sort-score" onclick="setSignalSort('score')" class="px-2 py-0.5 rounded text-xs font-medium bg-accent text-white">Score</button>
+                    <button id="sort-conf" onclick="setSignalSort('conf')" class="px-2 py-0.5 rounded text-xs font-medium bg-dark-700 text-dark-400 hover:bg-dark-600">Confidence</button>
+                </div>
+            </div>
             <div class="grid grid-cols-2 gap-4">
                 <div>
                     <h3 class="text-profit text-xs font-semibold uppercase tracking-wider mb-3">🟢 Top Longs</h3>
-                    <div class="space-y-2" id="signals-long">
+                    <div class="space-y-2 overflow-y-auto max-h-96" id="signals-long">
                         <div class="text-dark-500 text-sm">—</div>
                     </div>
                 </div>
                 <div>
                     <h3 class="text-loss text-xs font-semibold uppercase tracking-wider mb-3">🔴 Top Shorts</h3>
-                    <div class="space-y-2" id="signals-short">
+                    <div class="space-y-2 overflow-y-auto max-h-96" id="signals-short">
                         <div class="text-dark-500 text-sm">—</div>
                     </div>
                 </div>
@@ -238,6 +245,60 @@
     </footer>
 
     <script>
+    // ─── Signals Sort ─────────────────────────────────────────
+    let signalSortMode = 'score';  // 'score' or 'conf'
+    let cachedSignals = [];
+
+    function setSignalSort(mode) {
+        signalSortMode = mode;
+        document.getElementById('sort-score').className = mode === 'score'
+            ? 'px-2 py-0.5 rounded text-xs font-medium bg-accent text-white'
+            : 'px-2 py-0.5 rounded text-xs font-medium bg-dark-700 text-dark-400 hover:bg-dark-600';
+        document.getElementById('sort-conf').className = mode === 'conf'
+            ? 'px-2 py-0.5 rounded text-xs font-medium bg-accent text-white'
+            : 'px-2 py-0.5 rounded text-xs font-medium bg-dark-700 text-dark-400 hover:bg-dark-600';
+        renderSignals();
+    }
+
+    function renderSignals() {
+        let slongs, sshorts;
+        if (signalSortMode === 'conf') {
+            slongs = cachedSignals.filter(s => s.score > 0).sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+            sshorts = cachedSignals.filter(s => s.score < 0).sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+        } else {
+            slongs = cachedSignals.filter(s => s.score > 0).sort((a, b) => b.score - a.score);
+            sshorts = cachedSignals.filter(s => s.score < 0).sort((a, b) => a.score - b.score);
+        }
+
+        const renderRow = (s, isLong) => {
+            const conf = s.confidence || 0;
+            const confPct = Math.round(conf * 100);
+            const confColor = conf >= 0.85 ? 'text-blue-400' : conf >= 0.65 ? 'text-profit' : conf >= 0.5 ? 'text-yellow-400' : 'text-loss';
+            const barColor = isLong ? 'bg-profit' : 'bg-loss';
+            const scoreColor = isLong ? 'text-profit' : 'text-loss';
+            const scoreText = isLong ? `+${s.score.toFixed(3)}` : s.score.toFixed(3);
+            const barWidth = Math.min(Math.abs(s.score) / 2 * 100, 100);
+            return `
+            <div class="flex justify-between items-center text-sm">
+                <span class="text-dark-200">${s.symbol}</span>
+                <div class="flex items-center gap-2">
+                    <span class="font-mono text-xs ${confColor}" title="Confidence">${confPct}%</span>
+                    <div class="w-24 h-1.5 bg-dark-800 rounded-full overflow-hidden">
+                        <div class="h-full ${barColor} rounded-full" style="width: ${barWidth}%"></div>
+                    </div>
+                    <span class="font-mono text-xs ${scoreColor} w-12 text-right">${scoreText}</span>
+                </div>
+            </div>`;
+        };
+
+        document.getElementById('signals-long').innerHTML = slongs.length
+            ? slongs.map(s => renderRow(s, true)).join('')
+            : '<div class="text-dark-500 text-sm">—</div>';
+        document.getElementById('signals-short').innerHTML = sshorts.length
+            ? sshorts.map(s => renderRow(s, false)).join('')
+            : '<div class="text-dark-500 text-sm">—</div>';
+    }
+
     // ─── Chart Setup ─────────────────────────────────────────
     let equityChart;
     let allEquityData = [];
@@ -474,43 +535,9 @@
                 }).join('');
             }
 
-            // ── Signals (sorted by |score| descending, show top 10) ──
-            const slongs = (d.signals || []).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 10);
-            const sshorts = (d.signals || []).filter(s => s.score < 0).sort((a, b) => a.score - b.score).slice(0, 10);
-
-            document.getElementById('signals-long').innerHTML = slongs.length ? slongs.map(s => {
-                const conf = s.confidence || 0;
-                const confPct = Math.round(conf * 100);
-                const confColor = conf >= 0.65 ? 'text-profit' : conf >= 0.5 ? 'text-yellow-400' : 'text-loss';
-                return `
-                <div class="flex justify-between items-center text-sm">
-                    <span class="text-dark-200">${s.symbol}</span>
-                    <div class="flex items-center gap-2">
-                        <span class="font-mono text-xs ${confColor}" title="Confidence">${confPct}%</span>
-                        <div class="w-24 h-1.5 bg-dark-800 rounded-full overflow-hidden">
-                            <div class="h-full bg-profit rounded-full" style="width: ${Math.min(s.score / 2 * 100, 100)}%"></div>
-                        </div>
-                        <span class="font-mono text-xs text-profit w-12 text-right">+${s.score.toFixed(3)}</span>
-                    </div>
-                </div>`;
-            }).join('') : '<div class="text-dark-500 text-sm">—</div>';
-
-            document.getElementById('signals-short').innerHTML = sshorts.length ? sshorts.map(s => {
-                const conf = s.confidence || 0;
-                const confPct = Math.round(conf * 100);
-                const confColor = conf >= 0.65 ? 'text-profit' : conf >= 0.5 ? 'text-yellow-400' : 'text-loss';
-                return `
-                <div class="flex justify-between items-center text-sm">
-                    <span class="text-dark-200">${s.symbol}</span>
-                    <div class="flex items-center gap-2">
-                        <span class="font-mono text-xs ${confColor}" title="Confidence">${confPct}%</span>
-                        <div class="w-24 h-1.5 bg-dark-800 rounded-full overflow-hidden">
-                            <div class="h-full bg-loss rounded-full" style="width: ${Math.min(Math.abs(s.score) / 2 * 100, 100)}%"></div>
-                        </div>
-                        <span class="font-mono text-xs text-loss w-12 text-right">${s.score.toFixed(3)}</span>
-                    </div>
-                </div>`;
-            }).join('') : '<div class="text-dark-500 text-sm">—</div>';
+            // ── Signals (sorted by score or confidence, show all) ──
+            cachedSignals = d.signals || [];
+            renderSignals();
 
             // ── Equity Chart ──
             allEquityData = (d.equity_history || []).map(e => ({ x: e.time, y: e.equity }));
