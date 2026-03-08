@@ -40,6 +40,8 @@ import json
 import time
 import argparse
 import warnings
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
@@ -148,13 +150,33 @@ GDELT_QUERY_GROUPS = [
 RAW_POLITICAL_PATH = os.path.join(OUTPUT_DIR, "raw_political_news.parquet")
 
 
+CHECKPOINT_PATH = RAW_NEWS_PATH + ".checkpoint"
+
+
 def _save_checkpoint(all_news):
     """Save intermediate results during long fetches."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     checkpoint_df = pd.DataFrame(all_news)
-    checkpoint_path = RAW_NEWS_PATH + ".checkpoint"
-    checkpoint_df.to_parquet(checkpoint_path, index=False)
-    print(f"   💾 Checkpoint: {len(all_news):,} items → {checkpoint_path}")
+    checkpoint_df.to_parquet(CHECKPOINT_PATH, index=False)
+    print(f"   💾 Checkpoint: {len(all_news):,} items → {CHECKPOINT_PATH}")
+
+
+def _load_checkpoint():
+    """
+    Load best available data for resume: checkpoint > raw_news.
+    Returns (DataFrame, oldest_timestamp) or (None, None).
+    """
+    # Prefer checkpoint (more data from interrupted runs)
+    for path in [CHECKPOINT_PATH, RAW_NEWS_PATH]:
+        if os.path.exists(path):
+            df = pd.read_parquet(path)
+            if len(df) > 0 and "published_on" in df.columns:
+                oldest_ts = int(df["published_on"].min())
+                oldest_date = datetime.fromtimestamp(oldest_ts, tz=timezone.utc)
+                print(f"   📂 Found {len(df):,} items in {os.path.basename(path)}, "
+                      f"oldest: {oldest_date.strftime('%Y-%m-%d')}")
+                return df, oldest_ts
+    return None, None
 
 
 # ─── Sentiment Scorers ─────────────────────────────────────────────
@@ -375,32 +397,20 @@ def prescore_all_news(news_items, scorer="vader"):
 
 
 # ─── CryptoCompare Fetcher ─────────────────────────────────────────
-def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None):
+
+def _fetch_worker(worker_id, start_ts, cutoff_ts, api_key, delay, results_list, lock, stop_event):
     """
-    Fetch historical crypto news from CryptoCompare.
-    Free API, no key needed (but key increases limits).
-    
-    Rate limits (free, no key): 3000/hour, 7500/day
-    Rate limits (free key): 100k/month
-    
-    Returns list of news dicts.
+    Worker thread: fetch pages from start_ts backward until cutoff_ts.
+    Appends to results_list under lock.
     """
     base_url = "https://min-api.cryptocompare.com/data/v2/news/"
-    
-    all_news = []
-    cutoff_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
-    
-    # Start from most recent or resume point
-    lTs = resume_from_ts or int(datetime.now(timezone.utc).timestamp())
-    
+    local_news = []
+    lTs = start_ts
     page = 0
-    oldest_seen = lTs
     consecutive_empty = 0
+    tag = f"[W{worker_id}]"
     
-    print(f"📡 Fetching CryptoCompare news (target: {days} days back)...")
-    print(f"   Cutoff: {datetime.fromtimestamp(cutoff_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
-    
-    while oldest_seen > cutoff_ts:
+    while lTs > cutoff_ts and not stop_event.is_set():
         try:
             params = {"lang": "EN", "lTs": lTs, "sortOrder": "latest"}
             if api_key:
@@ -410,25 +420,22 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None):
             resp.raise_for_status()
             data = resp.json()
             
-            # Check rate limit
+            # Rate limit check
             rate_limit = data.get("RateLimit", {})
             calls_made = rate_limit.get("calls_made", {})
             max_calls = rate_limit.get("max_calls", {})
             hour_used = calls_made.get("hour", 0)
             hour_max = max_calls.get("hour", 3000)
             
-            if hour_used >= hour_max - 10:
-                wait_mins = 5
-                print(f"\n   ⏳ Rate limit approaching ({hour_used}/{hour_max}). "
-                      f"Waiting {wait_mins} min...")
-                time.sleep(wait_mins * 60)
+            if hour_used >= hour_max - 50:
+                print(f"   {tag} ⏳ Rate limit ({hour_used}/{hour_max}). Waiting 5 min...")
+                time.sleep(300)
                 continue
             
-            # Type 99 = rate limited / error
             if data.get("Type") == 99 or not data.get("Data"):
                 consecutive_empty += 1
-                if consecutive_empty >= 3:
-                    print(f"\n   ⏳ Rate limited (Type={data.get('Type')}). Waiting 5 min...")
+                if consecutive_empty >= 5:
+                    print(f"   {tag} ⏳ Rate limited, waiting 5 min...")
                     time.sleep(300)
                     consecutive_empty = 0
                     continue
@@ -438,8 +445,7 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None):
             news_items = data["Data"]
             if not isinstance(news_items, list) or not news_items:
                 consecutive_empty += 1
-                if consecutive_empty >= 5:
-                    print(f"   ⚠️  No more data available, stopping.")
+                if consecutive_empty >= 10:
                     break
                 time.sleep(1)
                 continue
@@ -447,10 +453,10 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None):
             consecutive_empty = 0
             
             for item in news_items:
-                all_news.append({
+                local_news.append({
                     "id": item.get("id"),
                     "title": item.get("title", ""),
-                    "body": item.get("body", "")[:500],  # truncate body
+                    "body": item.get("body", "")[:500],
                     "categories": item.get("categories", ""),
                     "source": item.get("source_info", {}).get("name", ""),
                     "published_on": item.get("published_on", 0),
@@ -458,33 +464,117 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None):
                     "tags": item.get("tags", ""),
                 })
             
-            oldest_ts = min(item["published_on"] for item in news_items)
-            newest_ts = max(item["published_on"] for item in news_items)
-            lTs = oldest_ts  # paginate backward
-            oldest_seen = oldest_ts
+            oldest_ts = min(it["published_on"] for it in news_items)
+            lTs = oldest_ts
             page += 1
             
-            if page % 50 == 0:
+            if page % 100 == 0:
                 oldest_date = datetime.fromtimestamp(oldest_ts, tz=timezone.utc)
-                print(f"   Page {page}: {len(all_news):,} news, "
-                      f"oldest: {oldest_date.strftime('%Y-%m-%d')}, "
-                      f"rate: {hour_used}/{hour_max}/hr")
+                print(f"   {tag} Page {page}: {len(local_news):,} news, "
+                      f"oldest: {oldest_date.strftime('%Y-%m-%d')}")
             
-            # Checkpoint save every 500 pages
-            if page % 500 == 0 and all_news:
-                _save_checkpoint(all_news)
-            
-            time.sleep(CRYPTOCOMPARE_DELAY)
+            time.sleep(delay)
             
         except requests.exceptions.RequestException as e:
-            print(f"   ⚠️  Request error: {e}. Retrying in 5s...")
+            print(f"   {tag} ⚠️  Request error: {e}. Retrying in 5s...")
             time.sleep(5)
             continue
         except Exception as e:
-            print(f"   ❌ Error: {e}")
+            print(f"   {tag} ❌ Error: {e}")
             break
     
-    print(f"   ✅ Fetched {len(all_news):,} news items across {page} pages")
+    # Flush to shared results
+    with lock:
+        results_list.extend(local_news)
+    
+    oldest_date = datetime.fromtimestamp(lTs, tz=timezone.utc).strftime('%Y-%m-%d')
+    print(f"   {tag} ✅ Done: {len(local_news):,} items, {page} pages, reached {oldest_date}")
+
+
+def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None, workers=1):
+    """
+    Fetch historical crypto news from CryptoCompare.
+    
+    With workers>1, splits the time range into chunks and fetches in parallel.
+    Each worker paginates backward through its own time slice.
+    
+    Rate limits (free, no key): 3000/hour, 7500/day
+    Rate limits (free key): 100k/month (~50 req/min = ~3000/hr)
+    """
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    cutoff_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+    
+    # Start from resume point or now
+    start_ts = resume_from_ts or now_ts
+    
+    print(f"📡 Fetching CryptoCompare news (target: {days} days back, {workers} workers)...")
+    print(f"   Start: {datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
+    print(f"   Cutoff: {datetime.fromtimestamp(cutoff_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
+    
+    if start_ts <= cutoff_ts:
+        print("   ✅ Already have data past cutoff, nothing to fetch.")
+        return []
+    
+    # Adaptive delay: with API key and multiple workers, go faster
+    delay = max(0.05, CRYPTOCOMPARE_DELAY / max(1, workers)) if api_key else CRYPTOCOMPARE_DELAY
+    
+    if workers <= 1:
+        # Single-threaded (legacy path)
+        results = []
+        lock = threading.Lock()
+        stop_event = threading.Event()
+        _fetch_worker(0, start_ts, cutoff_ts, api_key, delay, results, lock, stop_event)
+        
+        # Checkpoint
+        if results:
+            _save_checkpoint(results)
+        
+        return results
+    
+    # ─── Multi-threaded: split time range into chunks ───────────
+    total_range = start_ts - cutoff_ts
+    chunk_size = total_range // workers
+    
+    all_news = []
+    lock = threading.Lock()
+    stop_event = threading.Event()
+    
+    print(f"   ⚡ Splitting {total_range // 86400} days into {workers} chunks of ~{chunk_size // 86400} days")
+    
+    futures = []
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for i in range(workers):
+            w_start = start_ts - (i * chunk_size)
+            w_cutoff = start_ts - ((i + 1) * chunk_size) if i < workers - 1 else cutoff_ts
+            
+            w_start_date = datetime.fromtimestamp(w_start, tz=timezone.utc).strftime('%Y-%m-%d')
+            w_cutoff_date = datetime.fromtimestamp(w_cutoff, tz=timezone.utc).strftime('%Y-%m-%d')
+            print(f"   [W{i}] {w_start_date} → {w_cutoff_date}")
+            
+            fut = executor.submit(
+                _fetch_worker, i, w_start, w_cutoff, api_key, delay,
+                all_news, lock, stop_event
+            )
+            futures.append(fut)
+        
+        try:
+            # Wait for all workers; checkpoint periodically
+            while not all(f.done() for f in futures):
+                time.sleep(30)
+                with lock:
+                    if len(all_news) > 0 and len(all_news) % 25000 < 1000:
+                        _save_checkpoint(all_news)
+        except KeyboardInterrupt:
+            print("\n   ⚠️  Interrupted! Saving checkpoint...")
+            stop_event.set()
+            for f in futures:
+                f.cancel()
+    
+    # Final checkpoint
+    if all_news:
+        _save_checkpoint(all_news)
+    
+    print(f"   ✅ Total fetched: {len(all_news):,} news items")
     return all_news
 
 
@@ -1049,6 +1139,8 @@ def main():
                        default="vader",
                        help="Sentiment scorer: vader (fast/CPU), finbert (GPU/finance), "
                             "cryptobert (GPU/crypto, best) [default: vader]")
+    parser.add_argument("--workers", type=int, default=4,
+                       help="Parallel download workers (default: 4, use 1 for sequential)")
     args = parser.parse_args()
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -1060,17 +1152,24 @@ def main():
         # CryptoCompare (crypto news)
         if args.source in ("crypto", "all"):
             resume_ts = None
-            if args.resume and os.path.exists(RAW_NEWS_PATH):
-                existing = pd.read_parquet(RAW_NEWS_PATH)
-                if len(existing) > 0 and "published_on" in existing.columns:
-                    resume_ts = int(existing["published_on"].min())
+            checkpoint_df = None
+            
+            if args.resume:
+                checkpoint_df, resume_ts = _load_checkpoint()
+                if resume_ts:
                     print(f"📂 Resuming from {datetime.fromtimestamp(resume_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
             
             cc_news = fetch_cryptocompare_news(
                 days=args.days, resume_from_ts=resume_ts,
-                api_key=args.cc_api_key
+                api_key=args.cc_api_key, workers=args.workers
             )
             all_news.extend(cc_news)
+            
+            # Merge with checkpoint data
+            if checkpoint_df is not None and len(checkpoint_df) > 0:
+                checkpoint_items = checkpoint_df.to_dict("records")
+                all_news.extend(checkpoint_items)
+                print(f"   📂 Merged {len(checkpoint_items):,} items from checkpoint")
         
         # GDELT (political/macro news) — free, unlimited, no key!
         if args.source in ("political", "all"):
@@ -1108,16 +1207,8 @@ def main():
             
             print(f"\n📦 Total unique news: {len(unique_news):,} (deduped from {len(all_news):,})")
             
-            # Save raw news (merge with existing if resuming)
+            # Save raw news (checkpoint data already merged above)
             raw_df = pd.DataFrame(unique_news)
-            
-            if args.resume and os.path.exists(RAW_NEWS_PATH):
-                existing = pd.read_parquet(RAW_NEWS_PATH)
-                if len(existing) > 0:
-                    raw_df = pd.concat([existing, raw_df]).drop_duplicates(
-                        subset=["title", "published_on"]).reset_index(drop=True)
-                    print(f"   Merged with existing: {len(raw_df):,} total")
-            
             raw_df.to_parquet(RAW_NEWS_PATH, index=False)
             print(f"   💾 Saved raw news → {RAW_NEWS_PATH}")
             news_items = raw_df.to_dict("records")
