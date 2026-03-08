@@ -11,20 +11,27 @@ Data sources:
      - Global news/events database, updated every 15 minutes
      - Political/macro events (Trump, regulators, sanctions, etc.)
      - Full-text search by keywords
-  3. VADER sentiment analysis on news titles (lightweight, fast)
+  3. Sentiment scorers (configurable via --scorer):
+     - vader: VADER rule-based (fast, CPU, ~60% accuracy on finance)
+     - finbert: ProsusAI/finbert (GPU, ~87% accuracy on finance)
+     - cryptobert: ElKulako/cryptobert (GPU, trained on 3.2M crypto tweets)
 
 Output: data/sentiment/crypto_news.parquet
   Per-coin + market-level + political sentiment features (hourly)
 
 Usage:
-  python fetch_crypto_news.py                           # fetch all (crypto + political)
-  python fetch_crypto_news.py --days 730                # last 2 years
-  python fetch_crypto_news.py --source crypto           # crypto only
-  python fetch_crypto_news.py --source political        # political only  
-  python fetch_crypto_news.py --source all              # both (default)
-  python fetch_crypto_news.py --resume                  # resume from last fetch
-  python fetch_crypto_news.py --skip-fetch              # rebuild features only
-  python fetch_crypto_news.py --cc-api-key KEY          # CryptoCompare key (more calls)
+  python fetch_crypto_news.py                               # fetch all (crypto + political)
+  python fetch_crypto_news.py --days 730                    # last 2 years
+  python fetch_crypto_news.py --source crypto               # crypto only
+  python fetch_crypto_news.py --source political            # political only  
+  python fetch_crypto_news.py --source all                  # both (default)
+  python fetch_crypto_news.py --resume                      # resume from last fetch
+  python fetch_crypto_news.py --skip-fetch                  # rebuild features only
+  python fetch_crypto_news.py --cc-api-key KEY              # CryptoCompare key (more calls)
+  python fetch_crypto_news.py --scorer finbert              # use FinBERT (GPU)
+  python fetch_crypto_news.py --scorer cryptobert           # use CryptoBERT (GPU, best for crypto)
+  python fetch_crypto_news.py --scorer vader                # use VADER (CPU, default)
+  python fetch_crypto_news.py --skip-fetch --scorer finbert # re-score existing data with FinBERT
 """
 
 import os
@@ -150,7 +157,9 @@ def _save_checkpoint(all_news):
     print(f"   💾 Checkpoint: {len(all_news):,} items → {checkpoint_path}")
 
 
-# ─── VADER Sentiment ──────────────────────────────────────────────
+# ─── Sentiment Scorers ─────────────────────────────────────────────
+
+# --- VADER (rule-based, fast, CPU) ---
 def get_vader_analyzer():
     """Lazy-load VADER sentiment analyzer."""
     try:
@@ -169,6 +178,200 @@ def analyze_sentiment(text, analyzer):
         return 0.0
     scores = analyzer.polarity_scores(text)
     return scores["compound"]
+
+
+# --- FinBERT / CryptoBERT (transformer, GPU-accelerated) ---
+def _detect_device():
+    """Detect best available device: cuda > mps > cpu."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            dev = "cuda"
+            name = torch.cuda.get_device_name(0)
+            print(f"   🚀 Using CUDA: {name}")
+            return dev
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            print("   🍎 Using MPS (Apple Silicon)")
+            return "mps"
+    except ImportError:
+        pass
+    print("   💻 Using CPU (slow for transformers!)")
+    return "cpu"
+
+
+def get_transformer_scorer(model_name="finbert"):
+    """
+    Load a transformer-based sentiment model.
+    
+    Supported models:
+      - 'finbert':     ProsusAI/finbert  (financial news, ~87% accuracy)
+      - 'cryptobert':  ElKulako/cryptobert (crypto tweets, 3.2M training samples)
+    
+    Returns (pipeline, label_map) tuple.
+    """
+    try:
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline as hf_pipeline
+        import torch
+    except ImportError:
+        print("❌ transformers / torch not installed. Install with:")
+        print(f"   {sys.executable} -m pip install transformers torch")
+        sys.exit(1)
+    
+    MODEL_MAP = {
+        "finbert": {
+            "hf_name": "ProsusAI/finbert",
+            # FinBERT labels: positive, negative, neutral → map to [-1, +1]
+            "label_map": {"positive": 1.0, "negative": -1.0, "neutral": 0.0},
+        },
+        "cryptobert": {
+            "hf_name": "ElKulako/cryptobert",
+            # CryptoBERT labels: Bullish, Bearish, Neutral → map to [-1, +1]
+            "label_map": {"Bullish": 1.0, "Bearish": -1.0, "Neutral": 0.0},
+        },
+    }
+    
+    if model_name not in MODEL_MAP:
+        print(f"❌ Unknown model '{model_name}'. Choices: {list(MODEL_MAP.keys())}")
+        sys.exit(1)
+    
+    cfg = MODEL_MAP[model_name]
+    hf_name = cfg["hf_name"]
+    label_map = cfg["label_map"]
+    
+    device = _detect_device()
+    device_id = 0 if device == "cuda" else (-1 if device == "cpu" else device)
+    
+    print(f"🤖 Loading {model_name} ({hf_name})...")
+    tokenizer = AutoTokenizer.from_pretrained(hf_name)
+    model = AutoModelForSequenceClassification.from_pretrained(hf_name)
+    
+    # Use float16 on GPU for speed
+    import torch
+    if device == "cuda":
+        model = model.half()
+    
+    pipe = hf_pipeline(
+        "sentiment-analysis",
+        model=model,
+        tokenizer=tokenizer,
+        device=device_id,
+        truncation=True,
+        max_length=512,
+        batch_size=64,  # adjust for GPU memory
+    )
+    
+    print(f"   ✅ Model loaded on {device}")
+    return pipe, label_map
+
+
+def score_batch_transformer(texts, pipe, label_map):
+    """
+    Score a batch of texts using a transformer pipeline.
+    Returns list of float scores in [-1, +1].
+    
+    Uses weighted score: sum(label_value * probability) for each text,
+    so a "60% positive, 40% neutral" headline gets +0.6, not +1.0.
+    """
+    if not texts:
+        return []
+    
+    # Clean texts
+    clean = []
+    for t in texts:
+        if not t or not isinstance(t, str) or len(t.strip()) == 0:
+            clean.append("neutral")  # placeholder
+        else:
+            clean.append(t[:512])  # truncate to model max
+    
+    # Score in batches with return_all_scores to get probabilities
+    try:
+        results = pipe(clean, return_all_scores=True)
+    except Exception as e:
+        print(f"   ⚠️  Batch scoring error: {e}. Falling back to single-item scoring.")
+        scores = []
+        for t in clean:
+            try:
+                res = pipe(t, return_all_scores=True)
+                weighted = sum(
+                    label_map.get(r["label"], 0.0) * r["score"]
+                    for r in res[0]
+                )
+                scores.append(np.clip(weighted, -1.0, 1.0))
+            except Exception:
+                scores.append(0.0)
+        return scores
+    
+    # Compute weighted scores from all-class probabilities
+    scores = []
+    for res in results:
+        weighted = sum(
+            label_map.get(r["label"], 0.0) * r["score"]
+            for r in res
+        )
+        scores.append(np.clip(weighted, -1.0, 1.0))
+    
+    return scores
+
+
+def prescore_all_news(news_items, scorer="vader"):
+    """
+    Pre-compute sentiment scores for all news items.
+    Adds 'sentiment_score' field to each item dict (in-place).
+    
+    For transformers: batch processing on GPU (fast).
+    For VADER: sequential (still fast since rule-based).
+    """
+    n = len(news_items)
+    print(f"\n🎯 Scoring {n:,} news items with '{scorer}'...")
+    
+    if scorer == "vader":
+        analyzer = get_vader_analyzer()
+        for i, item in enumerate(news_items):
+            item["sentiment_score"] = analyze_sentiment(item.get("title", ""), analyzer)
+            if (i + 1) % 50000 == 0:
+                print(f"   Scored {i + 1:,}/{n:,}")
+    else:
+        # Transformer-based (finbert / cryptobert)
+        pipe, label_map = get_transformer_scorer(scorer)
+        
+        titles = [item.get("title", "") for item in news_items]
+        
+        # Process in mega-batches to show progress
+        MEGA_BATCH = 10000
+        all_scores = []
+        
+        for start in range(0, n, MEGA_BATCH):
+            end = min(start + MEGA_BATCH, n)
+            batch_titles = titles[start:end]
+            batch_scores = score_batch_transformer(batch_titles, pipe, label_map)
+            all_scores.extend(batch_scores)
+            print(f"   Scored {end:,}/{n:,}  "
+                  f"(avg={np.mean(batch_scores):+.4f}, "
+                  f"pos={sum(1 for s in batch_scores if s > 0.1)}, "
+                  f"neg={sum(1 for s in batch_scores if s < -0.1)})")
+        
+        for i, score in enumerate(all_scores):
+            news_items[i]["sentiment_score"] = score
+        
+        # Free GPU memory
+        del pipe
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+    
+    # Stats
+    scores = [item.get("sentiment_score", 0) for item in news_items]
+    pos = sum(1 for s in scores if s > 0.1)
+    neg = sum(1 for s in scores if s < -0.1)
+    neu = n - pos - neg
+    print(f"   ✅ Sentiment distribution: {pos:,} positive ({pos/n:.1%}), "
+          f"{neg:,} negative ({neg/n:.1%}), {neu:,} neutral ({neu/n:.1%})")
+    print(f"   Mean={np.mean(scores):+.4f}, Std={np.std(scores):.4f}")
+    
+    return news_items
 
 
 # ─── CryptoCompare Fetcher ─────────────────────────────────────────
@@ -564,11 +767,14 @@ def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
     """
     Build per-coin, per-hour sentiment features from mapped news.
     
+    Expects items to have pre-computed 'sentiment_score' field
+    (from prescore_all_news). Falls back to VADER if missing.
+    
     Features per coin per hour:
       - news_count_1h: raw count in this hour
       - news_count_24h: rolling 24h count
       - news_count_7d: rolling 7d count
-      - news_sentiment_1h: VADER sentiment of news in this hour (mean)
+      - news_sentiment_1h: sentiment of news in this hour (mean)
       - news_sentiment_24h: rolling 24h mean sentiment
       - news_sentiment_7d: rolling 7d mean sentiment
       - news_sentiment_momentum: 24h sentiment - 7d sentiment
@@ -578,16 +784,25 @@ def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
       - market_news_count_24h: total crypto news in 24h
       - market_news_sentiment_24h: market-wide sentiment
     
-    Political/macro features (NEW — same for all coins):
+    Political/macro features (same for all coins):
       - political_news_count_24h: political/macro news volume
       - political_sentiment_24h: political news sentiment
       - political_sentiment_7d: 7d rolling political sentiment
       - political_sentiment_shock: |24h - 7d| political sentiment (sudden shift)
       - political_news_volume_zscore: z-score of political news volume
     """
-    analyzer = get_vader_analyzer()
+    # Fallback VADER analyzer only if some items lack pre-computed scores
+    _vader = None
+    def _get_score(item):
+        nonlocal _vader
+        if "sentiment_score" in item:
+            return item["sentiment_score"]
+        # Fallback to VADER
+        if _vader is None:
+            _vader = get_vader_analyzer()
+        return analyze_sentiment(item.get("title", ""), _vader)
     
-    print("🔍 Computing sentiment scores...")
+    print("🔍 Building sentiment features...")
     
     # Build per-coin hourly raw data
     # coin → list of (hour_ts, sentiment_score)
@@ -602,18 +817,17 @@ def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
         # Round to hour
         hour_ts = pd.Timestamp(ts, unit="s", tz="UTC").floor("h")
         
-        # Compute sentiment
-        title = item.get("title", "")
-        sentiment = analyze_sentiment(title, analyzer)
+        # Get pre-computed or fallback sentiment
+        sentiment = _get_score(item)
         
-        # If CryptoPanic votes available, boost with vote sentiment
+        # If CryptoPanic votes available, blend with vote sentiment
         if item.get("votes_positive") or item.get("votes_negative"):
             pos = item.get("votes_positive", 0)
             neg = item.get("votes_negative", 0)
             total_votes = pos + neg
             if total_votes > 0:
                 vote_sentiment = (pos - neg) / total_votes  # [-1, +1]
-                # Blend: 60% VADER + 40% votes
+                # Blend: 60% model + 40% votes
                 sentiment = 0.6 * sentiment + 0.4 * vote_sentiment
         
         for coin in coins:
@@ -741,7 +955,7 @@ def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
                 continue
             hour_ts = pd.Timestamp(ts, unit="s", tz="UTC").floor("h")
             if hour_ts in set(hourly_range):
-                sentiment = analyze_sentiment(item.get("title", ""), analyzer)
+                sentiment = _get_score(item)
                 pol_count[hour_ts] += 1
                 pol_sent_sum[hour_ts] += sentiment
         
@@ -831,6 +1045,10 @@ def main():
     parser.add_argument("--skip-fetch", action="store_true", help="Skip fetching, only rebuild features from raw data")
     parser.add_argument("--source", choices=["crypto", "political", "all"], 
                        default="all", help="News source: crypto, political, or all (default)")
+    parser.add_argument("--scorer", choices=["vader", "finbert", "cryptobert"],
+                       default="vader",
+                       help="Sentiment scorer: vader (fast/CPU), finbert (GPU/finance), "
+                            "cryptobert (GPU/crypto, best) [default: vader]")
     args = parser.parse_args()
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -914,6 +1132,9 @@ def main():
             sys.exit(1)
         news_items = raw_df.to_dict("records")
         print(f"📂 Loaded {len(news_items):,} raw news items")
+    
+    # ─── Score all news with selected scorer ─────────────────────
+    news_items = prescore_all_news(news_items, scorer=args.scorer)
     
     # ─── Map to coins ────────────────────────────────────────────
     print("\n🔗 Mapping news to coins...")
