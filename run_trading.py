@@ -49,6 +49,7 @@ import json
 import signal
 import argparse
 import warnings
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -101,7 +102,7 @@ _OKX_BLOCKED = {
     'MATIC/USDT', 'UNI/USDT', 'APT/USDT', 'FTM/USDT', 'MANA/USDT',
     'RUNE/USDT', 'EGLD/USDT', 'FLOW/USDT', 'SNX/USDT', 'ENJ/USDT',
     'BAT/USDT', 'ONE/USDT', 'ICX/USDT', 'ENS/USDT', 'GALA/USDT',
-    'GRT/USDT', 'CHZ/USDT', 'MKR/USDT',  # 51155 compliance restricted
+    'GRT/USDT', 'CHZ/USDT', 'MKR/USDT',  # 51155 compliance (set_leverage OK but orders fail)
     'ZIL/USDT',  # 51202 max market order exceeded on demo
 }
 
@@ -150,6 +151,7 @@ DEFAULT_RISK = {
     'dd_stop': -0.20,
     'dd_resume': -0.08,
     'confidence_threshold': 0.0,
+    'min_score': 0.30,            # skip signals with |score| < this
 }
 
 
@@ -772,38 +774,55 @@ def construct_portfolio(signals, capital, risk_cfg, state):
         if dropped:
             print(f"   ⚠️  Filtered {dropped} untradeable coins from signals")
 
+    # Min score filter: skip weak signals
+    min_score = risk_cfg.get('min_score', 0.0)
+    if min_score > 0:
+        before = len(signals)
+        signals = signals[signals['score'].abs() >= min_score].copy()
+        weak = before - len(signals)
+        if weak:
+            print(f"   ⚠️  Filtered {weak} weak signals (|score| < {min_score})")
+
     # Build positions
     signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
-    n = len(signals)
-    n_long = min(n_long, n // 3)
-    n_short = min(n_short, n // 3)
+
+    # Split by sign: only long positive scores, only short negative scores
+    long_candidates = signals[signals['score'] > 0]
+    short_candidates = signals[signals['score'] < 0].iloc[::-1]  # most negative first
+
+    actual_n_long = min(n_long, len(long_candidates))
+    actual_n_short = min(n_short, len(short_candidates))
 
     positions = []
-    for _, row in signals.head(n_long).iterrows():
-        usd = round(long_capital / n_long, 2)
-        if usd < 5:  # OKX minimum
-            continue
-        positions.append({
-            'symbol': row['symbol'],
-            'side': 'long',
-            'usd': usd,
-            'score': round(row['score'], 4),
-        })
+    if actual_n_long > 0:
+        per_long = round(long_capital / actual_n_long, 2)
+        for _, row in long_candidates.head(actual_n_long).iterrows():
+            if per_long < 5:  # OKX minimum
+                continue
+            positions.append({
+                'symbol': row['symbol'],
+                'side': 'long',
+                'usd': per_long,
+                'score': round(row['score'], 4),
+            })
 
-    for _, row in signals.tail(n_short).iterrows():
-        usd = round(short_capital / n_short, 2)
-        if usd < 5:
-            continue
-        positions.append({
-            'symbol': row['symbol'],
-            'side': 'short',
-            'usd': usd,
-            'score': round(row['score'], 4),
-        })
+    if actual_n_short > 0:
+        per_short = round(short_capital / actual_n_short, 2)
+        for _, row in short_candidates.head(actual_n_short).iterrows():
+            if per_short < 5:
+                continue
+            positions.append({
+                'symbol': row['symbol'],
+                'side': 'short',
+                'usd': per_short,
+                'score': round(row['score'], 4),
+            })
 
     total_alloc = sum(p['usd'] for p in positions)
+    n_l = sum(1 for p in positions if p['side'] == 'long')
+    n_s = sum(1 for p in positions if p['side'] == 'short')
     print(f"   📊 Allocating ${total_alloc:.0f} of ${capital:.0f} "
-          f"(kelly={kelly:.0%} × vol_scale={vol_scale:.2f})")
+          f"({n_l}L+{n_s}S, kelly={kelly:.0%} × vol_scale={vol_scale:.2f})")
 
     return positions
 
@@ -1297,8 +1316,11 @@ def load_state(path):
 
 
 def save_state(state, path):
+    # Filter out non-serializable runtime-only keys
+    serializable = {k: v for k, v in state.items()
+                    if k not in ('_last_signals', '_last_positions')}
     with open(path, 'w') as f:
-        json.dump(state, f, indent=2, default=str)
+        json.dump(serializable, f, indent=2, default=str)
 
 
 # ============================================================
@@ -1313,7 +1335,7 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
         os.makedirs(DASHBOARD_DIR, exist_ok=True)
         now = datetime.now(timezone.utc)
 
-        # Equity history from state
+        # Equity history from state — append live point every refresh
         eq_hist = state.get('equity_history', [])
 
         # Trade stats
@@ -1376,10 +1398,14 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
                     'score': round(float(row.get('score', 0)), 4),
                 })
 
-        # Compute max DD
-        equity = state.get('equity', args.capital)
-        peak = state.get('peak', args.capital)
-        max_dd = (equity / peak - 1) if peak > 0 else 0
+        # Live equity = capital + realized PnL + unrealized PnL
+        realized_pnl = stats.get('total_pnl', 0) or 0
+        unrealized_pnl = sum(p.get('upnl', 0) for p in pos_data)
+        live_equity = args.capital + realized_pnl + unrealized_pnl
+
+        # Max DD based on live equity
+        peak = max(args.capital, state.get('peak', args.capital), live_equity)
+        max_dd = (live_equity / peak - 1) if peak > 0 else 0
 
         # Next rebal
         hour_slot = (now.hour // rebal_hours + 1) * rebal_hours
@@ -1395,7 +1421,7 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
             'updated': now.isoformat(),
             'mode': args.mode,
             'capital': args.capital,
-            'equity': round(equity, 2),
+            'equity': round(live_equity, 2),
             'leverage': risk_cfg.get('leverage', 3),
             'margin_used': round(margin_used, 0),
             'rebal_hours': rebal_hours,
@@ -1419,6 +1445,16 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
             'signals': sig_data,
         }
 
+        # Append live equity point to history (every export = every 5min from bg thread)
+        eq_hist.append({
+            'ts': now.isoformat(),
+            'equity': round(live_equity, 2),
+            'dd': round(max_dd, 4),
+        })
+        # Keep last 2000 points (~7 days at 5min interval)
+        state['equity_history'] = eq_hist[-2000:]
+        dashboard['equity_history'] = eq_hist[-2000:]
+
         dash_path = os.path.join(DASHBOARD_DIR, 'dashboard.json')
         with open(dash_path, 'w') as f:
             json.dump(dashboard, f, default=str)
@@ -1426,6 +1462,52 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
 
     except Exception as e:
         print(f"   ⚠️  Dashboard export failed: {e}")
+
+
+# ── Background dashboard refresh (every 5 min) ──────────────
+_dash_thread = None
+_dash_stop = threading.Event()
+
+def _dashboard_bg_loop(state, tracker, risk_cfg, args, rebal_hours, exchange):
+    """Background thread: refresh dashboard.json with live OKX data every 5 min."""
+    import copy
+    while not _dash_stop.is_set():
+        _dash_stop.wait(300)  # 5 minutes
+        if _dash_stop.is_set():
+            break
+        try:
+            # Use last known signals from state
+            signals = state.get('_last_signals', None)
+            positions = state.get('sim_positions', [])
+            _export_dashboard(
+                state=state, positions=positions, signals=signals,
+                tracker=tracker, risk_cfg=risk_cfg, args=args,
+                rebal_hours=rebal_hours, exchange=exchange,
+            )
+        except Exception as e:
+            print(f"   ⚠️  BG dashboard refresh failed: {e}")
+
+
+def start_dashboard_bg(state, tracker, risk_cfg, args, rebal_hours, exchange):
+    """Start background dashboard refresh thread."""
+    global _dash_thread
+    _dash_stop.clear()
+    _dash_thread = threading.Thread(
+        target=_dashboard_bg_loop,
+        args=(state, tracker, risk_cfg, args, rebal_hours, exchange),
+        daemon=True,
+    )
+    _dash_thread.start()
+    print("   📊 Dashboard background refresh started (every 5 min)")
+
+
+def stop_dashboard_bg():
+    """Stop background dashboard refresh thread."""
+    global _dash_thread
+    _dash_stop.set()
+    if _dash_thread and _dash_thread.is_alive():
+        _dash_thread.join(timeout=10)
+    _dash_thread = None
 
 
 # ============================================================
@@ -1745,6 +1827,10 @@ def main():
         positions = construct_portfolio(signals, state.get('equity', args.capital),
                                         risk_cfg, state)
 
+        # Store for background dashboard refresh
+        state['_last_signals'] = signals
+        state['_last_positions'] = positions
+
         if not positions:
             print("   (no positions this cycle)")
         else:
@@ -1800,7 +1886,8 @@ def main():
             'risk_config': risk_cfg,
             'positions': positions,
             'state': {k: v for k, v in state.items()
-                      if k not in ('recent_rets', 'equity_history', 'sim_positions')},
+                      if k not in ('recent_rets', 'equity_history', 'sim_positions',
+                                   '_last_signals', '_last_positions')},
             'signals_top5': signals.head(5).to_dict('records') if signals is not None else [],
             'signals_bot5': signals.tail(5).to_dict('records') if signals is not None else [],
         }
@@ -1822,6 +1909,8 @@ def main():
     # Run
     if args.loop:
         print(f"\n🔄 Continuous mode (every {rebal_hours}h)...")
+        # Start background dashboard refresh (every 5 min)
+        start_dashboard_bg(state, tracker, risk_cfg, args, rebal_hours, exchange)
         cycle_count = 0
         while not _shutdown_flag:
             try:
@@ -1861,6 +1950,7 @@ def main():
 
         # Graceful shutdown
         print("\n🛑 Shutting down...")
+        stop_dashboard_bg()
         if tg and tg.enabled:
             tg.alert_shutdown(reason="graceful")
             tg.stop_polling()
