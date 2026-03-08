@@ -474,9 +474,9 @@
                 }).join('');
             }
 
-            // ── Signals ──
-            const slongs = (d.signals || []).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
-            const sshorts = (d.signals || []).filter(s => s.score < 0).sort((a, b) => a.score - b.score).slice(0, 5);
+            // ── Signals (sorted by |score| descending, show top 10) ──
+            const slongs = (d.signals || []).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 10);
+            const sshorts = (d.signals || []).filter(s => s.score < 0).sort((a, b) => a.score - b.score).slice(0, 10);
 
             document.getElementById('signals-long').innerHTML = slongs.length ? slongs.map(s => {
                 const conf = s.confidence || 0;

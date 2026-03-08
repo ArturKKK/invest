@@ -874,8 +874,9 @@ def construct_portfolio(signals, capital, risk_cfg, state):
     # Edge-boost: weight proportional to |score| (mirrors champion backtest)
     edge_boost = risk_cfg.get('edge_boost', True)
 
-    def _weighted_alloc(candidates, total_capital, side):
-        """Allocate capital proportional to |score| × confidence with edge-boost."""
+    def _weighted_alloc(candidates, total_capital, side, n_slots):
+        """Allocate capital proportional to |score| × confidence with edge-boost.
+        Max per position = total_capital / n_slots (prevents concentration when few candidates)."""
         if len(candidates) == 0:
             return []
         scores_abs = candidates['score'].abs().values
@@ -889,11 +890,22 @@ def construct_portfolio(signals, capital, risk_cfg, state):
         # Multiply by confidence: high-agreement positions get more capital
         raw_w = raw_w * conf_vals
         weights = raw_w / raw_w.sum()
+        # Cap: each position gets at most 1/n_slots of total allocation
+        max_weight = 1.0 / max(n_slots, 1)
+        capped = np.minimum(weights, max_weight)
+        # Re-normalize only if some weights were capped
+        if capped.sum() < weights.sum() - 1e-9:
+            # Redistribute surplus proportionally among uncapped positions
+            capped = capped / capped.sum() * min(capped.sum() / weights.sum() + (1.0 - capped.sum() / weights.sum()), 1.0)
+            # Simpler: just use capped weights, leftover capital stays unallocated
+            pass
         result = []
-        for (_, row), w in zip(candidates.iterrows(), weights):
+        used_capital = 0
+        for (_, row), w in zip(candidates.iterrows(), capped):
             usd = round(total_capital * w, 2)
             if usd < 5:  # OKX minimum
                 continue
+            used_capital += usd
             conf = round(row.get('confidence', 0.5), 3) if 'confidence' in row.index else 0.5
             result.append({
                 'symbol': row['symbol'],
@@ -902,13 +914,16 @@ def construct_portfolio(signals, capital, risk_cfg, state):
                 'score': round(row['score'], 4),
                 'confidence': conf,
             })
+        unused = total_capital - used_capital
+        if unused > 50:
+            print(f"   ℹ️  {side}: ${unused:.0f} unallocated (position cap {max_weight:.0%})")
         return result
 
     if actual_n_long > 0:
-        positions.extend(_weighted_alloc(long_candidates.head(actual_n_long), long_capital, 'long'))
+        positions.extend(_weighted_alloc(long_candidates.head(actual_n_long), long_capital, 'long', n_long))
 
     if actual_n_short > 0:
-        positions.extend(_weighted_alloc(short_candidates.head(actual_n_short), short_capital, 'short'))
+        positions.extend(_weighted_alloc(short_candidates.head(actual_n_short), short_capital, 'short', n_short))
 
     total_alloc = sum(p['usd'] for p in positions)
     n_l = sum(1 for p in positions if p['side'] == 'long')

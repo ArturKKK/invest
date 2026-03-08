@@ -96,6 +96,8 @@ def main():
                     help="Edge-proportional sizing: high-edge positions get more weight")
     ap.add_argument("--no-conf", action="store_true",
                     help="Disable confidence weighting (for A/B testing)")
+    ap.add_argument("--min-conf", type=float, default=0.0,
+                    help="Min confidence filter: skip signals with confidence < threshold (e.g. 0.90)")
     ap.add_argument("--adaptive-rebal", action="store_true",
                     help="Adaptive rebalance: base period + early rebal on strong signals")
     ap.add_argument("--dynamic-lev", action="store_true",
@@ -422,10 +424,24 @@ def main():
             held_L.clear(); held_S.clear()
             continue
 
+        # ── Min confidence filter will be applied after conf_dict is built ──
+
         # Confidence-weighted sizing with optional edge boost
         score_dict = dict(zip(syms, scores))
         edge_dict = dict(zip(syms, abs_edges))
         conf_dict = dict(zip(syms, confidence))
+
+        # ── Min confidence filter: remove low-agreement signals ──
+        if args.min_conf > 0:
+            new_L = {s for s in new_L if conf_dict.get(s, 0) >= args.min_conf}
+            new_S = {s for s in new_S if conf_dict.get(s, 0) >= args.min_conf}
+            if len(new_L) == 0 and len(new_S) == 0:
+                skip_count += 1
+                results.append(dict(step=si, ts=str(ts0), pnl=0,
+                                    eq=round(equity, 2), dd=round(equity/peak-1, 4),
+                                    nL=0, nS=0, turn=0, skipped=True))
+                held_L.clear(); held_S.clear()
+                continue
 
         def compute_weights(symbols, is_long=True):
             """Compute position weights with optional edge-boost × confidence."""
