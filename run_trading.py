@@ -151,7 +151,7 @@ DEFAULT_RISK = {
     'dd_stop': -0.20,
     'dd_resume': -0.08,
     'confidence_threshold': 0.0,
-    'min_score': 0.30,            # skip signals with |score| < this
+    'min_score': 1.0,             # skip signals with |score| < this (sweep: no loss vs 0.0-0.7)
 }
 
 
