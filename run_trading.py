@@ -503,6 +503,23 @@ def load_lgb_models(results_dir):
     return models
 
 
+def load_catboost_models(results_dir):
+    """Load saved CatBoost model files."""
+    from catboost import CatBoostRegressor
+
+    model_files = sorted(Path(results_dir).glob('cb_model_seed_*.cbm'))
+    if not model_files:
+        return []
+
+    models = []
+    for f in model_files:
+        m = CatBoostRegressor()
+        m.load_model(str(f))
+        models.append(m)
+
+    return models
+
+
 def generate_lgb_signal(df, models, feat_cols):
     """Generate signal from LGB model ensemble."""
     latest = df.groupby('symbol').last().reset_index()

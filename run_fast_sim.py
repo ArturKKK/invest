@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_trading import (
     SYMBOLS, EXCLUDE_COLS, DEFAULT_RISK, HORIZON,
     fetch_ohlcv, build_features, cross_sectional_rank, load_lgb_models,
+    load_catboost_models,
 )
 
 COST_SIDE = 0.0003 + 0.0001          # taker 3bps + slippage 1bp
@@ -121,7 +122,7 @@ def main():
     model_groups = []   # list of (models, feature_names) tuples
 
     if args.ensemble:
-        # Load both v6 and v7
+        # Load LGB v6, v7 and CatBoost models
         for d in ["results_v6", "results_v7"]:
             p = os.path.join(root, d)
             if os.path.isdir(p):
@@ -131,7 +132,25 @@ def main():
                     for c in [c for c in mf_g if c not in df.columns]:
                         df[c] = 0.0
                     model_groups.append((ms, mf_g))
-                    print(f"   {d}: {len(ms)} models, {len(mf_g)} feats")
+                    print(f"   {d}: {len(ms)} LGB models, {len(mf_g)} feats")
+        # CatBoost ensemble member
+        cb_dir = os.path.join(root, "results_catboost")
+        if os.path.isdir(cb_dir):
+            try:
+                ms = load_catboost_models(cb_dir)
+                if ms:
+                    fn_path = os.path.join(cb_dir, 'feature_names.json')
+                    if os.path.exists(fn_path):
+                        with open(fn_path) as _f:
+                            mf_g = json.load(_f)
+                    else:
+                        mf_g = ms[0].feature_names_
+                    for c in [c for c in mf_g if c not in df.columns]:
+                        df[c] = 0.0
+                    model_groups.append((ms, mf_g))
+                    print(f"   results_catboost: {len(ms)} CB models, {len(mf_g)} feats")
+            except ImportError:
+                print("   ⚠️  catboost not installed, skipping CatBoost models")
         if not model_groups:
             print("❌ no models for ensemble"); return
     else:
