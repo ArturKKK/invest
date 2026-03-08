@@ -30,7 +30,7 @@
 - **Логи stdout:** `/home/trader/invest/logs/bot.log`
 - **Логи stderr:** `/home/trader/invest/logs/bot_error.log`
 - **journalctl:** `journalctl -u crypto-trader -f` (только systemd events, python output — в файлах)
-- **Параметры:** `--mode paper --loop --capital 5000 --rebal 24`
+- **Параметры:** `--mode paper --loop --capital 5000 --rebal 12`
 
 ### Деплой (как обновить бота)
 ```bash
@@ -101,7 +101,7 @@ DEFAULT_RISK = {
 ```
 
 ### Как работает бот (run_trading.py --mode paper --loop)
-1. Каждые 24ч (в 00:05 UTC) запускается цикл
+1. Каждые 12ч (в 00:05 и 12:05 UTC) запускается цикл
 2. Скачивает 800ч OHLCV данных для 50 монет с Binance
 3. Строит 147 фичей (TA, cross-asset, sentiment proxies)  
 4. Ранкирует фичи cross-sectionally
@@ -151,7 +151,9 @@ DEFAULT_RISK = {
 | Команда | Ответ |
 |---------|-------|
 | `/status` | Текущие позиции, equity, DD, uptime |
-| `/pnl` | Подробная статистика: total PnL, win rate, avg win/loss |
+| `/positions` | Живые позиции с OKX: монета, сторона, сумма, uPnL, плечо, время до ребаланса |
+| `/history` | История последних 20 сделок с PnL (можно `/history 10`) |
+| `/pnl` | PnL по циклам |
 | `/help` | Список команд |
 
 ---
@@ -206,7 +208,133 @@ DEFAULT_RISK = {
 
 ---
 
-## 8. Что делать если контекст пропал
+## 8. Ресурсы VPS (тест инференса 2026-03-08)
+
+### Результаты теста
+| Этап | Время | RAM |
+|------|-------|-----|
+| Импорт библиотек | 0.7s | 106 MB |
+| Fetch OHLCV (50 монет, 800ч) | 23s | 204 MB |
+| Build features (147 фичей) | 15s | 349 MB |
+| ML инференс (15 моделей) | 0.5s | 395 MB |
+| **Итого** | **40s** | **442 MB peak** |
+
+### Вердикт
+- **CPU:** Хватает с запасом. 40с на цикл, цикл раз в 24ч
+- **RAM:** 442 MB peak + бот ~100 MB + система ~400 MB = ~1 GB из 3.8 GB — **ОК**
+- **Диск:** 76% (18/25 GB). Логи растут медленно. Хватит на месяцы
+- **Вывод: докупать ресурсы НЕ нужно**
+
+---
+
+## 9. Операционный Runbook (для самостоятельного управления)
+
+### Подключение к серверу
+```bash
+ssh root@185.42.163.63
+```
+
+### Проверить работает ли бот
+```bash
+ssh root@185.42.163.63 "systemctl is-active crypto-trader"
+# Должно быть: active
+```
+
+### Посмотреть логи бота (последние 50 строк)
+```bash
+ssh root@185.42.163.63 "tail -50 /home/trader/invest/logs/bot.log"
+```
+
+### Следить за логами в реальном времени
+```bash
+ssh root@185.42.163.63 "tail -f /home/trader/invest/logs/bot.log"
+# Ctrl+C чтобы выйти
+```
+
+### Перезапустить бота
+```bash
+ssh root@185.42.163.63 "systemctl restart crypto-trader"
+# Проверить:
+ssh root@185.42.163.63 "systemctl is-active crypto-trader"
+```
+
+### Остановить бота
+```bash
+ssh root@185.42.163.63 "systemctl stop crypto-trader"
+```
+
+### Запустить бота
+```bash
+ssh root@185.42.163.63 "systemctl start crypto-trader"
+```
+
+### Обновить код бота (деплой)
+```bash
+# 1. На своём Mac — проверить что код рабочий:
+python3 -c "import py_compile; py_compile.compile('run_trading.py', doraise=True)"
+
+# 2. Загрузить файл(ы) на сервер:
+scp run_trading.py root@185.42.163.63:/home/trader/invest/
+scp telegram_bot.py root@185.42.163.63:/home/trader/invest/
+
+# 3. Выставить права и перезапустить:
+ssh root@185.42.163.63 "chown trader:trader /home/trader/invest/run_trading.py /home/trader/invest/telegram_bot.py && systemctl restart crypto-trader"
+
+# 4. Подождать и проверить:
+ssh root@185.42.163.63 "sleep 5 && systemctl is-active crypto-trader"
+```
+
+### Посмотреть текущие позиции на OKX
+В Telegram: `/positions`
+
+### Посмотреть историю сделок
+В Telegram: `/history` (или `/history 30` для последних 30)
+
+### Посмотреть состояние торговли (equity, PnL)
+В Telegram: `/status` или `/pnl`
+
+### Проверить нагрузку сервера
+```bash
+ssh root@185.42.163.63 "free -h && echo --- && df -h / && echo --- && uptime"
+```
+
+### Посмотреть ошибки
+```bash
+ssh root@185.42.163.63 "tail -30 /home/trader/invest/logs/bot_error.log"
+```
+
+### Перезагрузить весь сервер (если что-то зависло)
+```bash
+ssh root@185.42.163.63 "reboot"
+# Бот запустится сам через ~30 сек (systemd автостарт)
+```
+
+### Если бот не запускается после деплоя
+```bash
+# Посмотреть ошибку:
+ssh root@185.42.163.63 "journalctl -u crypto-trader -n 30 --no-pager"
+# Или:
+ssh root@185.42.163.63 "tail -50 /home/trader/invest/logs/bot_error.log"
+# Скорее всего синтаксическая ошибка в коде — откатиться:
+ssh root@185.42.163.63 "cd /home/trader/invest && git checkout run_trading.py && systemctl restart crypto-trader"
+```
+
+### Файлы которые можно менять
+| Файл | Что делает | Нужен рестарт? |
+|------|-----------|---------------|
+| `run_trading.py` | Основной бот | Да |
+| `telegram_bot.py` | Telegram алерты + команды | Да |
+| `.env` | API ключи | Да |
+
+### Важно помнить
+- **Перед деплоем** всегда проверяй код: `python3 -c "import py_compile; py_compile.compile('run_trading.py', doraise=True)"`
+- **После рестарта** бот пересоздаст позиции (diff-rebalance) — если позиции не изменились, ничего не произойдёт
+- **Логи** растут, можно иногда чистить: `ssh root@185.42.163.63 "> /home/trader/invest/logs/bot.log"`
+- **OKX Demo сбрасывается** периодически (раз в ~месяц) — нужно будет переключить обратно Single-currency margin на сайте
+
+---
+
+## 10. Что делать если контекст пропал
 
 ### Быстрый старт для AI-ассистента:
 1. Прочитай `PROJECT_NOTES.md` (этот файл) — вся инфра и конфиг
@@ -228,7 +356,7 @@ ssh root@185.42.163.63 "chown trader:trader /home/trader/invest/run_trading.py &
 
 ---
 
-## 9. Хронология изменений
+## 11. Хронология изменений
 
 ### 2026-03-08 — Production Launch
 - Интегрирован Telegram bot в `run_trading.py`

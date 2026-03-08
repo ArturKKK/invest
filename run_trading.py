@@ -143,6 +143,7 @@ DEFAULT_RISK = {
     'n_long': 5,
     'n_short': 5,
     'leverage': 3,
+    'margin_utilization': 0.90,   # use 90% of capital for margin, 10% buffer
     'vol_target': 0.008,
     'vol_lookback': 48,
     'kelly_frac': 1.0,
@@ -748,9 +749,10 @@ def construct_portfolio(signals, capital, risk_cfg, state):
 
     # Effective allocation
     leverage = risk_cfg.get('leverage', 1)
+    margin_util = risk_cfg.get('margin_utilization', 0.90)
     effective_kelly = kelly * vol_scale
-    long_capital = capital * 0.5 * effective_kelly * leverage
-    short_capital = capital * 0.5 * effective_kelly * leverage
+    long_capital = capital * margin_util * 0.5 * effective_kelly * leverage
+    short_capital = capital * margin_util * 0.5 * effective_kelly * leverage
 
     # Confidence check
     conf_thresh = risk_cfg.get('confidence_threshold', 0.0)
@@ -1088,7 +1090,9 @@ def diff_rebalance(exchange, target_positions, leverage=3, tracker=None):
                             pass
             except Exception as e:
                 print(f"      ❌ Close {sym}: {e}")
-                results.append({'symbol': sym, 'action': 'close', 'status': 'error',
+                results.append({'symbol': sym, 'side': cur.get('side', '?'),
+                                'usd': cur.get('notional', 0),
+                                'action': 'close', 'status': 'error',
                                 'error': str(e)})
 
     # 4. Open new positions (not currently held, or side changed)
@@ -1098,7 +1102,6 @@ def diff_rebalance(exchange, target_positions, leverage=3, tracker=None):
         cur = current.get(okx_sym)
         if cur and cur['side'] == pos['side']:
             # Already have this position in the right direction — keep it
-            # (Could adjust size, but simpler to keep for now)
             kept += 1
             results.append({**pos, 'status': 'kept', 'action': 'hold'})
             continue
@@ -1108,8 +1111,35 @@ def diff_rebalance(exchange, target_positions, leverage=3, tracker=None):
         print(f"      ♻️  Kept {kept} existing positions unchanged")
 
     if new_positions:
-        new_results = execute(exchange, new_positions, dry_run=False, leverage=leverage, tracker=tracker)
-        results.extend(new_results)
+        # Check actual available margin before opening new positions
+        try:
+            time.sleep(0.5)  # let OKX settle after closes
+            bal = _api_call_with_retry(exchange.fetch_balance)
+            free_usd = float(bal.get('USDT', {}).get('free', 0))
+            # Reserve 5% of free as safety buffer
+            available_margin = free_usd * 0.95
+            # Max notional we can open = available_margin * leverage
+            max_new_notional = available_margin * leverage
+            total_requested = sum(p['usd'] for p in new_positions)
+
+            if total_requested > max_new_notional and max_new_notional > 0:
+                scale = max_new_notional / total_requested
+                print(f"      💰 Free margin: ${free_usd:.0f} → "
+                      f"scaling new positions to {scale:.0%} "
+                      f"(${max_new_notional:.0f}/{total_requested:.0f} notional)")
+                for p in new_positions:
+                    p['usd'] = round(p['usd'] * scale, 2)
+            elif max_new_notional <= 10:
+                print(f"      ⚠️  No margin available (${free_usd:.0f} free). Skipping new opens.")
+                for p in new_positions:
+                    results.append({**p, 'status': 'error', 'error': 'no_margin'})
+                new_positions = []
+        except Exception as e:
+            print(f"      ⚠️  Could not check margin: {e}")
+
+        if new_positions:
+            new_results = execute(exchange, new_positions, dry_run=False, leverage=leverage, tracker=tracker)
+            results.extend(new_results)
 
     return results
 
@@ -1462,6 +1492,11 @@ def main():
         state['n_cycles'] = 0
         state['sim_positions'] = []
 
+    # Save runtime config into state for Telegram commands
+    state['rebal_hours'] = rebal_hours
+    state['leverage'] = risk_cfg.get('leverage', 3)
+    state['mode'] = args.mode
+
     print("=" * 70)
     print(f"  PRODUCTION TRADING — {args.mode.upper()}")
     print(f"  Capital: ${args.capital:,.0f}")
@@ -1594,7 +1629,8 @@ def main():
 
         # ── Telegram: positions alert ──
         if tg and tg.enabled:
-            tg.alert_positions(positions, state.get('equity', args.capital))
+            tg.alert_positions(positions, state.get('equity', args.capital),
+                               leverage=risk_cfg.get('leverage', 3))
 
         # 6. Execute
         if args.mode == 'signal':
@@ -1675,14 +1711,14 @@ def main():
 
             now = datetime.now(timezone.utc)
             # Align to next rebal_hours boundary + 5min
-            next_h = now.hour
-            next_h = ((next_h // rebal_hours) + 1) * rebal_hours
-            next_time = now.replace(hour=next_h % 24, minute=5, second=0, microsecond=0)
+            # Calculate the next slot properly (handles day rollover)
+            hour_slot = (now.hour // rebal_hours + 1) * rebal_hours
+            next_time = now.replace(hour=0, minute=5, second=0, microsecond=0) + timedelta(hours=hour_slot)
             if next_time <= now:
                 next_time += timedelta(hours=rebal_hours)
 
             sleep = (next_time - now).total_seconds()
-            print(f"\n   ⏰ Next: {next_time.strftime('%H:%M UTC')} ({sleep/60:.0f} min)")
+            print(f"\n   ⏰ Next: {next_time.strftime('%Y-%m-%d %H:%M UTC')} ({sleep/3600:.1f}h)")
 
             # Sleep in small chunks to respond to shutdown quickly
             sleep_end = time.time() + max(sleep, 60)

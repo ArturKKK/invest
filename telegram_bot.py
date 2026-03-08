@@ -105,7 +105,7 @@ class TelegramBot:
             silent=True,
         )
 
-    def alert_positions(self, positions, capital):
+    def alert_positions(self, positions, capital, leverage=3):
         """Alert: new portfolio positions."""
         if not positions:
             self.send("📊 <b>No positions this cycle</b> (DD stop or no signal)")
@@ -114,8 +114,10 @@ class TelegramBot:
         longs = [p for p in positions if p["side"] == "long"]
         shorts = [p for p in positions if p["side"] == "short"]
         total = sum(p["usd"] for p in positions)
+        margin = total / leverage if leverage else total
 
         lines = [f"📊 <b>New Positions</b> — ${total:.0f}/{capital:.0f}"]
+        lines.append(f"⚡ Leverage: <b>{leverage}x</b> | Margin: <code>${margin:.0f}</code>")
         lines.append("")
 
         if longs:
@@ -151,7 +153,11 @@ class TelegramBot:
         if errors:
             lines.append(f"❌ <b>{len(errors)} orders FAILED:</b>")
             for r in errors:
-                lines.append(f"  {r['symbol']} {r['side']} ${r['usd']:.0f} — {r.get('error','?')}")
+                sym = r.get('symbol', '?')
+                side = r.get('side', '?')
+                usd = r.get('usd', 0)
+                err = r.get('error', '?')[:120]
+                lines.append(f"  {sym} {side} ${usd:.0f} — {err}")
         if dry:
             lines.append(f"📋 {len(dry)} dry-run orders (not executed)")
 
@@ -340,6 +346,8 @@ def cmd_help(bot, chat_id, text):
     return (
         "📋 <b>Commands:</b>\n"
         "/status — Current equity, positions, DD\n"
+        "/positions — Open positions (live from OKX)\n"
+        "/history — Trade history (last 20)\n"
         "/pnl — Recent PnL history\n"
         "/help — This message"
     )
@@ -414,11 +422,198 @@ def cmd_pnl(bot, chat_id, text):
     return "\n".join(lines)
 
 
+def cmd_positions(bot, chat_id, text):
+    """Show live open positions from OKX."""
+    import ccxt
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+
+    # Read state for leverage / rebal info
+    state_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "trading_logs", "trading_state.json"
+    )
+    state = {}
+    if os.path.exists(state_path):
+        with open(state_path) as f:
+            state = json.load(f)
+    leverage = state.get("leverage", 3)
+    rebal_hours = state.get("rebal_hours", 24)
+    mode = state.get("mode", "paper")
+
+    try:
+        ex = ccxt.okx({
+            "apiKey": os.environ.get("OKX_API_KEY", ""),
+            "secret": os.environ.get("OKX_SECRET", ""),
+            "password": os.environ.get("OKX_PASSPHRASE", ""),
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        })
+        if mode == "paper":
+            ex.set_sandbox_mode(True)
+        ex.load_markets()
+
+        positions = ex.fetch_positions()
+        open_pos = [p for p in positions if float(p.get("contracts", 0)) > 0]
+
+        bal = ex.fetch_balance()
+        free = float(bal.get("USDT", {}).get("free", 0))
+        total = float(bal.get("USDT", {}).get("total", 0))
+
+    except Exception as e:
+        return f"❌ OKX error: {e}"
+
+    if not open_pos:
+        return (
+            f"📭 <b>No open positions</b>\n"
+            f"💰 Balance: ${total:.2f} (free: ${free:.2f})"
+        )
+
+    total_notional = 0
+    total_upnl = 0
+    lines = [f"📊 <b>Open Positions</b> ({len(open_pos)})"]
+    lines.append(f"⚡ Leverage: <b>{leverage}x</b> | Rebal: <b>{rebal_hours}h</b>")
+    lines.append("")
+
+    # Find last cycle time from state
+    eq_hist = state.get("equity_history", [])
+    if eq_hist:
+        last_ts = eq_hist[-1].get("timestamp", "")
+        try:
+            last_cycle = datetime.fromisoformat(last_ts)
+            elapsed = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 3600
+            remaining = max(0, rebal_hours - elapsed)
+            lines.append(f"⏱ Next rebalance in ~<b>{remaining:.0f}h {int((remaining % 1) * 60)}m</b>")
+            lines.append("")
+        except Exception:
+            pass
+
+    longs = []
+    shorts = []
+    for p in open_pos:
+        notional = abs(float(p.get("notional", 0)))
+        upnl = float(p.get("unrealizedPnl", 0))
+        total_notional += notional
+        total_upnl += upnl
+        entry = {
+            "sym": p["symbol"].replace("/USDT:USDT", ""),
+            "notional": notional,
+            "upnl": upnl,
+            "side": p["side"],
+            "entry": float(p.get("entryPrice", 0)),
+            "mark": float(p.get("markPrice", 0)),
+        }
+        if p["side"] == "long":
+            longs.append(entry)
+        else:
+            shorts.append(entry)
+
+    if longs:
+        lines.append("🟢 <b>LONG:</b>")
+        for e in sorted(longs, key=lambda x: -x["upnl"]):
+            icon = "📈" if e["upnl"] >= 0 else "📉"
+            lines.append(
+                f"  {icon} <b>{e['sym']}</b> ${e['notional']:.0f} "
+                f"uPnL=<code>${e['upnl']:+.2f}</code>"
+            )
+        lines.append("")
+
+    if shorts:
+        lines.append("🔴 <b>SHORT:</b>")
+        for e in sorted(shorts, key=lambda x: -x["upnl"]):
+            icon = "📈" if e["upnl"] >= 0 else "📉"
+            lines.append(
+                f"  {icon} <b>{e['sym']}</b> ${e['notional']:.0f} "
+                f"uPnL=<code>${e['upnl']:+.2f}</code>"
+            )
+        lines.append("")
+
+    upnl_icon = "🟢" if total_upnl >= 0 else "🔴"
+    lines.append(f"━━━━━━━━━━━━━━━━━━")
+    lines.append(f"💼 Notional: <code>${total_notional:.0f}</code>")
+    lines.append(f"{upnl_icon} Unrealized PnL: <code>${total_upnl:+.2f}</code>")
+    lines.append(f"💰 Balance: <code>${total:.2f}</code> (free: ${free:.2f})")
+
+    return "\n".join(lines)
+
+
+def cmd_history(bot, chat_id, text):
+    """Show recent trade history from trades.csv."""
+    import pandas as pd
+    csv_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "trading_logs", "trades.csv"
+    )
+    if not os.path.exists(csv_path):
+        return "📭 No trade history yet."
+
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        return f"❌ Error reading trades: {e}"
+
+    if len(df) == 0:
+        return "📭 No trades recorded yet."
+
+    # Parse optional count: /history 10
+    parts = text.strip().split()
+    n = 20
+    if len(parts) > 1:
+        try:
+            n = min(50, max(1, int(parts[1])))
+        except ValueError:
+            pass
+
+    # Stats from closed trades
+    closed = df[df["status"] == "closed"].copy()
+    open_trades = df[df["status"] == "open"]
+
+    lines = [f"📜 <b>Trade History</b> (last {min(n, len(closed))} of {len(closed)} closed)"]
+    lines.append(f"📌 Currently open: {len(open_trades)}")
+    lines.append("")
+
+    if len(closed) > 0:
+        # Overall stats
+        total_pnl = closed["pnl_usd"].sum()
+        wins = len(closed[closed["pnl_usd"] >= 0])
+        losses = len(closed[closed["pnl_usd"] < 0])
+        wr = wins / len(closed) * 100 if len(closed) > 0 else 0
+        lines.append(
+            f"📊 W/L: <b>{wins}/{losses}</b> ({wr:.0f}%) | "
+            f"Total PnL: <code>${total_pnl:+.2f}</code>"
+        )
+        lines.append("")
+
+        # Recent trades
+        recent = closed.tail(n).iloc[::-1]  # newest first
+        for _, row in recent.iterrows():
+            pnl = float(row.get("pnl_usd", 0))
+            pnl_pct = float(row.get("pnl_pct", 0))
+            icon = "🟢" if pnl >= 0 else "🔴"
+            side_icon = "📈" if row["side"] == "long" else "📉"
+            sym = str(row["symbol"]).replace("/USDT:USDT", "").replace("USDT", "")
+            hold = float(row.get("hold_hours", 0))
+            exit_t = str(row.get("exit_time", ""))[:16].replace("T", " ")
+            lines.append(
+                f"{icon}{side_icon} <b>{sym}</b> ${float(row['usd']):.0f} "
+                f"→ <code>${pnl:+.2f}</code> ({pnl_pct:+.1f}%) "
+                f"{hold:.0f}h"
+            )
+    else:
+        lines.append("No closed trades yet.")
+
+    return "\n".join(lines)
+
+
 def setup_default_commands(bot):
     """Register all default commands."""
     bot.register_command("help", cmd_help)
     bot.register_command("status", cmd_status)
     bot.register_command("pnl", cmd_pnl)
+    bot.register_command("positions", cmd_positions)
+    bot.register_command("history", cmd_history)
 
 
 # ─── Convenience: create bot from .env ─────────────────────────
