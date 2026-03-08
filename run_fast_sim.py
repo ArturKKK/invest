@@ -19,6 +19,7 @@ Usage:
   python run_fast_sim.py --days 30 --capital 500          # more days
   python run_fast_sim.py --days 30 --rebal 8 --npos 3    # custom params
   python run_fast_sim.py --leverage 3 --edge-pct 75       # 3x leverage, P75 edge filter
+  python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --edge-boost  # recommended
 """
 
 import os, sys, json, argparse, warnings
@@ -56,6 +57,10 @@ def main():
                     help="Manual min edge threshold (overrides --edge-pct)")
     ap.add_argument("--ensemble", action="store_true",
                     help="Ensemble v6+v7 models (average scores from both)")
+    ap.add_argument("--edge-boost", action="store_true",
+                    help="Edge-proportional sizing: high-edge positions get more weight")
+    ap.add_argument("--adaptive-rebal", action="store_true",
+                    help="Adaptive rebalance: base period + early rebal on strong signals")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -85,11 +90,15 @@ def main():
     lev_str = f"{leverage:.0f}x" if leverage >= 1 else f"{leverage:.1f}x"
     edge_str = f"P{args.edge_pct}" if args.edge_pct > 0 else (
         f"edge>{min_edge:.4f}" if min_edge > 0 else "off")
+    boost_str = "boost" if args.edge_boost else ""
+    adapt_str = "adaptive" if args.adaptive_rebal else ""
+    mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, adapt_str] if s]
+    mode_str = '+'.join(mode_parts) if mode_parts else 'baseline'
     print("=" * 70)
     print(f"  FAST SIMULATION")
     print(f"  {args.days}d | ${args.capital:,.0f} | rebal={rebal_h}h | "
           f"N={n_pos}+{n_pos} | kelly={kelly:.0%} | cost={COST_SIDE*1e4:.0f}bp/side")
-    print(f"  leverage={lev_str} | edge_filter={edge_str}")
+    print(f"  leverage={lev_str} | mode={mode_str}")
     print("=" * 70)
 
     # ── 1  data ───────────────────────────────────────────────────
@@ -159,8 +168,11 @@ def main():
     print(f"   {steps[0]} → {steps[-1]}  ({len(steps)} steps, {rebal_h}h apart)")
 
     # ── 4b  calibrate edge threshold ──────────────────────────────
-    if args.edge_pct > 0 and min_edge == 0.0:
-        print(f"\n📐 Calibrating edge distribution (P{args.edge_pct}) ...")
+    edge_p75 = 0.0   # used by edge-boost sizing
+    need_calibrate = (args.edge_pct > 0 and min_edge == 0.0) or args.edge_boost or args.adaptive_rebal
+    if need_calibrate:
+        label = f"P{args.edge_pct}" if args.edge_pct > 0 else "P75 (for boost/adaptive)"
+        print(f"\n📐 Calibrating edge distribution ({label}) ...")
         edge_samples = []
         cal_steps = steps[-min(30, len(steps)):]  # last 30 steps (avoid warmup)
         for ts in cal_steps:
@@ -172,12 +184,19 @@ def main():
             edges_abs = np.abs(scores - median_s)
             edge_samples.extend(edges_abs.tolist())
         if edge_samples:
-            min_edge = float(np.percentile(edge_samples, args.edge_pct))
-            print(f"   P{args.edge_pct} edge = {min_edge:.5f}  "
-                  f"(from {len(edge_samples)} samples, {len(cal_steps)} steps)")
+            if args.edge_pct > 0:
+                min_edge = float(np.percentile(edge_samples, args.edge_pct))
+            edge_p75 = float(np.percentile(edge_samples, 75))
+            edge_p90 = float(np.percentile(edge_samples, 90))
+            print(f"   P75 edge = {edge_p75:.5f}, P90 = {edge_p90:.5f}")
+            if min_edge > 0:
+                print(f"   Filter threshold (P{args.edge_pct}) = {min_edge:.5f}")
+            print(f"   ({len(edge_samples)} samples, {len(cal_steps)} steps)")
         else:
-            print("   ⚠️  No calibration data, edge filter disabled")
+            print("   ⚠️  No calibration data, edge features disabled")
             min_edge = 0.0
+            edge_p75 = 0.0
+            edge_p90 = 0.0
 
     # ── 5  simulate ───────────────────────────────────────────────
     print(f"\n{'─'*70}")
@@ -186,6 +205,7 @@ def main():
     stopped  = False
     ret_buf: list[float] = []
     skip_count = 0                    # steps where edge filter blocked all positions
+    early_rebal_count = 0             # adaptive early rebalances triggered
 
     held_L: dict[str, float] = {}     # symbol → entry_price
     held_S: dict[str, float] = {}
@@ -193,8 +213,24 @@ def main():
     cum_cost = 0.0
     tot_trades = 0
 
-    for si in range(len(steps) - 1):
-        ts0, ts1 = steps[si], steps[si + 1]
+    # Build step schedule for adaptive rebalance
+    if args.adaptive_rebal:
+        # Base rebalance every rebal_h; also check at half-intervals for P90+ opportunities
+        check_interval = max(rebal_h // 2, 4)  # check every half-period (min 4h)
+        all_check_ts = all_ts[sim_start::check_interval]
+        # Mark which are "base" rebalance times vs "check" times
+        base_set = set(all_ts[sim_start::rebal_h])
+        step_schedule = [(ts, ts in base_set) for ts in all_check_ts]
+    else:
+        step_schedule = [(ts, True) for ts in steps]  # all are base rebalances
+
+    for si in range(len(step_schedule) - 1):
+        ts0 = step_schedule[si][0]
+        is_base = step_schedule[si][1]
+
+        # Find next timestamp in schedule
+        ts1 = step_schedule[si + 1][0]
+
         snap0 = df[df["timestamp"] == ts0]
         snap1 = df[df["timestamp"] == ts1]
         if len(snap0) < 20 or len(snap1) < 20:
@@ -203,26 +239,46 @@ def main():
         px0 = dict(zip(snap0["symbol"], snap0["close"]))
         px1 = dict(zip(snap1["symbol"], snap1["close"]))
 
-        # ── mark-to-market held positions (from previous step) ────
-        mtm_pnl = 0.0
-        for sym, ep in held_L.items():
-            p = px0.get(sym)
-            if p and ep: mtm_pnl += (p - ep) / ep
-        for sym, ep in held_S.items():
-            p = px0.get(sym)
-            if p and ep: mtm_pnl -= (p - ep) / ep
-
-        n_held = len(held_L) + len(held_S)
-        usd_old = (equity * kelly) / max(n_held, 1) if n_held else 0
-        dollar_mtm = mtm_pnl * usd_old
-
         # ── predict & rank at ts0 ────────────────────────────────
         scores = predict_ensemble(snap0)
         syms = snap0["symbol"].values
-
-        # Edge filtering: |score − median| > min_edge
         median_score = np.median(scores)
         edges = scores - median_score
+        abs_edges = np.abs(edges)
+
+        # Adaptive rebalance check: skip non-base steps unless strong signal
+        if args.adaptive_rebal and not is_base:
+            max_edge = np.max(abs_edges)
+            if max_edge < edge_p90:
+                # No exceptional signal → don't rebalance, just hold
+                # Still compute PnL for held positions
+                mtm_pnl = 0.0
+                n_held = len(held_L) + len(held_S)
+                if n_held > 0:
+                    alloc_per = (equity * kelly * leverage) / n_held
+                    for sym, ep in held_L.items():
+                        p0 = px0.get(sym); p1 = px1.get(sym, p0)
+                        if p0 and p1 and ep:
+                            mtm_pnl += alloc_per * (p1 - p0) / p0
+                    for sym, ep in held_S.items():
+                        p0 = px0.get(sym); p1 = px1.get(sym, p0)
+                        if p0 and p1 and ep:
+                            mtm_pnl -= alloc_per * (p1 - p0) / p0
+                    # Funding cost for held period
+                    if leverage > 1:
+                        hours_held = check_interval
+                        fc = (equity * kelly * leverage) * FUNDING_PER_8H * (hours_held / 8.0)
+                        mtm_pnl -= fc
+                    equity += mtm_pnl
+                    peak = max(peak, equity)
+                    # Update entry prices
+                    held_L = {s: px1.get(s, 0) for s in held_L}
+                    held_S = {s: px1.get(s, 0) for s in held_S}
+                continue
+            else:
+                early_rebal_count += 1
+
+        # Edge filtering: select positions based on edge
         order_desc = np.argsort(-scores)
         order_asc  = np.argsort(scores)
 
@@ -258,31 +314,48 @@ def main():
             held_L.clear(); held_S.clear()
             continue
 
-        # v7: confidence-weighted sizing — stronger signals get more weight
+        # Confidence-weighted sizing with optional edge boost
         score_dict = dict(zip(syms, scores))
-        s_long = np.array([score_dict[s] for s in new_L])
-        s_short = np.array([-score_dict[s] for s in new_S])  # negate for shorts
+        edge_dict = dict(zip(syms, abs_edges))
 
-        # Softmax-like weights (temperature=1)
-        def soft_weights(arr):
-            if len(arr) == 0: return {}
-            arr = arr - arr.mean()  # center
-            w = np.exp(arr * 2)     # temperature=0.5: moderate confidence scaling
-            w = w / w.sum()
-            return w
+        def compute_weights(symbols, is_long=True):
+            """Compute position weights with optional edge-boost."""
+            if len(symbols) == 0:
+                return {}
+            syms_list = list(symbols)
+            if args.edge_boost and edge_p75 > 0:
+                # Edge-proportional: high-edge positions get more weight
+                # boost = 1 for edge at P50, ~2 at P75, ~3 at P90
+                raw_w = []
+                for s in syms_list:
+                    e = edge_dict.get(s, 0)
+                    ratio = e / edge_p75           # 1.0 at P75
+                    boost = 1.0 + min(ratio, 3.0)  # cap at 4x (to avoid over-concentration)
+                    raw_w.append(boost)
+                raw_w = np.array(raw_w)
+                w = raw_w / raw_w.sum()
+            else:
+                # Original softmax-like weighting
+                if is_long:
+                    arr = np.array([score_dict[s] for s in syms_list])
+                else:
+                    arr = np.array([-score_dict[s] for s in syms_list])
+                arr = arr - arr.mean()
+                w = np.exp(arr * 2)
+                w = w / w.sum()
+            return dict(zip(syms_list, w))
 
-        wL = soft_weights(s_long)
-        wS = soft_weights(s_short)
-        sym_L = list(new_L)
-        sym_S = list(new_S)
-        weight_L = dict(zip(sym_L, wL))
-        weight_S = dict(zip(sym_S, wS))
+        weight_L = compute_weights(new_L, is_long=True)
+        weight_S = compute_weights(new_S, is_long=False)
 
         # ── compute changes (costs only on traded positions) ──────
         open_L  = new_L - set(held_L)
         close_L = set(held_L) - new_L
         open_S  = new_S - set(held_S)
         close_S = set(held_S) - new_S
+
+        # Compute actual hours between ts0→ts1 for funding calc
+        hours_between = max(1, int((ts1 - ts0).total_seconds() / 3600)) if hasattr(ts1, 'total_seconds') else rebal_h
 
         total_alloc = equity * kelly * leverage
         half_alloc = total_alloc / 2  # half for longs, half for shorts
@@ -345,15 +418,15 @@ def main():
         held_L = {s: px1.get(s, 0) for s in new_L}
         held_S = {s: px1.get(s, 0) for s in new_S}
 
-        if si % 5 == 0 or si == len(steps) - 2:
-            print(f"   {si:>4d}/{len(steps)-1} | ${equity:>8,.2f} | "
+        if si % 5 == 0 or si == len(step_schedule) - 2:
+            print(f"   {si:>4d}/{len(step_schedule)-1} | ${equity:>8,.2f} | "
                   f"DD {dd:>6.1%} | L{len(new_L)} S{len(new_S)} | "
                   f"Δ{turn}")
 
     # ── 6  summary ────────────────────────────────────────────────
     print(f"\n{'='*70}")
     print(f"  RESULTS — {args.days}d, rebal={rebal_h}h, N={n_pos}+{n_pos}, "
-          f"lev={lev_str}, edge={edge_str}")
+          f"lev={lev_str}, mode={mode_str}")
     print(f"{'='*70}")
 
     tot_ret = equity / args.capital - 1
@@ -384,6 +457,8 @@ def main():
         print(f"   Costs:      ${cum_cost:,.2f}  ({cum_cost/args.capital*100:.1f}%)")
         if skip_count > 0:
             print(f"   Skipped:    {skip_count} steps (no edge)")
+        if early_rebal_count > 0:
+            print(f"   Early rebal:{early_rebal_count} (adaptive P90+ triggers)")
         if leverage > 1:
             print(f"   Leverage:   {lev_str}")
             liq_dd = -1.0 / leverage  # approximate liquidation DD
