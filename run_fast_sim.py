@@ -444,7 +444,8 @@ def main():
                 continue
 
         def compute_weights(symbols, is_long=True):
-            """Compute position weights with optional edge-boost × confidence."""
+            """Compute position weights with optional edge-boost × confidence.
+            Cap per position = its confidence (high conf → more capital allowed)."""
             if len(symbols) == 0:
                 return {}
             syms_list = list(symbols)
@@ -452,6 +453,7 @@ def main():
                 # Edge-proportional: high-edge positions get more weight
                 # boost = 1 for edge at P50, ~2 at P75, ~3 at P90
                 raw_w = []
+                conf_arr = []
                 for s in syms_list:
                     e = edge_dict.get(s, 0)
                     ratio = e / edge_p75           # 1.0 at P75
@@ -459,8 +461,12 @@ def main():
                     # Multiply by confidence: high-agreement → more capital
                     c = conf_dict.get(s, 0.5) if not getattr(args, 'no_conf', False) else 1.0
                     raw_w.append(boost * c)
+                    conf_arr.append(c)
                 raw_w = np.array(raw_w)
                 w = raw_w / raw_w.sum()
+                # Cap per position at its confidence (floor 15%)
+                max_w = np.clip(np.array(conf_arr), 0.15, 1.0)
+                w = np.minimum(w, max_w)
             else:
                 # Original softmax-like weighting
                 if is_long:

@@ -876,7 +876,7 @@ def construct_portfolio(signals, capital, risk_cfg, state):
 
     def _weighted_alloc(candidates, total_capital, side, n_slots):
         """Allocate capital proportional to |score| × confidence with edge-boost.
-        Max per position = total_capital / n_slots (prevents concentration when few candidates)."""
+        Max per position = confidence (prevents concentration while keeping capital at work)."""
         if len(candidates) == 0:
             return []
         scores_abs = candidates['score'].abs().values
@@ -890,15 +890,11 @@ def construct_portfolio(signals, capital, risk_cfg, state):
         # Multiply by confidence: high-agreement positions get more capital
         raw_w = raw_w * conf_vals
         weights = raw_w / raw_w.sum()
-        # Cap: each position gets at most 1/n_slots of total allocation
-        max_weight = 1.0 / max(n_slots, 1)
-        capped = np.minimum(weights, max_weight)
-        # Re-normalize only if some weights were capped
-        if capped.sum() < weights.sum() - 1e-9:
-            # Redistribute surplus proportionally among uncapped positions
-            capped = capped / capped.sum() * min(capped.sum() / weights.sum() + (1.0 - capped.sum() / weights.sum()), 1.0)
-            # Simpler: just use capped weights, leftover capital stays unallocated
-            pass
+        # Cap per position: max share = that position's confidence
+        # High confidence → allowed more capital; low confidence → capped tighter
+        max_weights = np.clip(conf_vals, 0.15, 1.0)  # floor 15% so low-conf still gets something
+        capped = np.minimum(weights, max_weights)
+        # Don't re-normalize — leftover capital stays idle (safer than over-concentrating)
         result = []
         used_capital = 0
         for (_, row), w in zip(candidates.iterrows(), capped):
@@ -916,7 +912,8 @@ def construct_portfolio(signals, capital, risk_cfg, state):
             })
         unused = total_capital - used_capital
         if unused > 50:
-            print(f"   ℹ️  {side}: ${unused:.0f} unallocated (position cap {max_weight:.0%})")
+            avg_conf = float(np.mean(conf_vals))
+            print(f"   ℹ️  {side}: ${unused:.0f} unallocated (avg conf {avg_conf:.0%}, {len(candidates)} candidates)")
         return result
 
     if actual_n_long > 0:
