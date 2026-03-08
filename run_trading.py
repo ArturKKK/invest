@@ -96,10 +96,21 @@ SYMBOLS = [
 ]
 
 # OKX instrument mapping
-SYMBOLS_TO_OKX = {
-    sym: sym.replace('/', '-').replace('USDT', 'USDT-SWAP')
-    for sym in SYMBOLS
+# Coins unavailable on OKX demo (delisted, rebranded, or restricted)
+_OKX_BLOCKED = {
+    'MATIC/USDT', 'UNI/USDT', 'APT/USDT', 'FTM/USDT', 'MANA/USDT',
+    'RUNE/USDT', 'EGLD/USDT', 'FLOW/USDT', 'SNX/USDT', 'ENJ/USDT',
+    'BAT/USDT', 'ONE/USDT', 'ICX/USDT', 'ENS/USDT', 'GALA/USDT',
+    'GRT/USDT', 'CHZ/USDT', 'MKR/USDT',  # 51155 compliance restricted
+    'ZIL/USDT',  # 51202 max market order exceeded on demo
 }
+
+SYMBOLS_TO_OKX = {}
+for sym in SYMBOLS:
+    if sym in _OKX_BLOCKED:
+        continue
+    # Use ccxt unified swap symbol: "BTC/USDT" → "BTC/USDT:USDT"
+    SYMBOLS_TO_OKX[sym] = sym + ':USDT'
 
 # Feature columns to exclude
 EXCLUDE_COLS = {
@@ -126,15 +137,17 @@ UNRANKED_COLS = {
     'is_asian_session',
 }
 
-# Default risk config (overridden by optimal_config.json)
+# Default risk config — matches champion backtest (Sharpe 8.04)
+# Override via --config JSON or .env
 DEFAULT_RISK = {
-    'n_long': 10,
-    'n_short': 10,
+    'n_long': 5,
+    'n_short': 5,
+    'leverage': 3,
     'vol_target': 0.008,
     'vol_lookback': 48,
-    'kelly_frac': 0.3,
-    'dd_stop': -0.15,
-    'dd_resume': -0.06,
+    'kelly_frac': 1.0,
+    'dd_stop': -0.20,
+    'dd_resume': -0.08,
     'confidence_threshold': 0.0,
 }
 
@@ -598,27 +611,74 @@ def generate_lgb_signal(df, models, feat_cols):
 def generate_signal(df, feat_cols, root):
     """
     Generate ensemble signal.
-    Tries to load LGB v5 models. Falls back to feature-based signal.
+    Champion: LGB v6 (5 seeds) + LGB v7 (5 seeds) + CatBoost (5 seeds) = 15 models.
+    Falls back to LGB v5 or feature-based signal.
     """
     signals = {}
 
-    # LGB v5
-    lgb_dir = os.path.join(root, 'results_v5')
+    # ── LGB v6 (12h target, best single model) ──
+    lgb_v6_dir = os.path.join(root, 'results_v6')
     try:
-        models = load_lgb_models(lgb_dir)
+        models = load_lgb_models(lgb_v6_dir)
         if models:
             sig = generate_lgb_signal(df, models, feat_cols)
-            signals['lgb'] = sig
-            print(f"   ✅ LGB v5: {len(models)} models, {len(sig)} coins")
+            sig = sig.rename(columns={'pred_lgb': 'pred_lgb_v6'})
+            signals['lgb_v6'] = sig
+            print(f"   ✅ LGB v6: {len(models)} models, {len(sig)} coins")
     except Exception as e:
-        print(f"   ⚠️  LGB v5 failed: {e}")
+        print(f"   ⚠️  LGB v6 failed: {e}")
 
-    # Fallback: simple cross-sectional momentum+mean-reversion composite
+    # ── LGB v7 (blended 6h+12h+24h target) ──
+    lgb_v7_dir = os.path.join(root, 'results_v7')
+    try:
+        models = load_lgb_models(lgb_v7_dir)
+        if models:
+            sig = generate_lgb_signal(df, models, feat_cols)
+            sig = sig.rename(columns={'pred_lgb': 'pred_lgb_v7'})
+            signals['lgb_v7'] = sig
+            print(f"   ✅ LGB v7: {len(models)} models, {len(sig)} coins")
+    except Exception as e:
+        print(f"   ⚠️  LGB v7 failed: {e}")
+
+    # ── CatBoost ──
+    cb_dir = os.path.join(root, 'results_catboost')
+    try:
+        cb_models = load_catboost_models(cb_dir)
+        if cb_models:
+            latest = df.groupby('symbol').last().reset_index()
+            # CatBoost uses same features as LGB
+            model_features = cb_models[0].feature_names_
+            available = [f for f in model_features if f in latest.columns]
+            missing = [f for f in model_features if f not in latest.columns]
+            if missing:
+                print(f"   ⚠️  CatBoost missing {len(missing)} features, padding with 0")
+                for col in missing:
+                    latest[col] = 0.0
+            X = latest[model_features].values
+            all_preds = [m.predict(X) for m in cb_models]
+            latest['pred_cb'] = np.mean(all_preds, axis=0)
+            signals['catboost'] = latest[['symbol', 'pred_cb']].copy()
+            print(f"   ✅ CatBoost: {len(cb_models)} models, {len(latest)} coins")
+    except Exception as e:
+        print(f"   ⚠️  CatBoost failed: {e}")
+
+    # ── Fallback: LGB v5 ──
+    if not signals:
+        lgb_v5_dir = os.path.join(root, 'results_v5')
+        try:
+            models = load_lgb_models(lgb_v5_dir)
+            if models:
+                sig = generate_lgb_signal(df, models, feat_cols)
+                signals['lgb_v5'] = sig
+                print(f"   ✅ LGB v5 (fallback): {len(models)} models")
+        except Exception as e:
+            print(f"   ⚠️  LGB v5 failed: {e}")
+
+    # ── Fallback: simple feature composite ──
     if not signals:
         print(f"   ⚠️  No trained models found — using signal from features")
         latest = df.groupby('symbol').last().reset_index()
 
-        # Composite score from top features (breadth, MA ratios, volatility)
         score_features = ['close_ma720_ratio', 'close_ma336_ratio', 'close_ma24_ratio',
                           'ret_sharpe_168h', 'ret_sharpe_24h', 'breadth_pct_positive']
         avail = [f for f in score_features if f in latest.columns]
@@ -687,9 +747,10 @@ def construct_portfolio(signals, capital, risk_cfg, state):
         vol_scale = 1.0
 
     # Effective allocation
+    leverage = risk_cfg.get('leverage', 1)
     effective_kelly = kelly * vol_scale
-    long_capital = capital * 0.5 * effective_kelly
-    short_capital = capital * 0.5 * effective_kelly
+    long_capital = capital * 0.5 * effective_kelly * leverage
+    short_capital = capital * 0.5 * effective_kelly * leverage
 
     # Confidence check
     conf_thresh = risk_cfg.get('confidence_threshold', 0.0)
@@ -699,6 +760,15 @@ def construct_portfolio(signals, capital, risk_cfg, state):
         if max_spread < conf_thresh:
             print(f"   ⚠️  Signal too weak (spread={max_spread:.2f} < {conf_thresh}), skipping")
             return []
+
+    # Filter out coins unavailable on exchange
+    if SYMBOLS_TO_OKX:
+        tradeable = set(SYMBOLS_TO_OKX.keys())
+        before = len(signals)
+        signals = signals[signals['symbol'].isin(tradeable)].copy()
+        dropped = before - len(signals)
+        if dropped:
+            print(f"   ⚠️  Filtered {dropped} untradeable coins from signals")
 
     # Build positions
     signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
@@ -765,6 +835,20 @@ def init_exchange(mode='paper'):
 
     exchange.session.verify = False
 
+    # Verify account config
+    try:
+        config = exchange.private_get_account_config()
+        acct_lv = config.get('data', [{}])[0].get('acctLv', '?')
+        pos_mode = config.get('data', [{}])[0].get('posMode', '?')
+        mode_names = {'1': 'Simple', '2': 'Single-currency margin',
+                      '3': 'Multi-currency', '4': 'Portfolio'}
+        print(f"   ✅ Account mode: {mode_names.get(acct_lv, acct_lv)} (acctLv={acct_lv})")
+        print(f"   ✅ Position mode: {pos_mode}")
+        if acct_lv == '1':
+            print("   ⚠️  WARNING: Simple mode — swaps won't work! Switch to Single-currency margin on OKX website")
+    except Exception as e:
+        print(f"   ⚠️  Config check: {e}")
+
     try:
         balance = exchange.fetch_balance()
         usdt = balance.get('USDT', {}).get('free', 0)
@@ -782,13 +866,15 @@ def close_all(exchange):
     try:
         positions = _api_call_with_retry(exchange.fetch_positions)
         for pos in positions:
-            if float(pos.get('contracts', 0)) > 0:
+            contracts = abs(float(pos.get('contracts', 0)))
+            if contracts > 0:
+                # Net mode: sell to close long, buy to close short
                 side = 'sell' if pos['side'] == 'long' else 'buy'
                 _api_call_with_retry(
                     exchange.create_order,
                     symbol=pos['symbol'], type='market', side=side,
-                    amount=pos['contracts'],
-                    params={'tdMode': 'isolated', 'posSide': pos['side']},
+                    amount=contracts,
+                    params={'tdMode': 'cross'},
                 )
                 print(f"      ✅ Closed {pos['side']} {pos['symbol']}")
     except Exception as e:
@@ -802,11 +888,19 @@ def _fetch_contract_specs(exchange):
         markets = exchange.load_markets()
         for sym, mkt in markets.items():
             if mkt.get('swap'):
-                specs[sym] = {
-                    'ctVal': float(mkt.get('contractSize', 1)),
-                    'minSz': float(mkt.get('limits', {}).get('amount', {}).get('min', 1)),
-                    'precision': int(mkt.get('precision', {}).get('amount', 0) or 0),
-                }
+                try:
+                    ct_val = float(mkt.get('contractSize') or 1)
+                    min_amt = mkt.get('limits', {}).get('amount', {}).get('min')
+                    min_sz = float(min_amt) if min_amt is not None else 1
+                    prec_amt = mkt.get('precision', {}).get('amount')
+                    prec = int(prec_amt) if prec_amt is not None else 0
+                    specs[sym] = {
+                        'ctVal': ct_val,
+                        'minSz': min_sz,
+                        'precision': prec,
+                    }
+                except (TypeError, ValueError):
+                    pass
     except Exception as e:
         print(f"   ⚠️  Failed to fetch market specs: {e}")
     return specs
@@ -819,8 +913,14 @@ def _api_call_with_retry(func, *args, max_retries=3, **kwargs):
             return func(*args, **kwargs)
         except Exception as e:
             err_str = str(e).lower()
-            # Don't retry on auth errors or insufficient balance
-            if any(x in err_str for x in ['auth', 'apikey', 'insufficient', 'invalid']):
+            # Don't retry on auth errors, insufficient balance, compliance,
+            # max order size, or symbol-not-found errors
+            if any(x in err_str for x in [
+                'auth', 'apikey', 'insufficient', 'invalid',
+                'compliance', '51155', 'does not have market',
+                'account mode', '51010', '51008',
+                'maximum amount', '51202',
+            ]):
                 raise
             if attempt < max_retries - 1:
                 wait = 2 ** attempt * (1 + 0.5 * (hash(str(e)) % 100) / 100)
@@ -830,7 +930,7 @@ def _api_call_with_retry(func, *args, max_retries=3, **kwargs):
                 raise
 
 
-def execute(exchange, positions, dry_run=True):
+def execute(exchange, positions, dry_run=True, leverage=3, tracker=None):
     """Execute positions on OKX with proper contract sizing."""
     results = []
 
@@ -853,11 +953,11 @@ def execute(exchange, positions, dry_run=True):
             continue
 
         try:
-            # Set leverage
+            # Set leverage on OKX (must match cross margin mode)
             try:
                 _api_call_with_retry(
-                    exchange.set_leverage, 1, okx_sym,
-                    params={'mgnMode': 'isolated'}
+                    exchange.set_leverage, leverage, okx_sym,
+                    params={'mgnMode': 'cross'}
                 )
             except Exception:
                 pass
@@ -876,11 +976,10 @@ def execute(exchange, positions, dry_run=True):
             contracts = pos['usd'] / (ctVal * price)
             contracts = max(minSz, round(contracts / minSz) * minSz)  # Round to minSz
 
-            # Precision
-            prec = spec.get('precision', 0)
-            if prec > 0:
-                contracts = round(contracts, prec)
-            else:
+            # Use ccxt precision (handles OKX step-size format)
+            try:
+                contracts = float(exchange.amount_to_precision(okx_sym, contracts))
+            except Exception:
                 contracts = int(contracts)
 
             if contracts < minSz:
@@ -893,8 +992,7 @@ def execute(exchange, positions, dry_run=True):
                 symbol=okx_sym, type='market', side=side,
                 amount=contracts,
                 params={
-                    'tdMode': 'isolated',
-                    'posSide': 'long' if pos['side'] == 'long' else 'short',
+                    'tdMode': 'cross',
                 },
             )
             actual_usd = contracts * ctVal * price
@@ -903,6 +1001,12 @@ def execute(exchange, positions, dry_run=True):
                 **pos, 'status': 'filled', 'order_id': order['id'],
                 'contracts': contracts, 'price': price, 'actual_usd': actual_usd,
             })
+            # Record trade open
+            if tracker:
+                tracker.record_open(
+                    symbol=pos['symbol'], side=pos['side'], usd=actual_usd,
+                    score=pos.get('score', 0), entry_price=price, contracts=contracts,
+                )
         except Exception as e:
             print(f"      ❌ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {e}")
             results.append({**pos, 'status': 'error', 'error': str(e)})
@@ -910,7 +1014,7 @@ def execute(exchange, positions, dry_run=True):
     return results
 
 
-def diff_rebalance(exchange, target_positions):
+def diff_rebalance(exchange, target_positions, leverage=3, tracker=None):
     """Diff-based rebalancing: only trade what changed.
     
     Compares current OKX positions to target, produces:
@@ -921,7 +1025,7 @@ def diff_rebalance(exchange, target_positions):
     Returns list of results (same format as execute).
     """
     if not exchange:
-        return execute(exchange, target_positions, dry_run=True)
+        return execute(exchange, target_positions, dry_run=True, leverage=leverage, tracker=tracker)
 
     results = []
 
@@ -940,7 +1044,7 @@ def diff_rebalance(exchange, target_positions):
     except Exception as e:
         print(f"   ⚠️  Cannot fetch positions, falling back to close-all: {e}")
         close_all(exchange)
-        return execute(exchange, target_positions, dry_run=False)
+        return execute(exchange, target_positions, dry_run=False, leverage=leverage)
 
     # 2. Build target map: okx_symbol → {side, usd}
     target = {}
@@ -960,11 +1064,28 @@ def diff_rebalance(exchange, target_positions):
                     exchange.create_order,
                     symbol=sym, type='market', side=side,
                     amount=cur['contracts'],
-                    params={'tdMode': 'isolated', 'posSide': cur['side']},
+                    params={'tdMode': 'cross'},
                 )
                 print(f"      🔄 Closed {cur['side']} {sym} ({cur['contracts']} cts)")
                 results.append({'symbol': sym, 'side': cur['side'], 'action': 'close',
                                 'status': 'filled'})
+                # Record trade close with P&L
+                if tracker:
+                    # Find original symbol from OKX unified
+                    orig_sym = None
+                    for s, o in SYMBOLS_TO_OKX.items():
+                        if o == sym:
+                            orig_sym = s
+                            break
+                    if orig_sym:
+                        try:
+                            t = exchange.fetch_ticker(sym)
+                            exit_price = t['last'] or t['close']
+                            pnl, pnl_pct, result = tracker.record_close(orig_sym, cur['side'], exit_price)
+                            if pnl is not None:
+                                print(f"         {result} P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%)")
+                        except Exception:
+                            pass
             except Exception as e:
                 print(f"      ❌ Close {sym}: {e}")
                 results.append({'symbol': sym, 'action': 'close', 'status': 'error',
@@ -987,7 +1108,7 @@ def diff_rebalance(exchange, target_positions):
         print(f"      ♻️  Kept {kept} existing positions unchanged")
 
     if new_positions:
-        new_results = execute(exchange, new_positions, dry_run=False)
+        new_results = execute(exchange, new_positions, dry_run=False, leverage=leverage, tracker=tracker)
         results.extend(new_results)
 
     return results
@@ -1151,6 +1272,135 @@ def save_state(state, path):
 
 
 # ============================================================
+# TRADE TRACKER — per-trade P&L logging
+# ============================================================
+
+class TradeTracker:
+    """Tracks every trade open/close with P&L, writes to CSV."""
+
+    CSV_COLUMNS = [
+        'trade_id', 'symbol', 'side', 'usd', 'score',
+        'entry_time', 'entry_price', 'contracts',
+        'exit_time', 'exit_price', 'pnl_usd', 'pnl_pct', 'result',
+        'hold_hours', 'status',  # status: open / closed
+    ]
+
+    def __init__(self, csv_path):
+        self.csv_path = csv_path
+        self._next_id = 1
+        # Load existing trades if file exists
+        if os.path.exists(csv_path):
+            try:
+                self.df = pd.read_csv(csv_path)
+                if len(self.df) > 0:
+                    self._next_id = int(self.df['trade_id'].max()) + 1
+            except Exception:
+                self.df = pd.DataFrame(columns=self.CSV_COLUMNS)
+        else:
+            self.df = pd.DataFrame(columns=self.CSV_COLUMNS)
+
+    def _save(self):
+        self.df.to_csv(self.csv_path, index=False)
+
+    def record_open(self, symbol, side, usd, score, entry_price, contracts):
+        """Record a new trade open. Returns trade_id."""
+        tid = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc).isoformat()
+        row = {
+            'trade_id': tid, 'symbol': symbol, 'side': side, 'usd': usd,
+            'score': round(score, 4), 'entry_time': now,
+            'entry_price': entry_price, 'contracts': contracts,
+            'exit_time': None, 'exit_price': None,
+            'pnl_usd': None, 'pnl_pct': None, 'result': None,
+            'hold_hours': None, 'status': 'open',
+        }
+        self.df = pd.concat([self.df, pd.DataFrame([row])], ignore_index=True)
+        self._save()
+        return tid
+
+    def record_close(self, symbol, side, exit_price):
+        """Close an open trade, compute P&L. Returns (pnl_usd, pnl_pct, result)."""
+        mask = (
+            (self.df['symbol'] == symbol) &
+            (self.df['side'] == side) &
+            (self.df['status'] == 'open')
+        )
+        idx = self.df.index[mask]
+        if len(idx) == 0:
+            return None, None, None
+
+        row_idx = idx[-1]  # latest open trade for this symbol/side
+        row = self.df.loc[row_idx]
+        entry_price = float(row['entry_price'])
+        usd_alloc = float(row['usd'])
+        entry_time = pd.to_datetime(row['entry_time'])
+
+        # P&L calculation
+        if side == 'long':
+            pnl_pct = (exit_price - entry_price) / entry_price
+        else:  # short
+            pnl_pct = (entry_price - exit_price) / entry_price
+        pnl_usd = pnl_pct * usd_alloc
+
+        now = datetime.now(timezone.utc)
+        hold_hours = (now - entry_time).total_seconds() / 3600
+        result = '✅' if pnl_usd >= 0 else '❌'
+
+        self.df.loc[row_idx, 'exit_time'] = now.isoformat()
+        self.df.loc[row_idx, 'exit_price'] = exit_price
+        self.df.loc[row_idx, 'pnl_usd'] = round(pnl_usd, 2)
+        self.df.loc[row_idx, 'pnl_pct'] = round(pnl_pct * 100, 2)
+        self.df.loc[row_idx, 'result'] = result
+        self.df.loc[row_idx, 'hold_hours'] = round(hold_hours, 1)
+        self.df.loc[row_idx, 'status'] = 'closed'
+        self._save()
+        return pnl_usd, pnl_pct * 100, result
+
+    def get_stats(self):
+        """Return summary stats dict."""
+        closed = self.df[self.df['status'] == 'closed'].copy()
+        if len(closed) == 0:
+            return {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0}
+
+        wins = closed[closed['pnl_usd'] >= 0]
+        losses = closed[closed['pnl_usd'] < 0]
+        total_pnl = closed['pnl_usd'].sum()
+        avg_win = wins['pnl_usd'].mean() if len(wins) > 0 else 0
+        avg_loss = losses['pnl_usd'].mean() if len(losses) > 0 else 0
+        avg_hold = closed['hold_hours'].mean()
+
+        return {
+            'total_trades': len(closed),
+            'wins': len(wins),
+            'losses': len(losses),
+            'win_rate': len(wins) / len(closed),
+            'total_pnl': round(total_pnl, 2),
+            'avg_win': round(avg_win, 2),
+            'avg_loss': round(avg_loss, 2),
+            'avg_hold_hours': round(avg_hold, 1),
+            'open_trades': len(self.df[self.df['status'] == 'open']),
+        }
+
+    def get_open_trades(self):
+        """Return list of currently open trades."""
+        return self.df[self.df['status'] == 'open'].to_dict('records')
+
+    def print_stats(self):
+        """Print formatted stats."""
+        s = self.get_stats()
+        if s['total_trades'] == 0:
+            print("   📊 No closed trades yet")
+            return
+        print(f"   📊 Trade Stats: {s['wins']}W/{s['losses']}L "
+              f"({s['win_rate']:.0%} WR) | "
+              f"PnL: ${s['total_pnl']:+.2f} | "
+              f"Avg win: ${s['avg_win']:+.2f} / loss: ${s['avg_loss']:+.2f} | "
+              f"Hold: {s['avg_hold_hours']:.0f}h | "
+              f"Open: {s['open_trades']}")
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -1246,6 +1496,10 @@ def main():
     exchange = None
     if args.mode in ('paper', 'live'):
         exchange = init_exchange(args.mode)
+
+    # Init trade tracker
+    tracker = TradeTracker(os.path.join(log_dir, 'trades.csv'))
+    tracker.print_stats()
 
     def run_cycle():
         now = datetime.now(timezone.utc)
@@ -1355,11 +1609,25 @@ def main():
             sim_print_summary(state, log_dir)
             results = []
         else:
-            print(f"\n� Diff-based rebalancing...")
-            results = diff_rebalance(exchange, positions)
-            # ── Telegram: fills alert ──
+            print(f"\n📋 Diff-based rebalancing...")
+            results = diff_rebalance(exchange, positions,
+                                     leverage=risk_cfg.get('leverage', 3),
+                                     tracker=tracker)
+            # Print trade stats after each cycle
+            tracker.print_stats()
+            # ── Telegram: fills + stats ──
             if tg and tg.enabled:
                 tg.alert_fills(results)
+                stats = tracker.get_stats()
+                if stats['total_trades'] > 0:
+                    tg.send(
+                        f"📊 <b>Trade Stats</b>\n"
+                        f"Trades: {stats['wins']}W / {stats['losses']}L "
+                        f"({stats['win_rate']:.0%} WR)\n"
+                        f"Total PnL: ${stats['total_pnl']:+.2f}\n"
+                        f"Avg win: ${stats['avg_win']:+.2f} | "
+                        f"Avg loss: ${stats['avg_loss']:+.2f}",
+                    )
 
         # 7. Log
         log = {
