@@ -349,16 +349,22 @@ def build_features(df):
             'news_sentiment_momentum', 'news_volume_zscore',
         ]
         news_market = ['market_news_count_24h', 'market_news_sentiment_24h']
+        news_political = [
+            'political_news_count_24h', 'political_sentiment_24h',
+            'political_sentiment_7d', 'political_sentiment_shock',
+            'political_news_volume_zscore',
+        ]
         merge_cols = ['timestamp', 'symbol'] + [c for c in news_per_coin if c in news.columns]
         df = df.merge(news[merge_cols].drop_duplicates(['timestamp', 'symbol']),
                       on=['timestamp', 'symbol'], how='left')
-        market_merge = ['timestamp'] + [c for c in news_market if c in news.columns]
+        all_market = news_market + news_political
+        market_merge = ['timestamp'] + [c for c in all_market if c in news.columns]
         df = df.merge(news[market_merge].drop_duplicates('timestamp'),
                       on='timestamp', how='left', suffixes=('', '_dup'))
         dup_cols = [c for c in df.columns if c.endswith('_dup')]
         if dup_cols:
             df.drop(columns=dup_cols, inplace=True)
-        for col in news_per_coin + news_market:
+        for col in news_per_coin + all_market:
             if col in df.columns:
                 df[col] = df[col].fillna(0)
 

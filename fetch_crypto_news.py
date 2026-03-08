@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """
-Fetch historical crypto news and compute per-coin sentiment features.
+Fetch historical crypto + political/macro news and compute sentiment features.
 
 Data sources:
   1. CryptoCompare News API (free, no key required for basic access)
-     - Returns news with title, body, categories, source, published_at
+     - Crypto-specific news with title, body, categories, source
      - 50 items per page, paginate with lTs parameter
-  2. VADER sentiment analysis on news titles (lightweight, fast)
+     - Rate limit: 3000/hour (free), 100k/month (free API key)
+  2. GDELT Project (free, no key, unlimited)
+     - Global news/events database, updated every 15 minutes
+     - Political/macro events (Trump, regulators, sanctions, etc.)
+     - Full-text search by keywords
+  3. VADER sentiment analysis on news titles (lightweight, fast)
 
 Output: data/sentiment/crypto_news.parquet
-  Columns: timestamp (hourly), symbol, news_count_1h, news_count_24h,
-           news_count_7d, sentiment_avg_24h, sentiment_avg_7d,
-           sentiment_momentum, abnormal_news_zscore, market_news_count_24h,
-           market_sentiment_avg_24h
+  Per-coin + market-level + political sentiment features (hourly)
 
 Usage:
-  python fetch_crypto_news.py                       # fetch all history
-  python fetch_crypto_news.py --days 730            # last 2 years
-  python fetch_crypto_news.py --api-key YOUR_KEY    # CryptoPanic (better data)
-  python fetch_crypto_news.py --resume              # resume from last fetch
+  python fetch_crypto_news.py                           # fetch all (crypto + political)
+  python fetch_crypto_news.py --days 730                # last 2 years
+  python fetch_crypto_news.py --source crypto           # crypto only
+  python fetch_crypto_news.py --source political        # political only  
+  python fetch_crypto_news.py --source all              # both (default)
+  python fetch_crypto_news.py --resume                  # resume from last fetch
+  python fetch_crypto_news.py --skip-fetch              # rebuild features only
+  python fetch_crypto_news.py --cc-api-key KEY          # CryptoCompare key (more calls)
 """
 
 import os
@@ -98,6 +104,41 @@ ALIASES = {
 # Rate limit settings
 CRYPTOCOMPARE_DELAY = 0.25  # seconds between requests (free tier: ~50/min)
 CRYPTOPANIC_DELAY = 1.0     # CryptoPanic free tier is more restrictive
+
+# Political/macro keywords that move crypto markets
+POLITICAL_KEYWORDS = [
+    # US Politics + Crypto
+    "Trump crypto", "Trump bitcoin", "Trump tariff", "Trump sanctions",
+    "Trump executive order", "Biden crypto", "Biden regulation",
+    "SEC crypto", "SEC bitcoin", "SEC ethereum", "Gary Gensler",
+    "crypto regulation", "crypto ban", "crypto tax",
+    "stablecoin regulation", "CBDC", "digital dollar",
+    # Macro events
+    "Federal Reserve rate", "Fed rate decision", "interest rate hike",
+    "interest rate cut", "inflation data", "CPI report",
+    "US debt ceiling", "government shutdown",
+    "bank failure", "banking crisis", "Silicon Valley Bank",
+    # Geopolitics affecting crypto
+    "Russia sanctions", "China crypto ban", "China bitcoin",
+    "EU crypto regulation", "MiCA regulation",
+    "Tether USDT", "stablecoin depeg",
+    # Major crypto events via politics
+    "Bitcoin ETF", "Ethereum ETF", "spot ETF approval",
+    "crypto strategic reserve", "Binance SEC", "Coinbase SEC",
+    "crypto executive order", "digital asset framework",
+]
+
+# Simplified keyword groups for GDELT queries (max ~250 chars per query)
+GDELT_QUERY_GROUPS = [
+    '(Trump AND (crypto OR bitcoin OR tariff))',
+    '(SEC AND (crypto OR bitcoin OR ethereum))',
+    '("Federal Reserve" OR "interest rate" OR "CPI" OR inflation)',
+    '(crypto AND (regulation OR ban OR tax OR ETF))',
+    '((Russia OR China) AND (sanctions OR crypto OR bitcoin))',
+    '("Bitcoin ETF" OR "Ethereum ETF" OR "stablecoin" OR CBDC)',
+]
+
+RAW_POLITICAL_PATH = os.path.join(OUTPUT_DIR, "raw_political_news.parquet")
 
 
 def _save_checkpoint(all_news):
@@ -333,6 +374,126 @@ def fetch_cryptopanic_news(api_key, days=730):
     return all_news
 
 
+# ─── GDELT Political/Macro News Fetcher ───────────────────────────
+def fetch_gdelt_political_news(days=730):
+    """
+    Fetch political/macro news from GDELT DOC API (free, unlimited, no key).
+    
+    GDELT indexes global news in near-real-time.
+    DOC API: https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/
+    
+    - Full-text search across global media
+    - No rate limits (but be reasonable)
+    - Returns: url, title, seendate, source, language, domain
+    - Max 250 results per query, paginate by date ranges
+    
+    We fetch political/macro events that affect crypto markets.
+    """
+    base_url = "https://api.gdeltproject.org/api/v2/doc/doc"
+    
+    all_news = []
+    seen_urls = set()
+    
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    end_date = datetime.now(timezone.utc)
+    
+    print(f"📡 Fetching GDELT political/macro news (target: {days} days back)...")
+    print(f"   Cutoff: {cutoff.strftime('%Y-%m-%d')}")
+    print(f"   Query groups: {len(GDELT_QUERY_GROUPS)}")
+    
+    for qi, query in enumerate(GDELT_QUERY_GROUPS):
+        print(f"\n   [{qi+1}/{len(GDELT_QUERY_GROUPS)}] Query: {query[:60]}...")
+        
+        # GDELT DOC API supports date ranges, paginate in 30-day chunks
+        chunk_end = end_date
+        chunk_days = 30  # process in 30-day windows
+        query_total = 0
+        
+        while chunk_end > cutoff:
+            chunk_start = max(chunk_end - timedelta(days=chunk_days), cutoff)
+            
+            try:
+                params = {
+                    "query": query,
+                    "mode": "artlist",
+                    "maxrecords": "250",
+                    "format": "json",
+                    "startdatetime": chunk_start.strftime("%Y%m%d%H%M%S"),
+                    "enddatetime": chunk_end.strftime("%Y%m%d%H%M%S"),
+                    "sourcelang": "eng",  # English only
+                }
+                
+                resp = requests.get(base_url, params=params, timeout=60)
+                
+                if resp.status_code == 429:
+                    print(f"      ⏳ Rate limited, waiting 30s...")
+                    time.sleep(30)
+                    continue  # retry same chunk
+                elif resp.status_code != 200:
+                    print(f"      ⚠️  HTTP {resp.status_code} for {chunk_start.date()}→{chunk_end.date()}")
+                    chunk_end = chunk_start
+                    time.sleep(2)
+                    continue
+                
+                try:
+                    data = resp.json()
+                except Exception:
+                    chunk_end = chunk_start
+                    time.sleep(1)
+                    continue
+                
+                articles = data.get("articles", [])
+                
+                for art in articles:
+                    url = art.get("url", "")
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    
+                    title = art.get("title", "")
+                    seendate = art.get("seendate", "")
+                    
+                    # Parse GDELT date format: "20260305T143000Z"
+                    try:
+                        if seendate:
+                            pub_ts = int(pd.to_datetime(seendate).timestamp())
+                        else:
+                            continue
+                    except Exception:
+                        continue
+                    
+                    all_news.append({
+                        "id": f"gdelt_{hash(url) & 0xFFFFFFFF}",
+                        "title": title,
+                        "body": "",
+                        "categories": "POLITICAL|MACRO",
+                        "source": art.get("domain", ""),
+                        "published_on": pub_ts,
+                        "url": url,
+                        "tags": "political,macro",
+                        "news_type": "political",
+                    })
+                    query_total += 1
+                
+                chunk_end = chunk_start
+                time.sleep(1)  # pause between chunks
+                
+            except requests.exceptions.RequestException as e:
+                print(f"      ⚠️  Request error: {e}. Retrying in 10s...")
+                time.sleep(10)
+                continue
+            except Exception as e:
+                print(f"      ❌ Error: {e}")
+                chunk_end = chunk_start
+                continue
+        
+        print(f"      → {query_total:,} articles for this query")
+        time.sleep(3)  # pause between query groups
+    
+    print(f"\n   ✅ Total GDELT political news: {len(all_news):,}")
+    return all_news
+
+
 # ─── News → Per-Coin Mapping ──────────────────────────────────────
 def map_news_to_coins(news_items, symbols=SYMBOLS):
     """
@@ -350,8 +511,11 @@ def map_news_to_coins(news_items, symbols=SYMBOLS):
         alias_to_sym[f"{sym}/USDT"] = sym
     
     mapped = []
+    political_unmapped = []  # political news not matched to specific coins → market-level
+    
     for item in news_items:
         coins = set()
+        is_political = item.get("news_type") == "political" or "POLITICAL" in str(item.get("categories", "")).upper()
         
         # 1. Check categories field (CryptoCompare uses "|" separator)
         cats = str(item.get("categories", "")).upper()
@@ -384,15 +548,19 @@ def map_news_to_coins(news_items, symbols=SYMBOLS):
         
         if coins:
             mapped.append((item, list(coins)))
+        elif is_political:
+            # Political news not mapped to specific coin → affects entire market
+            political_unmapped.append(item)
     
     total_mappings = sum(len(c) for _, c in mapped)
     print(f"   📋 Mapped {len(mapped):,}/{len(news_items):,} news → "
           f"{total_mappings:,} coin-news pairs")
-    return mapped
+    print(f"   🏛️  Political/macro (market-level): {len(political_unmapped):,} items")
+    return mapped, political_unmapped
 
 
 # ─── Build Sentiment Features ────────────────────────────────────
-def build_news_features(mapped_news, symbols=SYMBOLS):
+def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
     """
     Build per-coin, per-hour sentiment features from mapped news.
     
@@ -409,6 +577,13 @@ def build_news_features(mapped_news, symbols=SYMBOLS):
     Market-level features:
       - market_news_count_24h: total crypto news in 24h
       - market_news_sentiment_24h: market-wide sentiment
+    
+    Political/macro features (NEW — same for all coins):
+      - political_news_count_24h: political/macro news volume
+      - political_sentiment_24h: political news sentiment
+      - political_sentiment_7d: 7d rolling political sentiment
+      - political_sentiment_shock: |24h - 7d| political sentiment (sudden shift)
+      - political_news_volume_zscore: z-score of political news volume
     """
     analyzer = get_vader_analyzer()
     
@@ -553,6 +728,53 @@ def build_news_features(mapped_news, symbols=SYMBOLS):
     
     df = df.merge(market_df, on="timestamp", how="left")
     
+    # ─── Political/macro features (market-level) ──────────────────
+    if political_unmapped:
+        print("🏛️  Building political/macro features...")
+        
+        pol_count = defaultdict(int)
+        pol_sent_sum = defaultdict(float)
+        
+        for item in political_unmapped:
+            ts = item.get("published_on", 0)
+            if ts == 0:
+                continue
+            hour_ts = pd.Timestamp(ts, unit="s", tz="UTC").floor("h")
+            if hour_ts in set(hourly_range):
+                sentiment = analyze_sentiment(item.get("title", ""), analyzer)
+                pol_count[hour_ts] += 1
+                pol_sent_sum[hour_ts] += sentiment
+        
+        p_counts = pd.Series(
+            [pol_count.get(h, 0) for h in hourly_range],
+            index=hourly_range, dtype=float
+        )
+        p_sents = pd.Series(
+            [pol_sent_sum.get(h, 0) / max(pol_count.get(h, 0), 1) for h in hourly_range],
+            index=hourly_range, dtype=float
+        )
+        
+        pol_news_24h = p_counts.rolling(24, min_periods=1).sum()
+        pol_sentiment_24h = p_sents.rolling(24, min_periods=1).mean()
+        pol_sentiment_7d = p_sents.rolling(168, min_periods=1).mean()
+        pol_sentiment_shock = (pol_sentiment_24h - pol_sentiment_7d).abs()
+        pol_30d_mean = pol_news_24h.rolling(720, min_periods=24).mean()
+        pol_30d_std = pol_news_24h.rolling(720, min_periods=24).std().clip(lower=0.1)
+        pol_volume_zscore = (pol_news_24h - pol_30d_mean) / pol_30d_std
+        
+        pol_df = pd.DataFrame({
+            "timestamp": hourly_range,
+            "political_news_count_24h": pol_news_24h.values,
+            "political_sentiment_24h": pol_sentiment_24h.values,
+            "political_sentiment_7d": pol_sentiment_7d.values,
+            "political_sentiment_shock": pol_sentiment_shock.values,
+            "political_news_volume_zscore": pol_volume_zscore.values,
+        })
+        
+        df = df.merge(pol_df, on="timestamp", how="left")
+        n_pol = (df.get("political_news_count_24h", pd.Series([0])) > 0).sum()
+        print(f"      Political features: {n_pol:,} rows with political news")
+    
     # Fill NaN
     for col in df.columns:
         if col not in ("timestamp", "symbol"):
@@ -590,7 +812,8 @@ def print_news_summary(df):
               f"avg_sentiment={avg_sent:+.3f}")
     
     # Feature distributions
-    feat_cols = [c for c in df.columns if c.startswith("news_") or c.startswith("market_")]
+    feat_cols = [c for c in df.columns 
+                 if c.startswith("news_") or c.startswith("market_") or c.startswith("political_")]
     print(f"\nFeature distributions:")
     for col in feat_cols:
         vals = df[col]
@@ -600,14 +823,14 @@ def print_news_summary(df):
 
 # ─── Main ─────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Fetch crypto news and build sentiment features")
+    parser = argparse.ArgumentParser(description="Fetch crypto + political news and build sentiment features")
     parser.add_argument("--days", type=int, default=730, help="Days of history to fetch (default: 730)")
     parser.add_argument("--api-key", type=str, default=None, help="CryptoPanic API key (optional, better data)")
     parser.add_argument("--cc-api-key", type=str, default=None, help="CryptoCompare API key (optional, more calls)")
     parser.add_argument("--resume", action="store_true", help="Resume from last fetch point")
     parser.add_argument("--skip-fetch", action="store_true", help="Skip fetching, only rebuild features from raw data")
-    parser.add_argument("--source", choices=["cryptocompare", "cryptopanic", "both"], 
-                       default="cryptocompare", help="News source (default: cryptocompare)")
+    parser.add_argument("--source", choices=["crypto", "political", "all"], 
+                       default="all", help="News source: crypto, political, or all (default)")
     args = parser.parse_args()
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -616,13 +839,14 @@ def main():
     if not args.skip_fetch:
         all_news = []
         
-        # CryptoCompare (always available, free)
-        if args.source in ("cryptocompare", "both"):
+        # CryptoCompare (crypto news)
+        if args.source in ("crypto", "all"):
             resume_ts = None
             if args.resume and os.path.exists(RAW_NEWS_PATH):
                 existing = pd.read_parquet(RAW_NEWS_PATH)
-                resume_ts = int(existing["published_on"].min())
-                print(f"📂 Resuming from {datetime.fromtimestamp(resume_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
+                if len(existing) > 0 and "published_on" in existing.columns:
+                    resume_ts = int(existing["published_on"].min())
+                    print(f"📂 Resuming from {datetime.fromtimestamp(resume_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
             
             cc_news = fetch_cryptocompare_news(
                 days=args.days, resume_from_ts=resume_ts,
@@ -630,55 +854,74 @@ def main():
             )
             all_news.extend(cc_news)
         
-        # CryptoPanic (better sentiment, needs API key)
-        if args.source in ("cryptopanic", "both") and args.api_key:
+        # GDELT (political/macro news) — free, unlimited, no key!
+        if args.source in ("political", "all"):
+            gdelt_news = fetch_gdelt_political_news(days=args.days)
+            all_news.extend(gdelt_news)
+        
+        # CryptoPanic (optional, better sentiment, needs API key)
+        if args.api_key:
             cp_news = fetch_cryptopanic_news(api_key=args.api_key, days=args.days)
             all_news.extend(cp_news)
-        elif args.source == "cryptopanic" and not args.api_key:
-            print("❌ CryptoPanic requires --api-key. Get free key at https://cryptopanic.com/developers/api/")
-            sys.exit(1)
         
-        # Deduplicate by title + published_on
-        seen = set()
-        unique_news = []
-        for item in all_news:
-            key = (item.get("title", ""), item.get("published_on", 0))
-            if key not in seen:
-                seen.add(key)
-                unique_news.append(item)
-        
-        print(f"\n📦 Total unique news: {len(unique_news):,} (deduped from {len(all_news):,})")
-        
-        # Save raw news
-        raw_df = pd.DataFrame(unique_news)
-        
-        # Merge with existing if resuming
-        if args.resume and os.path.exists(RAW_NEWS_PATH):
-            existing = pd.read_parquet(RAW_NEWS_PATH)
-            raw_df = pd.concat([existing, raw_df]).drop_duplicates(
-                subset=["title", "published_on"]).reset_index(drop=True)
-            print(f"   Merged with existing: {len(raw_df):,} total")
-        
-        raw_df.to_parquet(RAW_NEWS_PATH, index=False)
-        print(f"   💾 Saved raw news → {RAW_NEWS_PATH}")
-        
-        news_items = raw_df.to_dict("records")
+        # ─── Don't save if nothing was fetched (protect existing data!) ───
+        if not all_news:
+            print("\n⚠️  No news fetched (rate limit?). Existing data preserved.")
+            if os.path.exists(RAW_NEWS_PATH):
+                raw_df = pd.read_parquet(RAW_NEWS_PATH)
+                if len(raw_df) > 0:
+                    print(f"   Using existing {len(raw_df):,} items")
+                    news_items = raw_df.to_dict("records")
+                else:
+                    print("❌ No existing data either!")
+                    sys.exit(1)
+            else:
+                print("❌ No data to process!")
+                sys.exit(1)
+        else:
+            # Deduplicate by title + published_on
+            seen = set()
+            unique_news = []
+            for item in all_news:
+                key = (item.get("title", ""), item.get("published_on", 0))
+                if key not in seen:
+                    seen.add(key)
+                    unique_news.append(item)
+            
+            print(f"\n📦 Total unique news: {len(unique_news):,} (deduped from {len(all_news):,})")
+            
+            # Save raw news (merge with existing if resuming)
+            raw_df = pd.DataFrame(unique_news)
+            
+            if args.resume and os.path.exists(RAW_NEWS_PATH):
+                existing = pd.read_parquet(RAW_NEWS_PATH)
+                if len(existing) > 0:
+                    raw_df = pd.concat([existing, raw_df]).drop_duplicates(
+                        subset=["title", "published_on"]).reset_index(drop=True)
+                    print(f"   Merged with existing: {len(raw_df):,} total")
+            
+            raw_df.to_parquet(RAW_NEWS_PATH, index=False)
+            print(f"   💾 Saved raw news → {RAW_NEWS_PATH}")
+            news_items = raw_df.to_dict("records")
     else:
         # Load from existing raw data
         if not os.path.exists(RAW_NEWS_PATH):
             print(f"❌ No raw news at {RAW_NEWS_PATH}. Run without --skip-fetch first.")
             sys.exit(1)
         raw_df = pd.read_parquet(RAW_NEWS_PATH)
+        if len(raw_df) == 0:
+            print("❌ Raw news file is empty!")
+            sys.exit(1)
         news_items = raw_df.to_dict("records")
         print(f"📂 Loaded {len(news_items):,} raw news items")
     
     # ─── Map to coins ────────────────────────────────────────────
     print("\n🔗 Mapping news to coins...")
-    mapped = map_news_to_coins(news_items)
+    mapped, political_unmapped = map_news_to_coins(news_items)
     
     # ─── Build features ──────────────────────────────────────────
     print("\n🛠️  Building features...")
-    features_df = build_news_features(mapped)
+    features_df = build_news_features(mapped, political_unmapped=political_unmapped)
     
     if features_df.empty:
         print("❌ No features generated!")

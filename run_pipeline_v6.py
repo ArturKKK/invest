@@ -109,6 +109,10 @@ REGIME_COLS = {
     # News sentiment (market-level, should NOT be ranked cross-sectionally)
     'market_news_count_24h', 'market_news_sentiment_24h',
     'news_sentiment_24h', 'news_sentiment_7d', 'news_sentiment_momentum',
+    # Political/macro news (market-level, same for all coins)
+    'political_news_count_24h', 'political_sentiment_24h',
+    'political_sentiment_7d', 'political_sentiment_shock',
+    'political_news_volume_zscore',
 }
 
 # Cost model for perpetual swaps — v6 (12h rebalance)
@@ -458,14 +462,21 @@ def add_sentiment_features(df, project_root):
             'news_sentiment_momentum', 'news_volume_zscore',
         ]
         news_market_cols = ['market_news_count_24h', 'market_news_sentiment_24h']
+        # Political/macro features (also market-level, same for all coins)
+        news_political_cols = [
+            'political_news_count_24h', 'political_sentiment_24h',
+            'political_sentiment_7d', 'political_sentiment_shock',
+            'political_news_volume_zscore',
+        ]
 
         # Merge per-coin features
         merge_cols = ['timestamp', 'symbol'] + [c for c in news_per_coin_cols if c in news.columns]
         per_coin_news = news[merge_cols].drop_duplicates(['timestamp', 'symbol'])
         df = df.merge(per_coin_news, on=['timestamp', 'symbol'], how='left')
 
-        # Merge market-level features (same for all coins at each timestamp)
-        market_merge = ['timestamp'] + [c for c in news_market_cols if c in news.columns]
+        # Merge market-level + political features (same for all coins at each timestamp)
+        all_market_cols = news_market_cols + news_political_cols
+        market_merge = ['timestamp'] + [c for c in all_market_cols if c in news.columns]
         market_news = news[market_merge].drop_duplicates('timestamp')
         df = df.merge(market_news, on='timestamp', how='left', suffixes=('', '_dup'))
         # Drop any duplicated columns from merge
@@ -474,7 +485,7 @@ def add_sentiment_features(df, project_root):
             df.drop(columns=dup_cols, inplace=True)
 
         # Fill missing news data with 0 (no news = neutral)
-        for col in news_per_coin_cols + news_market_cols:
+        for col in news_per_coin_cols + all_market_cols:
             if col in df.columns:
                 df[col] = df[col].fillna(0)
 
