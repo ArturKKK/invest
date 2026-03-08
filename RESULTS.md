@@ -353,6 +353,11 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 18. ⬜ Retrain HIST v2 с 12h target → 4-way ensemble
 19. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
 20. ⬜ OKX API key → paper trading → live с плечом
+21. ✅ **Confidence metric** — model agreement weighting (1/(1+std)), A/B tested positive
+22. ✅ **Entry scores fix** — dashboard показывает score на момент входа, не текущий
+23. ✅ **Pending orders** — отображение незаполненных ордеров на dashboard
+24. ✅ **Dual training mode** — `--production` для max data, `--research` (default) для тестов
+25. ⬜ **Production retrain** — обучить v6+v7+CB на train→2025-09 (запланировано 10 марта)
 
 ## $500 → $5000 анализ
 - **10x за 1 месяц невозможно**: нужен +8%/день, что нереалистично
@@ -441,4 +446,37 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 - Все сильные short-сигналы (|score| > 1.0) приходятся на **заблокированные** монеты
 - Tradeable shorts: 10 монет, но все со score от -0.02 до -0.92 (ниже threshold 1.0)
 - **Решение**: рассмотреть снижение threshold для shorts или переход на live account (больше доступных инструментов)
+
+### Confidence metric (model agreement)
+- **Идея**: score ≠ confidence. 15 моделей могут дать mean score +1.5, но если std между ними высокий — модели не согласны.
+- **Формула**: `confidence = 1 / (1 + std)` по всем 15 моделям (после нормализации)
+- **Использование**: `allocation_weight = edge_boost_weight × confidence`
+- **A/B тест (60d backtest)**:
+
+| Метрика | С confidence | Без confidence |
+|---------|-------------|---------------|
+| Return | **+24.5%** | +22.9% |
+| Sharpe | **2.48** | 2.27 |
+| PF | **1.30** | 1.27 |
+
+- **Вердикт**: POSITIVE — confidence weighting улучшает все метрики, deployed to production
+
+### Entry scores fix
+- **Баг**: dashboard показывал текущий model score для открытых позиций (не score на момент входа)
+- **Пример**: SHORT ATOM открыт по score -1.2, но через 6 часов модель даёт +0.788, и dashboard показывает +0.788 для шорта
+- **Фикс**: `state['entry_scores']` сохраняет score/confidence/side/time при открытии позиции. Dashboard использует entry scores.
+
+### Pending orders на dashboard
+- Dashboard теперь показывает незаполненные ордера (лимитные заявки) в секции "Pending Orders"
+- Загружается через `exchange.fetch_open_orders()`
+
+### Dual training mode (research vs production)
+- **Research** (default): 3 walk-forward окна, train→2024-06, held-out test 2025+
+  - Для тестирования идей, новых фичей, сравнения архитектур
+- **Production** (`--production`): max данных, train→2025-09, val→2026-03, no test holdout
+  - Для боевой модели — видит последние 1.5 года паттернов
+  - Модели сохраняются в `results_*_prod/`, автоматически подхватываются ботом
+- **Скрипт**: `./train_production.sh` — обучает v6 + v7 + CatBoost в production mode
+- **Кастомные даты**: `--train-end 2025-10-01 --val-end 2026-03-15`
+- **Статус**: ⬜ ещё не обучали, запланировано на 10 марта 2026
 
