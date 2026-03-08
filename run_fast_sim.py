@@ -202,6 +202,27 @@ def main():
                     print(f"   results_catboost: {len(ms)} CB models, {len(mf_g)} feats")
             except ImportError:
                 print("   ⚠️  catboost not installed, skipping CatBoost models")
+        # XGBoost + News Interactions ensemble member
+        xgb_dir = os.path.join(root, "results_xgboost_prod")
+        if not os.path.isdir(xgb_dir):
+            xgb_dir = os.path.join(root, "results_xgboost")
+        if os.path.isdir(xgb_dir):
+            try:
+                from run_trading import load_xgboost_models
+                ms = load_xgboost_models(xgb_dir)
+                if ms:
+                    fn_path = os.path.join(xgb_dir, 'feature_names.json')
+                    if os.path.exists(fn_path):
+                        with open(fn_path) as _f:
+                            mf_g = json.load(_f)
+                    else:
+                        mf_g = ms[0].get_booster().feature_names
+                    for c in [c for c in mf_g if c not in df.columns]:
+                        df[c] = 0.0
+                    model_groups.append((ms, mf_g))
+                    print(f"   results_xgboost: {len(ms)} XGB models, {len(mf_g)} feats")
+            except ImportError:
+                print("   ⚠️  xgboost not installed, skipping XGBoost models")
         if not model_groups:
             print("❌ no models for ensemble"); return
     else:

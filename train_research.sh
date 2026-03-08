@@ -9,7 +9,7 @@
 #   ./train_research.sh --single-window          # Quick: window 3 only
 #   ./train_research.sh --single-window --gpu    # Quick + GPU
 #
-# Results go to: results_v6/, results_v7/, results_catboost/
+# Results go to: results_v6/, results_v7/, results_catboost/, results_xgboost/
 # ============================================================
 
 set -e
@@ -34,16 +34,20 @@ fi
 echo "============================================================"
 echo ""
 
-echo "━━━ [1/3] LGB v6 (research) ━━━"
+echo "━━━ [1/4] LGB v6 (research) ━━━"
 python run_pipeline_v6.py $EXTRA_ARGS
 echo ""
 
-echo "━━━ [2/3] LGB v7 (research) ━━━"
+echo "━━━ [2/4] LGB v7 (research) ━━━"
 python run_pipeline_v7.py $EXTRA_ARGS
 echo ""
 
-echo "━━━ [3/3] CatBoost (research) ━━━"
+echo "━━━ [3/4] CatBoost (research) ━━━"
 python run_pipeline_catboost.py $GPU_FLAG $EXTRA_ARGS
+echo ""
+
+echo "━━━ [4/4] XGBoost + News Interactions (research) ━━━"
+python run_pipeline_xgboost.py $GPU_FLAG $EXTRA_ARGS
 echo ""
 
 echo "============================================================"
@@ -53,6 +57,7 @@ echo "  Results saved to:"
 echo "    results_v6/"
 echo "    results_v7/"
 echo "    results_catboost/"
+echo "    results_xgboost/"
 echo ""
 echo "  Check test-period Sharpe / ICIR in the output above."
 echo "  If metrics are good → run ./train_production.sh --gpu"

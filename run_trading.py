@@ -201,6 +201,71 @@ def fetch_ohlcv(symbols, hours=800):
 # FEATURE ENGINEERING (mirrors training pipeline)
 # ============================================================
 
+
+def add_news_interaction_features(df):
+    """Create news × price interaction features for XGBoost model."""
+    news_cols = ['news_count_1h', 'news_count_24h', 'news_count_7d',
+                 'news_sentiment_1h', 'news_sentiment_24h', 'news_sentiment_7d',
+                 'news_sentiment_momentum', 'news_volume_zscore',
+                 'market_news_count_24h', 'market_news_sentiment_24h']
+    for col in news_cols:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    # Sentiment × Volume
+    df['nx_sent_x_count_1h'] = df['news_sentiment_1h'] * df['news_count_1h']
+    df['nx_sent_x_count_24h'] = df['news_sentiment_24h'] * df['news_count_24h']
+    df['nx_sent_x_count_7d'] = df['news_sentiment_7d'] * df['news_count_7d']
+
+    # News burst
+    df['nx_burst_ratio'] = df['news_count_1h'] / (df['news_count_24h'] / 24 + 1e-6)
+    df['nx_is_burst'] = (df['nx_burst_ratio'] > 3).astype(float)
+    df['nx_burst_x_sent'] = df['nx_is_burst'] * df['news_sentiment_1h']
+
+    # Sentiment vs Price divergence
+    if 'ret_12h' in df.columns:
+        df['nx_sent_price_div'] = df['news_sentiment_24h'] * np.sign(-df['ret_12h'])
+        df['nx_sent_ret_product'] = df['news_sentiment_24h'] * df['ret_12h']
+    if 'ret_24h' in df.columns:
+        df['nx_sent_price_div_24h'] = df['news_sentiment_24h'] * np.sign(-df['ret_24h'])
+
+    # Sentiment momentum × price momentum
+    if 'mom_12h_zscore' in df.columns:
+        df['nx_sent_mom_align'] = df['news_sentiment_momentum'] * df['mom_12h_zscore']
+    if 'mom_3d' in df.columns:
+        df['nx_sent_mom_3d'] = df['news_sentiment_momentum'] * np.sign(df['mom_3d'])
+
+    # Coin vs Market sentiment
+    df['nx_sent_vs_market'] = df['news_sentiment_24h'] - df['market_news_sentiment_24h']
+    df['nx_count_vs_market'] = df['news_count_24h'] / (df['market_news_count_24h'] + 1e-6)
+
+    # Sentiment × Volatility
+    if 'gk_vol_24h' in df.columns:
+        df['nx_sent_x_vol'] = df['news_sentiment_24h'] * df['gk_vol_24h']
+    if 'fng_value' in df.columns:
+        df['nx_sent_x_fear'] = df['news_sentiment_24h'] * (50 - df['fng_value']) / 50
+
+    # News cluster features
+    df['nx_high_volume'] = (df['news_count_1h'] >= 3).astype(float)
+    df['nx_high_vol_positive'] = df['nx_high_volume'] * (df['news_sentiment_1h'] > 0.2).astype(float)
+    df['nx_high_vol_negative'] = df['nx_high_volume'] * (df['news_sentiment_1h'] < -0.2).astype(float)
+
+    # Sentiment acceleration
+    df['nx_sent_accel'] = df['news_sentiment_1h'] - df['news_sentiment_24h']
+    df['nx_sent_accel_7d'] = df['news_sentiment_24h'] - df['news_sentiment_7d']
+
+    # Funding × News
+    if 'funding_rate' in df.columns:
+        df['nx_funding_x_sent'] = df['funding_rate'] * df['news_sentiment_24h']
+        df['nx_funding_sent_div'] = df['funding_rate'] * np.sign(-df['news_sentiment_24h'])
+
+    # Cross-coin news asymmetry
+    if 'cross_coin_dispersion' in df.columns:
+        df['nx_news_in_dispersion'] = df['news_count_24h'] * df['cross_coin_dispersion']
+
+    return df
+
+
 def build_features(df):
     """
     Full feature engineering — mirrors build_features.py + v5 additions.
@@ -488,6 +553,9 @@ def build_features(df):
     # v6: 12h-specific features
     df = add_12h_features(df)
 
+    # XGBoost news interaction features
+    df = add_news_interaction_features(df)
+
     return df
 
 
@@ -623,6 +691,23 @@ def load_catboost_models(results_dir):
     return models
 
 
+def load_xgboost_models(results_dir):
+    """Load saved XGBoost model files."""
+    import xgboost as xgb
+
+    model_files = sorted(Path(results_dir).glob('xgb_model_seed_*.json'))
+    if not model_files:
+        return []
+
+    models = []
+    for f in model_files:
+        m = xgb.XGBRegressor()
+        m.load_model(str(f))
+        models.append(m)
+
+    return models
+
+
 def generate_lgb_signal(df, models, feat_cols):
     """Generate signal from LGB model ensemble. Returns (signal_df, raw_preds_matrix)."""
     latest = df.groupby('symbol').last().reset_index()
@@ -717,6 +802,34 @@ def generate_signal(df, feat_cols, root):
             print(f"   ✅ CatBoost: {len(cb_models)} models, {len(latest)} coins")
     except Exception as e:
         print(f"   ⚠️  CatBoost failed: {e}")
+
+    # ── XGBoost + News Interactions ──
+    xgb_dir = os.path.join(root, 'results_xgboost_prod')
+    if not os.path.isdir(xgb_dir):
+        xgb_dir = os.path.join(root, 'results_xgboost')
+    try:
+        xgb_models = load_xgboost_models(xgb_dir)
+        if xgb_models:
+            latest = df.groupby('symbol').last().reset_index()
+            fn_path = os.path.join(xgb_dir, 'feature_names.json')
+            if os.path.exists(fn_path):
+                with open(fn_path) as _f:
+                    model_features = json.load(_f)
+            else:
+                model_features = xgb_models[0].get_booster().feature_names
+            missing = [f for f in model_features if f not in latest.columns]
+            if missing:
+                print(f"   ⚠️  XGBoost missing {len(missing)} features, padding with 0")
+                for col in missing:
+                    latest[col] = 0.0
+            X = latest[model_features].values
+            xgb_preds = [m.predict(X) for m in xgb_models]
+            latest['pred_xgb'] = np.mean(xgb_preds, axis=0)
+            signals['xgboost'] = latest[['symbol', 'pred_xgb']].copy()
+            all_raw_preds.append(np.array(xgb_preds))
+            print(f"   ✅ XGBoost: {len(xgb_models)} models, {len(latest)} coins")
+    except Exception as e:
+        print(f"   ⚠️  XGBoost failed: {e}")
 
     # ── Fallback: LGB v5 ──
     if not signals:
