@@ -10,9 +10,10 @@
 | LGB v5 | 50 крипто, 1h OHLCV, 143 фичи, target_ret_4h | train→2024-06, test 2025+ | ✅ обучена на кластере |
 | HIST v1 | transformer, тот же датасет | test 2025+ | ✅ обучена на кластере |
 | HIST v2 | sentiment-aware | test 2025+ | ✅ обучена на кластере |
-| **LGB v6** | **12h target + 10 новых фич**, 121 selected features | train→2024-06, test 2025+ | **✅ чемпион** |
-| LGB v7 | blended target + HPO + 8 новых фич, 127 selected features | train→2024-06, test 2025+ | ❌ хуже v6 |
+| **LGB v6** | **12h target + 10 новых фич**, 121 selected features | train→2024-06, test 2025+ | **✅ в ансамбле** |
+| LGB v7 | blended target + HPO + 8 новых фич, 127 selected features | train→2024-06, test 2025+ | ✅ в ансамбле |
 | LGB v8 | 2017+ данные (8 лет), 5 purged WF windows, per-window HPO, ensemble FS, 122 features | train→2024-07, test 2025+ | ❌ хуже v6 |
+| **CatBoost** | **ordered boosting**, 122 selected features, 12h target, same pipeline as v6 | 3 WF windows, HPO 50 trials | **✅ в ансамбле** |
 
 ---
 
@@ -89,6 +90,21 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 |------------|---------------|-------|
 | HIST v1 + LGB v5 | 2.93 | -56.5% |
 
+### CatBoost (3 WF windows, 12h target, HPO 50 trials, кластер)
+| Метрика | W1 (→2024-12) | W2 (→2025-03) | W3 (→latest) | **AVG** |
+|---------|:---:|:---:|:---:|:---:|
+| Rank IC | 0.0324 | 0.0266 | 0.0300 | **0.0297** |
+| Rank ICIR | 0.4090 | 0.3755 | 0.4328 | **0.4058** |
+| LS Sharpe net | 1.05 | 0.72 | 1.07 | **0.95** |
+| DDStop Sharpe | 1.04 | 1.15 | 1.01 | **1.07** |
+| DDStop MaxDD | -53.5% | -39.3% | -73.3% | **-55.4%** |
+
+> CatBoost standalone слабее LGB (Sharpe 0.95 vs 1.12), но Rank ICIR идентичен (0.41).
+> **Ценность** — в декорреляции: ordered boosting ошибается в других местах, чем leaf-wise LGB → ансамбль сильнее.
+> Top features другие: `close_ma336_ratio` #1 (у LGB — `fng_ma30`), `vol_12h_cs_rank` #2 → дополняет LGB.
+
+HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит оптимум)
+
 ---
 
 ## Fast Sim — реальные данные (Binance spot, 50 монет)
@@ -137,20 +153,28 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 | ens base | 12h | 1x | — | +7.7% | 2.79 | 56% | -4.3% | 10.89 | 4.6% |
 | ens 3x 24h | 24h | 3x | — | +28.9% | 2.88 | 68% | -15.5% | 11.34 | 10.5% |
 | ens 2x 24h boost | 24h | 2x | boost | +21.3% | 2.85 | 68% | -13.8% | 9.43 | 6.9% |
-| 🏆 **ens 3x 24h boost** | **24h** | **3x** | **boost** | **+31.2%** | **5.93** | **70%** | **-15.2%** | **12.45** | **10.3%** |
+| ens 3x 24h boost (v6+v7) | 24h | 3x | boost | +31.2% | 5.93 | 70% | -15.2% | 12.45 | 10.3% |
 | ens 5x 24h boost | 24h | 5x | boost | +46.4% | 5.21 | 71% | -26.9% | 10.49 | 16.9% |
+| 🏆 **ens 3x 24h boost +CB** | **24h** | **3x** | **boost** | **+37.2%** | **8.04** | **67%** | **-18.7%** | **12.08** | **10.5%** |
 
-> **🔥 Edge-boost = главный прорыв!** Вместо фильтрации позиций (P75 edge filter) — **взвешивание по edge**:
-> - Все N=5 позиций сохраняются → диверсификация
-> - Высоко-edge позиции получают больше капитала → WR растёт с 55%→70%
-> - Формула: weight = 1 + min(edge/P75, 3), нормализация на сумму
+> **🔥 Edge-boost + CatBoost = новый чемпион!**
+> - Edge-boost: weight = 1 + min(edge/P75, 3) → высоко-edge позиции получают больше капитала
+> - CatBoost добавлен в ансамбль: LGB v6 (5) + LGB v7 (5) + CatBoost (5) = **15 моделей**
+>
+> **Эволюция ансамбля (3x 24h boost):**
+> | Ансамбль | Sharpe | WR | PF | Return | MaxDD |
+> |----------|--------|-----|-----|--------|-------|
+> | v6+v7 (10 моделей) | 5.93 | 70% | 2.17 | +31.2% | -15.2% |
+> | **v6+v7+CB (15 моделей)** | **8.04** | **67%** | **2.85** | **+37.2%** | **-18.7%** |
+> | Δ | **+36%** | -3pp | **+31%** | **+19%** | -3.5pp |
 >
 > **Ключевые открытия:**
-> 1. **Edge-boost**: Sharpe 2.88→5.93 (+106%), WR 68%→70%, PF 1.47→2.17
-> 2. **24h ребалансировка** оптимальна для leverage (costs -35%)
-> 3. **3x = optimal leverage**: WR 70%, DD -15.2%, $500→$656 за 60d
-> 4. **5x всё ещё слишком**: DD -26.9% при ликвидации -20%
-> 5. **Adaptive rebalance (P90 trigger) не помогает**: слишком много ранних ребалансов → costs +130%
+> 1. **CatBoost декорреляция**: +36% Sharpe, +31% PF — разные алгоритмы ошибаются в разных местах
+> 2. **Edge-boost sizing**: Sharpe 2.88→8.04 (от baseline), PF 1.47→2.85
+> 3. **24h ребалансировка** оптимальна для leverage (costs -35%)
+> 4. **3x = optimal leverage**: $500→$686 за 60d
+> 5. **WR 67% vs 70%**: CatBoost слегка снизил WR, но avg win вырос ($17.55 vs loss $12.33)
+> 6. **Adaptive rebalance (P90 trigger) не помогает**: costs +130%
 
 ---
 
@@ -268,6 +292,23 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 
 > v8: `btc_ret_1h` занял #1 (в v6/v7 не входил в топ) — модель стала более реактивной к BTC, что вредит сигналу. Sentiment-фичи (fng_*) по-прежнему важны во всех версиях.
 
+### CatBoost (W3, последнее окно)
+| # | Feature | Importance |
+|---|---------|------------|
+| 1 | close_ma336_ratio | 4.3 |
+| 2 | vol_12h_cs_rank 🆕 | 3.4 |
+| 3 | close_ma720_ratio | 3.2 |
+| 4 | breadth_pct_positive | 3.2 |
+| 5 | gk_vol_24h | 3.1 |
+| 6 | fng_momentum | 2.8 |
+| 7 | ret_sharpe_168h | 2.7 |
+| 8 | gk_vol_168h | 2.6 |
+| 9 | fng_ma30 | 2.5 |
+| 10 | ret_std_168h | 2.3 |
+
+> **CatBoost vs LGB — разные приоритеты!** CatBoost: price-MA ratios #1-3, volatility #4-5. LGB: sentiment (fng_*) #1-3.
+> Это именно то, что даёт ансамблю силу — модели смотрят на разные аспекты рынка.
+
 ---
 
 ## Ключевые улучшения v5 → v6
@@ -301,20 +342,23 @@ HPO Best Rank ICIR: **0.7024** (trial 39)
 7. ✅ Edge-based selectivity (P75 filter) → WR 55%→62%, но с leverage не помогает
 8. ✅ Ensemble v6+v7 → Sharpe 2.79 (лучше любой одиночной модели)
 9. ✅ 24h ребалансировка для leverage → costs -35%
-10. ✅ **Edge-boost sizing** → Sharpe 5.93, **WR 70%**, PF 2.17 ← 🔥 ГЛАВНЫЙ ПРОРЫВ
+10. ✅ **Edge-boost sizing** → Sharpe 5.93, **WR 70%**, PF 2.17 ← 🔥 ПРОРЫВ
 11. ❌ Adaptive rebalance (P90 trigger) → слишком много ранних ребалансов, costs +130%
-12. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
-13. ⬜ Retrain HIST v2 с 12h target → 3-way ensemble с LGB v6 + v7
-14. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
-15. ⬜ OKX API key → paper trading → live с плечом
+12. ✅ **CatBoost в ансамбль** → Sharpe **8.04**, PF **2.85**, +37.2% ← 🔥🔥 НОВЫЙ ЧЕМПИОН
+13. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
+14. ⬜ Retrain HIST v2 с 12h target → 4-way ensemble
+15. ⬜ News/event monitoring (CPI, FOMC, крипто-регуляции, листинги)
+16. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
+17. ⬜ Агрессивный режим: 5-10x leverage + strict DD stop для $500→$5000
+18. ⬜ OKX API key → paper trading → live с плечом
 
 ## Конфигурация (текущая — ensemble + edge-boost + leverage)
 - **Capital**: $500 стартовый, OKX futures
-- **Model**: Ensemble LGB v6 (5 seeds) + LGB v7 (5 seeds) = 10 models
+- **Model**: Ensemble LGB v6 (5) + LGB v7 (5) + CatBoost (5) = **15 models**
 - **Sizing**: Edge-boost (weight ∝ 1 + edge/P75, cap 4x) → высоко-edge позиции получают больше капитала
 - **Positions**: 5 long + 5 short
 - **Rebalance**: every 24h
-- **Leverage**: 3x (optimal: WR 70%, Sharpe 5.93, MaxDD -15.2%)
+- **Leverage**: 3x (optimal: WR 67%, Sharpe 8.04, MaxDD -18.7%)
 - **Risk**: kelly=100%, DD_stop=-20%, DD_resume=-8%
 - **Cost model**: 4 bps/side (taker + slippage) + 1bp/8h funding
 - **Запуск**: `python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --npos 5 --edge-boost --days 60 --capital 500`
