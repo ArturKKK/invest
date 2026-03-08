@@ -44,7 +44,7 @@ from run_pipeline_v6 import (
     cross_sectional_rank, create_rank_target,
     evaluate_model, vol_target_returns, drawdown_stop_returns,
     compute_costs_per_period,
-    EXCLUDE_COLS, REGIME_COLS, WALK_FORWARD_WINDOWS, HORIZON, SEEDS, COST_MODEL,
+    EXCLUDE_COLS, REGIME_COLS, WALK_FORWARD_WINDOWS, PRODUCTION_WINDOW, HORIZON, SEEDS, COST_MODEL,
 )
 
 N_SEEDS = 5
@@ -210,12 +210,21 @@ def main():
     parser.add_argument('--skip-hpo', action='store_true')
     parser.add_argument('--single-window', action='store_true',
                         help='Use only window 3 for quick test')
+    parser.add_argument('--production', action='store_true',
+                        help='Production mode: max training data, no test holdout')
+    parser.add_argument('--train-end', type=str, default=None,
+                        help='Override train cutoff date (YYYY-MM-DD) for --production')
+    parser.add_argument('--val-end', type=str, default=None,
+                        help='Override val end date (YYYY-MM-DD) for --production')
     parser.add_argument('--seeds', type=int, default=N_SEEDS)
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
     data_dir = args.data or os.path.join(project_root, 'data', 'features')
-    results_dir = args.results or os.path.join(project_root, 'results_catboost')
+    if args.production:
+        results_dir = args.results or os.path.join(project_root, 'results_catboost_prod')
+    else:
+        results_dir = args.results or os.path.join(project_root, 'results_catboost')
     os.makedirs(results_dir, exist_ok=True)
 
     feat_path = os.path.join(data_dir, 'crypto_features_1h.parquet')
@@ -266,9 +275,25 @@ def main():
     # ========================================
     # 2. ROLLING WALK-FORWARD
     # ========================================
-    windows = WALK_FORWARD_WINDOWS
-    if args.single_window:
-        windows = [windows[-1]]
+    if args.production:
+        from copy import deepcopy
+        prod_win = deepcopy(PRODUCTION_WINDOW)
+        if args.train_end:
+            prod_win['train_end'] = args.train_end
+            te = pd.Timestamp(args.train_end)
+            prod_win['val_start'] = (te + pd.Timedelta(days=2)).strftime('%Y-%m-%d')
+        if args.val_end:
+            prod_win['val_end'] = args.val_end
+            prod_win['test_start'] = args.val_end
+        windows = [prod_win]
+        print(f"\n🔴 PRODUCTION MODE — max training data, models go to live trading")
+        print(f"   Train: start → {prod_win['train_end']}")
+        print(f"   Val:   {prod_win['val_start']} → {prod_win['val_end']}")
+        print(f"   Test:  (none — live trading)")
+    else:
+        windows = WALK_FORWARD_WINDOWS
+        if args.single_window:
+            windows = [windows[-1]]
 
     print(f"\n{'='*70}")
     print(f"  ROLLING WALK-FORWARD ({len(windows)} windows)")
@@ -294,7 +319,8 @@ def main():
         test = df[(df['timestamp'] >= window['test_start']) &
                   (df['timestamp'] <= window['test_end'])].copy()
 
-        if len(test) == 0:
+        has_test = len(test) > 0
+        if not has_test and not args.production:
             print(f"   ⚠️  No test data for this window, skipping")
             continue
 
@@ -321,15 +347,17 @@ def main():
                                                      threshold_pct=20)
 
         # --- Multi-seed ensemble ---
+        X_pred = test[selected_feats] if has_test else val[selected_feats]
         ensemble_pred, all_models = train_multi_seed(
             train[selected_feats], y_train,
             val[selected_feats], y_val,
-            test[selected_feats],
+            X_pred,
             feat_names=selected_feats,
             params=best_params,
             seeds=SEEDS[:args.seeds],
         )
-        test['pred_cb'] = ensemble_pred
+        if has_test:
+            test['pred_cb'] = ensemble_pred
         last_model = all_models[-1]
 
         # --- Save trained models ---
@@ -342,6 +370,25 @@ def main():
         with open(os.path.join(results_dir, 'feature_names.json'), 'w') as f:
             json.dump(selected_feats, f)
         print(f"   💾 Saved {len(all_models)} CatBoost models + feature names")
+
+        if not has_test:
+            print(f"\n   ✅ Production models saved (no test evaluation)")
+            if args.production:
+                from datetime import datetime
+                prod_meta = {
+                    'mode': 'production',
+                    'model_type': 'CatBoost',
+                    'train_end': window['train_end'],
+                    'val_end': window['val_end'],
+                    'n_seeds': args.seeds,
+                    'n_features': len(selected_feats),
+                    'train_rows': len(train),
+                    'val_rows': len(val),
+                    'timestamp': datetime.now().isoformat(),
+                }
+                with open(os.path.join(results_dir, 'production_meta.json'), 'w') as f:
+                    json.dump(prod_meta, f, indent=2)
+            continue
 
         # --- Evaluate ---
         metrics, ls_net, ls_vt, ls_dd, timestamps = evaluate_model(

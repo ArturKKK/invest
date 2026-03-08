@@ -166,9 +166,11 @@ def main():
     model_groups = []   # list of (models, feature_names) tuples
 
     if args.ensemble:
-        # Load LGB v6, v7 and CatBoost models
+        # Load LGB v6, v7 and CatBoost models (prefer *_prod if available)
         for d in ["results_v6", "results_v7"]:
-            p = os.path.join(root, d)
+            p = os.path.join(root, d + "_prod")
+            if not os.path.isdir(p):
+                p = os.path.join(root, d)
             if os.path.isdir(p):
                 ms = load_lgb_models(p)
                 if ms:
@@ -176,9 +178,12 @@ def main():
                     for c in [c for c in mf_g if c not in df.columns]:
                         df[c] = 0.0
                     model_groups.append((ms, mf_g))
-                    print(f"   {d}: {len(ms)} LGB models, {len(mf_g)} feats")
+                    label = "PROD" if "_prod" in p else "research"
+                    print(f"   {os.path.basename(p)}: {len(ms)} LGB models, {len(mf_g)} feats [{label}]")
         # CatBoost ensemble member
-        cb_dir = os.path.join(root, "results_catboost")
+        cb_dir = os.path.join(root, "results_catboost_prod")
+        if not os.path.isdir(cb_dir):
+            cb_dir = os.path.join(root, "results_catboost")
         if os.path.isdir(cb_dir):
             try:
                 ms = load_catboost_models(cb_dir)

@@ -56,7 +56,7 @@ HORIZON = 12       # <<< v6: predict 12h returns, aligned with rebalance interva
 N_SEEDS = 5
 SEEDS = [42, 123, 456, 789, 2024]
 
-# Rolling walk-forward windows
+# Rolling walk-forward windows (RESEARCH mode — has held-out test set)
 WALK_FORWARD_WINDOWS = [
     {
         'name': 'W1 (→2024-12)',
@@ -83,6 +83,18 @@ WALK_FORWARD_WINDOWS = [
         'test_end': '2026-12-31',
     },
 ]
+
+# PRODUCTION mode — maximum training data, no held-out test set
+# Models trained here go directly to live trading.
+# Default: train on ~4.7 years, validate on last ~6 months.
+PRODUCTION_WINDOW = {
+    'name': 'PROD (max data)',
+    'train_end': '2025-09-01',
+    'val_start': '2025-09-03',
+    'val_end': '2026-03-01',
+    'test_start': '2026-03-01',   # may have 0 test rows — that's OK
+    'test_end': '2026-12-31',
+}
 
 # Columns to exclude from features
 EXCLUDE_COLS = {
@@ -874,12 +886,21 @@ def main():
     parser.add_argument('--skip-hpo', action='store_true')
     parser.add_argument('--single-window', action='store_true',
                         help='Use only window 3 (same as v4) for quick test')
+    parser.add_argument('--production', action='store_true',
+                        help='Production mode: max training data, no test holdout')
+    parser.add_argument('--train-end', type=str, default=None,
+                        help='Override train cutoff date (YYYY-MM-DD) for --production')
+    parser.add_argument('--val-end', type=str, default=None,
+                        help='Override val end date (YYYY-MM-DD) for --production')
     parser.add_argument('--seeds', type=int, default=N_SEEDS)
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
     data_dir = args.data or os.path.join(project_root, 'data', 'features')
-    results_dir = args.results or os.path.join(project_root, 'results_v6')
+    if args.production:
+        results_dir = args.results or os.path.join(project_root, 'results_v6_prod')
+    else:
+        results_dir = args.results or os.path.join(project_root, 'results_v6')
     os.makedirs(results_dir, exist_ok=True)
 
     feat_path = os.path.join(data_dir, 'crypto_features_1h.parquet')
@@ -930,9 +951,26 @@ def main():
     # ========================================
     # 2. ROLLING WALK-FORWARD
     # ========================================
-    windows = WALK_FORWARD_WINDOWS
-    if args.single_window:
-        windows = [windows[-1]]  # Window 3 = same as v4
+    if args.production:
+        from copy import deepcopy
+        prod_win = deepcopy(PRODUCTION_WINDOW)
+        if args.train_end:
+            prod_win['train_end'] = args.train_end
+            # auto-set val_start 2 days after train_end
+            te = pd.Timestamp(args.train_end)
+            prod_win['val_start'] = (te + pd.Timedelta(days=2)).strftime('%Y-%m-%d')
+        if args.val_end:
+            prod_win['val_end'] = args.val_end
+            prod_win['test_start'] = args.val_end
+        windows = [prod_win]
+        print(f"\n🔴 PRODUCTION MODE — max training data, models go to live trading")
+        print(f"   Train: start → {prod_win['train_end']}")
+        print(f"   Val:   {prod_win['val_start']} → {prod_win['val_end']}")
+        print(f"   Test:  (none — live trading)")
+    else:
+        windows = WALK_FORWARD_WINDOWS
+        if args.single_window:
+            windows = [windows[-1]]  # Window 3 = same as v4
 
     print(f"\n{'='*70}")
     print(f"  ROLLING WALK-FORWARD ({len(windows)} windows)")
@@ -958,7 +996,8 @@ def main():
         test = df[(df['timestamp'] >= window['test_start']) &
                   (df['timestamp'] <= window['test_end'])].copy()
 
-        if len(test) == 0:
+        has_test = len(test) > 0
+        if not has_test and not args.production:
             print(f"   ⚠️  No test data for this window, skipping")
             continue
 
@@ -983,14 +1022,16 @@ def main():
         selected_feats = feature_selection(model_base, feat_cols, threshold_pct=20)
 
         # --- Multi-seed ensemble ---
+        X_pred = test[selected_feats] if has_test else val[selected_feats]
         ensemble_pred, all_models = train_multi_seed(
             train[selected_feats], y_train,
             val[selected_feats], y_val,
-            test[selected_feats],
+            X_pred,
             params=best_params,
             seeds=SEEDS[:args.seeds],
         )
-        test['pred_v6'] = ensemble_pred
+        if has_test:
+            test['pred_v6'] = ensemble_pred
         last_model = all_models[-1]
 
         # --- Save trained models (for production inference) ---
@@ -1002,6 +1043,24 @@ def main():
         with open(os.path.join(results_dir, 'feature_names.json'), 'w') as f:
             json.dump(selected_feats, f)
         print(f"   💾 Saved {len(all_models)} models + feature names")
+
+        if not has_test:
+            print(f"\n   ✅ Production models saved (no test evaluation)")
+            if args.production:
+                # Save production metadata
+                prod_meta = {
+                    'mode': 'production',
+                    'train_end': window['train_end'],
+                    'val_end': window['val_end'],
+                    'n_seeds': args.seeds,
+                    'n_features': len(selected_feats),
+                    'train_rows': len(train),
+                    'val_rows': len(val),
+                    'timestamp': datetime.now().isoformat(),
+                }
+                with open(os.path.join(results_dir, 'production_meta.json'), 'w') as f:
+                    json.dump(prod_meta, f, indent=2)
+            continue
 
         # --- Evaluate ---
         metrics, ls_net, ls_vt, ls_dd, timestamps = evaluate_model(
