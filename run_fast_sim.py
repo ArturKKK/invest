@@ -24,6 +24,7 @@ Usage:
 
 import os, sys, json, argparse, warnings
 import pandas as pd, numpy as np
+from datetime import datetime, timezone
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -35,6 +36,39 @@ from run_trading import (
 
 COST_SIDE = 0.0003 + 0.0001          # taker 3bps + slippage 1bp
 FUNDING_PER_8H = 0.0001              # ~1bp per 8h funding cost for leveraged positions
+
+# ── Macro event calendar (FOMC, CPI, major crypto events) ─────────
+# These are UTC dates of high-impact events where we reduce/skip positions
+# to avoid tail risk.  Updated periodically.
+MACRO_EVENTS = {
+    # 2025 FOMC rate decisions (announcement ~18:00 UTC)
+    '2025-01-29', '2025-03-19', '2025-05-07', '2025-06-18',
+    '2025-07-30', '2025-09-17', '2025-10-29', '2025-12-17',
+    # 2025 US CPI releases (~12:30 UTC)
+    '2025-01-15', '2025-02-12', '2025-03-12', '2025-04-10',
+    '2025-05-13', '2025-06-11', '2025-07-11', '2025-08-12',
+    '2025-09-10', '2025-10-14', '2025-11-12', '2025-12-10',
+    # 2026 FOMC (projected)
+    '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
+    '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-16',
+    # 2026 US CPI (projected)
+    '2026-01-14', '2026-02-11', '2026-03-11', '2026-04-14',
+    '2026-05-12', '2026-06-10', '2026-07-14', '2026-08-12',
+    '2026-09-11', '2026-10-13', '2026-11-12', '2026-12-10',
+}
+
+def is_near_event(ts, hours_before=18, hours_after=6):
+    """Check if timestamp is within danger zone around a macro event.
+    Default: skip 18h before event (day before) to 6h after.
+    With 24h rebalance, this means we go flat for the step spanning the event.
+    """
+    ts_dt = pd.Timestamp(ts).tz_localize(None) if pd.Timestamp(ts).tzinfo else pd.Timestamp(ts)
+    for evt_str in MACRO_EVENTS:
+        evt = pd.Timestamp(evt_str)
+        delta_h = (ts_dt - evt).total_seconds() / 3600
+        if -hours_before <= delta_h <= hours_after:
+            return True, evt_str
+    return False, None
 
 
 def main():
@@ -62,6 +96,12 @@ def main():
                     help="Edge-proportional sizing: high-edge positions get more weight")
     ap.add_argument("--adaptive-rebal", action="store_true",
                     help="Adaptive rebalance: base period + early rebal on strong signals")
+    ap.add_argument("--dynamic-lev", action="store_true",
+                    help="Dynamic leverage: base lev normally, scale up on strong edge")
+    ap.add_argument("--max-lev", type=float, default=7.0,
+                    help="Max leverage for dynamic-lev mode (default: 7)")
+    ap.add_argument("--event-filter", action="store_true",
+                    help="Reduce positions near FOMC/CPI events to avoid tail risk")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -93,7 +133,9 @@ def main():
         f"edge>{min_edge:.4f}" if min_edge > 0 else "off")
     boost_str = "boost" if args.edge_boost else ""
     adapt_str = "adaptive" if args.adaptive_rebal else ""
-    mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, adapt_str] if s]
+    dynlev_str = f"dynlev→{args.max_lev:.0f}x" if args.dynamic_lev else ""
+    evtfilt_str = "evtfilt" if args.event_filter else ""
+    mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, adapt_str, dynlev_str, evtfilt_str] if s]
     mode_str = '+'.join(mode_parts) if mode_parts else 'baseline'
     print("=" * 70)
     print(f"  FAST SIMULATION")
@@ -225,6 +267,7 @@ def main():
     ret_buf: list[float] = []
     skip_count = 0                    # steps where edge filter blocked all positions
     early_rebal_count = 0             # adaptive early rebalances triggered
+    event_reduce_count = 0            # steps where event filter reduced leverage
 
     held_L: dict[str, float] = {}     # symbol → entry_price
     held_S: dict[str, float] = {}
@@ -301,6 +344,32 @@ def main():
         order_desc = np.argsort(-scores)
         order_asc  = np.argsort(scores)
 
+        # ── Dynamic leverage: scale leverage based on edge strength ──
+        if args.dynamic_lev and edge_p75 > 0 and edge_p90 > 0:
+            max_abs_edge = np.max(abs_edges)
+            # Require: edge > P90 AND recent returns positive (momentum)
+            recent_ok = len(ret_buf) >= 3 and np.mean(ret_buf[-3:]) > 0
+            # Also: current DD must be shallow (not in drawdown recovery)
+            dd_now = equity / peak - 1 if peak > 0 else 0
+            dd_ok = dd_now > -0.08  # only scale up if DD < 8%
+
+            if max_abs_edge >= edge_p90 and recent_ok and dd_ok:
+                # Gradual scale: P90 edge → base+25%, P90×1.5 → max_lev
+                overshoot = (max_abs_edge - edge_p90) / (edge_p90 * 0.5 + 1e-10)
+                lev_ratio = min(overshoot, 1.0)
+                step_leverage = leverage + lev_ratio * (args.max_lev - leverage)
+            else:
+                step_leverage = leverage
+        else:
+            step_leverage = leverage
+
+        # ── Event filter: reduce leverage near macro events ──────
+        if args.event_filter:
+            near_evt, evt_name = is_near_event(ts0)
+            if near_evt:
+                step_leverage = max(1.0, step_leverage * 0.3)  # reduce to 30% of planned lev
+                event_reduce_count += 1
+
         if min_edge > 0:
             # Select only positions with sufficient edge
             long_idx = []
@@ -376,7 +445,7 @@ def main():
         # Compute actual hours between ts0→ts1 for funding calc
         hours_between = max(1, int((ts1 - ts0).total_seconds() / 3600)) if hasattr(ts1, 'total_seconds') else rebal_h
 
-        total_alloc = equity * kelly * leverage
+        total_alloc = equity * kelly * step_leverage
         half_alloc = total_alloc / 2  # half for longs, half for shorts
 
         # Costs: estimate average position size for cost calc
@@ -478,6 +547,8 @@ def main():
             print(f"   Skipped:    {skip_count} steps (no edge)")
         if early_rebal_count > 0:
             print(f"   Early rebal:{early_rebal_count} (adaptive P90+ triggers)")
+        if event_reduce_count > 0:
+            print(f"   Event filt: {event_reduce_count} steps (leverage reduced near FOMC/CPI)")
         if leverage > 1:
             print(f"   Leverage:   {lev_str}")
             liq_dd = -1.0 / leverage  # approximate liquidation DD
