@@ -1,0 +1,12 @@
+# Crypto Trading Bot — Crontab
+# Install: crontab deploy/crontab.txt
+# Or: crontab -e and paste these lines
+
+# News update every 6 hours
+0 */6 * * * /home/trader/invest/deploy/update_news.sh >> /home/trader/invest/logs/news_update.log 2>&1
+
+# Log rotation — keep last 7 days
+0 3 * * * find /home/trader/invest/logs -name "*.log" -mtime +7 -delete
+
+# Health check — restart if crashed (backup to systemd)
+*/5 * * * * systemctl is-active crypto-trader || (echo "$(date) RESTART" >> /home/trader/invest/logs/watchdog.log && sudo systemctl restart crypto-trader)

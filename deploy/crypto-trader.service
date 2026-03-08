@@ -1,0 +1,37 @@
+[Unit]
+Description=Crypto ML Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/home/trader/invest
+ExecStart=/home/trader/invest/venv/bin/python run_trading.py --mode live --loop --capital 500
+
+# Environment
+EnvironmentFile=/home/trader/invest/.env
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/trader/invest
+PrivateTmp=true
+
+# Logging
+StandardOutput=append:/home/trader/invest/logs/bot.log
+StandardError=append:/home/trader/invest/logs/bot_error.log
+
+# Graceful shutdown
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

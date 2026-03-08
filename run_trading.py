@@ -46,6 +46,7 @@ import os
 import sys
 import time
 import json
+import signal
 import argparse
 import warnings
 from datetime import datetime, timezone, timedelta
@@ -55,6 +56,26 @@ import pandas as pd
 import numpy as np
 
 warnings.filterwarnings('ignore')
+
+# Load .env file if exists
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+if os.path.exists(_env_path):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_env_path)
+    except ImportError:
+        with open(_env_path) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith('#') and '=' in _line:
+                    _k, _, _v = _line.partition('=')
+                    os.environ[_k.strip()] = _v.strip().strip('\'"')
+
+# Import Telegram bot
+try:
+    from telegram_bot import create_bot
+except ImportError:
+    create_bot = None
 
 # ============================================================
 # CONFIG
@@ -755,15 +776,16 @@ def init_exchange(mode='paper'):
 
 
 def close_all(exchange):
-    """Close all open positions."""
+    """Close all open positions with retry."""
     if not exchange:
         return
     try:
-        positions = exchange.fetch_positions()
+        positions = _api_call_with_retry(exchange.fetch_positions)
         for pos in positions:
             if float(pos.get('contracts', 0)) > 0:
                 side = 'sell' if pos['side'] == 'long' else 'buy'
-                exchange.create_order(
+                _api_call_with_retry(
+                    exchange.create_order,
                     symbol=pos['symbol'], type='market', side=side,
                     amount=pos['contracts'],
                     params={'tdMode': 'isolated', 'posSide': pos['side']},
@@ -773,9 +795,50 @@ def close_all(exchange):
         print(f"      ⚠️  Close failed: {e}")
 
 
+def _fetch_contract_specs(exchange):
+    """Fetch OKX contract specs (ctVal, minSz) for all swap markets."""
+    specs = {}
+    try:
+        markets = exchange.load_markets()
+        for sym, mkt in markets.items():
+            if mkt.get('swap'):
+                specs[sym] = {
+                    'ctVal': float(mkt.get('contractSize', 1)),
+                    'minSz': float(mkt.get('limits', {}).get('amount', {}).get('min', 1)),
+                    'precision': int(mkt.get('precision', {}).get('amount', 0) or 0),
+                }
+    except Exception as e:
+        print(f"   ⚠️  Failed to fetch market specs: {e}")
+    return specs
+
+
+def _api_call_with_retry(func, *args, max_retries=3, **kwargs):
+    """Execute API call with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            err_str = str(e).lower()
+            # Don't retry on auth errors or insufficient balance
+            if any(x in err_str for x in ['auth', 'apikey', 'insufficient', 'invalid']):
+                raise
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt * (1 + 0.5 * (hash(str(e)) % 100) / 100)
+                print(f"      ⏳ Retry {attempt+1}/{max_retries} in {wait:.1f}s: {e}")
+                time.sleep(wait)
+            else:
+                raise
+
+
 def execute(exchange, positions, dry_run=True):
-    """Execute positions on OKX."""
+    """Execute positions on OKX with proper contract sizing."""
     results = []
+
+    # Load contract specs for USD→contract conversion
+    contract_specs = {}
+    if exchange and not dry_run:
+        contract_specs = _fetch_contract_specs(exchange)
+
     for pos in positions:
         okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'])
         if not okx_sym:
@@ -790,24 +853,142 @@ def execute(exchange, positions, dry_run=True):
             continue
 
         try:
+            # Set leverage
             try:
-                exchange.set_leverage(1, okx_sym, params={'mgnMode': 'isolated'})
+                _api_call_with_retry(
+                    exchange.set_leverage, 1, okx_sym,
+                    params={'mgnMode': 'isolated'}
+                )
             except Exception:
                 pass
 
-            order = exchange.create_order(
+            # Convert USD → contracts
+            # OKX swaps: 1 contract = ctVal units of base currency
+            # Amount needed in contracts = usd_amount / (ctVal * current_price)
+            spec = contract_specs.get(okx_sym, {})
+            ctVal = spec.get('ctVal', 1)
+            minSz = spec.get('minSz', 1)
+
+            # Get current price via ticker
+            ticker = _api_call_with_retry(exchange.fetch_ticker, okx_sym)
+            price = ticker['last'] or ticker['close']
+
+            contracts = pos['usd'] / (ctVal * price)
+            contracts = max(minSz, round(contracts / minSz) * minSz)  # Round to minSz
+
+            # Precision
+            prec = spec.get('precision', 0)
+            if prec > 0:
+                contracts = round(contracts, prec)
+            else:
+                contracts = int(contracts)
+
+            if contracts < minSz:
+                print(f"      ⏭️  {okx_sym}: ${pos['usd']:.0f} → {contracts} contracts < min {minSz}")
+                results.append({**pos, 'status': 'skipped', 'reason': 'below_min'})
+                continue
+
+            order = _api_call_with_retry(
+                exchange.create_order,
                 symbol=okx_sym, type='market', side=side,
-                amount=pos['usd'],
+                amount=contracts,
                 params={
                     'tdMode': 'isolated',
                     'posSide': 'long' if pos['side'] == 'long' else 'short',
                 },
             )
-            print(f"      ✅ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {order['id']}")
-            results.append({**pos, 'status': 'filled', 'order_id': order['id']})
+            actual_usd = contracts * ctVal * price
+            print(f"      ✅ {side.upper():4s} {contracts} cts ≈${actual_usd:.0f} {okx_sym} → {order['id']}")
+            results.append({
+                **pos, 'status': 'filled', 'order_id': order['id'],
+                'contracts': contracts, 'price': price, 'actual_usd': actual_usd,
+            })
         except Exception as e:
             print(f"      ❌ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {e}")
             results.append({**pos, 'status': 'error', 'error': str(e)})
+
+    return results
+
+
+def diff_rebalance(exchange, target_positions):
+    """Diff-based rebalancing: only trade what changed.
+    
+    Compares current OKX positions to target, produces:
+    - Closes for positions no longer wanted
+    - Opens for new positions
+    - Skips positions that are already correct (saves commissions)
+    
+    Returns list of results (same format as execute).
+    """
+    if not exchange:
+        return execute(exchange, target_positions, dry_run=True)
+
+    results = []
+
+    # 1. Fetch current positions from OKX
+    current = {}
+    try:
+        live_positions = _api_call_with_retry(exchange.fetch_positions)
+        for pos in live_positions:
+            contracts = float(pos.get('contracts', 0))
+            if contracts > 0:
+                current[pos['symbol']] = {
+                    'side': pos['side'],  # 'long' or 'short'
+                    'contracts': contracts,
+                    'notional': float(pos.get('notional', 0)),
+                }
+    except Exception as e:
+        print(f"   ⚠️  Cannot fetch positions, falling back to close-all: {e}")
+        close_all(exchange)
+        return execute(exchange, target_positions, dry_run=False)
+
+    # 2. Build target map: okx_symbol → {side, usd}
+    target = {}
+    for pos in target_positions:
+        okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'])
+        if okx_sym:
+            target[okx_sym] = pos
+
+    # 3. Close positions not in target (or side changed)
+    for sym, cur in current.items():
+        tgt = target.get(sym)
+        if tgt is None or tgt['side'] != cur['side']:
+            # Need to close this position
+            side = 'sell' if cur['side'] == 'long' else 'buy'
+            try:
+                _api_call_with_retry(
+                    exchange.create_order,
+                    symbol=sym, type='market', side=side,
+                    amount=cur['contracts'],
+                    params={'tdMode': 'isolated', 'posSide': cur['side']},
+                )
+                print(f"      🔄 Closed {cur['side']} {sym} ({cur['contracts']} cts)")
+                results.append({'symbol': sym, 'side': cur['side'], 'action': 'close',
+                                'status': 'filled'})
+            except Exception as e:
+                print(f"      ❌ Close {sym}: {e}")
+                results.append({'symbol': sym, 'action': 'close', 'status': 'error',
+                                'error': str(e)})
+
+    # 4. Open new positions (not currently held, or side changed)
+    new_positions = []
+    kept = 0
+    for okx_sym, pos in target.items():
+        cur = current.get(okx_sym)
+        if cur and cur['side'] == pos['side']:
+            # Already have this position in the right direction — keep it
+            # (Could adjust size, but simpler to keep for now)
+            kept += 1
+            results.append({**pos, 'status': 'kept', 'action': 'hold'})
+            continue
+        new_positions.append(pos)
+
+    if kept:
+        print(f"      ♻️  Kept {kept} existing positions unchanged")
+
+    if new_positions:
+        new_results = execute(exchange, new_positions, dry_run=False)
+        results.extend(new_results)
 
     return results
 
@@ -1041,6 +1222,26 @@ def main():
           f"N={risk_cfg['n_long']}L+{risk_cfg['n_short']}S")
     print("=" * 70)
 
+    # Init Telegram bot
+    tg = None
+    if create_bot:
+        tg = create_bot()
+        if tg and tg.enabled:
+            tg.alert_startup(args.mode, args.capital, risk_cfg)
+    else:
+        print("   ⚠️  Telegram bot not available (telegram_bot.py not found)")
+
+    # Graceful shutdown handler
+    _shutdown_flag = False
+    def _handle_signal(signum, frame):
+        nonlocal _shutdown_flag
+        _shutdown_flag = True
+        print("\n   🛑 Shutdown signal received. Finishing current cycle...")
+        if tg and tg.enabled:
+            tg.alert_shutdown(reason=f"Signal {signum}")
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
     # Init exchange
     exchange = None
     if args.mode in ('paper', 'live'):
@@ -1081,9 +1282,19 @@ def main():
                 ret = pnl / (state['equity'] - pnl) if (state['equity'] - pnl) > 0 else 0
                 state['recent_rets'] = (state.get('recent_rets', []) + [ret])[-200:]
 
+            dd_pct = state['equity'] / state['peak'] - 1
             print(f"\n      💰 Cycle PnL: ${pnl:+.2f}  |  "
                   f"Equity: ${state['equity']:,.2f}  |  "
-                  f"DD: {state['equity']/state['peak']-1:.1%}")
+                  f"DD: {dd_pct:.1%}")
+
+            # ── Telegram: PnL alert ──
+            if tg and tg.enabled:
+                tg.alert_cycle_pnl(pnl, state['equity'], dd_pct, settled)
+                # DD warnings
+                if dd_pct < -0.15:
+                    tg.alert_dd_warning(dd_pct, state['equity'])
+                if dd_pct < risk_cfg.get('dd_stop', -0.20):
+                    tg.alert_dd_stop(dd_pct, state['equity'])
 
             state['sim_positions'] = []
 
@@ -1127,9 +1338,13 @@ def main():
                 print(f"   {pos['symbol']:<15} {pos['side']:<6} ${pos['usd']:>7.0f} "
                       f"{pos['score']:>+8.3f}")
 
+        # ── Telegram: positions alert ──
+        if tg and tg.enabled:
+            tg.alert_positions(positions, state.get('equity', args.capital))
+
         # 6. Execute
         if args.mode == 'signal':
-            execute(None, positions, dry_run=True)
+            results = execute(None, positions, dry_run=True)
         elif args.mode == 'sim':
             # Record positions with entry prices
             if positions:
@@ -1138,11 +1353,13 @@ def main():
                 print(f"\n   📌 Opened {len(state['sim_positions'])} sim positions "
                       f"(will settle in {HORIZON}h)")
             sim_print_summary(state, log_dir)
+            results = []
         else:
-            print(f"\n📤 Closing existing positions...")
-            close_all(exchange)
-            print(f"\n📥 Opening new positions...")
-            execute(exchange, positions, dry_run=False)
+            print(f"\n� Diff-based rebalancing...")
+            results = diff_rebalance(exchange, positions)
+            # ── Telegram: fills alert ──
+            if tg and tg.enabled:
+                tg.alert_fills(results)
 
         # 7. Log
         log = {
@@ -1167,13 +1384,26 @@ def main():
     # Run
     if args.loop:
         print(f"\n🔄 Continuous mode (every {rebal_hours}h)...")
-        while True:
+        cycle_count = 0
+        while not _shutdown_flag:
             try:
                 run_cycle()
+                cycle_count += 1
+
+                # Daily summary (every ~24h worth of cycles)
+                cycles_per_day = max(1, 24 // rebal_hours)
+                if tg and tg.enabled and cycle_count % cycles_per_day == 0:
+                    tg.alert_daily_summary(state)
+
             except Exception as e:
                 print(f"\n❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
+                if tg and tg.enabled:
+                    tg.alert_error(str(e), context="run_cycle")
+
+            if _shutdown_flag:
+                break
 
             now = datetime.now(timezone.utc)
             # Align to next rebal_hours boundary + 5min
@@ -1185,9 +1415,32 @@ def main():
 
             sleep = (next_time - now).total_seconds()
             print(f"\n   ⏰ Next: {next_time.strftime('%H:%M UTC')} ({sleep/60:.0f} min)")
-            time.sleep(max(sleep, 60))
+
+            # Sleep in small chunks to respond to shutdown quickly
+            sleep_end = time.time() + max(sleep, 60)
+            while time.time() < sleep_end and not _shutdown_flag:
+                time.sleep(min(10, sleep_end - time.time()))
+
+        # Graceful shutdown
+        print("\n🛑 Shutting down...")
+        if tg and tg.enabled:
+            tg.alert_shutdown(reason="graceful")
+            tg.stop_polling()
+        save_state(state, state_path)
+
     else:
-        run_cycle()
+        try:
+            run_cycle()
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+            if tg and tg.enabled:
+                tg.alert_error(str(e), context="run_cycle")
+
+    # Cleanup
+    if tg and tg.enabled:
+        tg.stop_polling()
 
     print(f"\n✅ Done!")
 
