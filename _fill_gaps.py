@@ -20,14 +20,15 @@ from datetime import datetime, timezone
 RAW_PATH = "data/sentiment/raw_news.parquet"
 
 # Gaps to fill — ordered NEWEST FIRST (most valuable for model)
+# Status as of 2026-03-09:
+#   Have: 2020-09..2021-12, 2022-12..2023-04, 2024-06..2024-08, 2025-10..2026-03
+#   Missing: 2024-09..2025-09, 2023-05..2024-05, 2022-01..2022-11, 2020-01..2020-09
 GAPS = [
-    ("2024-08-10", "2025-10-20"),   # gap 3: 2024-09 -> 2025-09 (MOST IMPORTANT)
-    ("2023-04-20", "2024-06-15"),   # gap 2: 2023-05 -> 2024-05
-    ("2021-12-20", "2022-12-25"),   # gap 1: 2022-01 -> 2022-11
+    ("2024-08-10", "2025-10-20"),   # gap 3: 14mo  2024-09 -> 2025-09 (MOST IMPORTANT)
+    ("2023-04-20", "2024-06-15"),   # gap 2: 14mo  2023-05 -> 2024-05
+    ("2021-12-20", "2022-12-25"),   # gap 1: 11mo  2022-01 -> 2022-11
+    ("2020-01-01", "2020-09-16"),   # extend: 8.5mo back to Jan 2020
 ]
-
-# Also need 2025-11 onwards to present
-GAPS.insert(0, ("2025-11-20", datetime.now(timezone.utc).strftime("%Y-%m-%d")))
 
 
 def check_monthly_limit(api_key):

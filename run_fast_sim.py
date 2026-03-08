@@ -94,6 +94,8 @@ def main():
                     help="Ensemble v6+v7 models (average scores from both)")
     ap.add_argument("--edge-boost", action="store_true",
                     help="Edge-proportional sizing: high-edge positions get more weight")
+    ap.add_argument("--no-conf", action="store_true",
+                    help="Disable confidence weighting (for A/B testing)")
     ap.add_argument("--adaptive-rebal", action="store_true",
                     help="Adaptive rebalance: base period + early rebal on strong signals")
     ap.add_argument("--dynamic-lev", action="store_true",
@@ -214,13 +216,26 @@ def main():
         print(f"   {len(models)} models, {len(mf)} feats")
 
     def predict_ensemble(snap_df):
-        """Average predictions across all model groups."""
+        """Average predictions across all model groups. Returns (scores, confidence)."""
         all_scores = []
+        all_individual = []  # individual model predictions
         for ms, mf_g in model_groups:
             X = snap_df[mf_g].values
-            scores = np.mean([m.predict(X) for m in ms], axis=0)
+            preds = [m.predict(X) for m in ms]
+            all_individual.extend(preds)
+            scores = np.mean(preds, axis=0)
             all_scores.append(scores)
-        return np.mean(all_scores, axis=0)
+        mean_scores = np.mean(all_scores, axis=0)
+        # Confidence = model agreement. Normalize each model's preds before computing std
+        if len(all_individual) > 1:
+            normed = []
+            for p in all_individual:
+                normed.append((p - p.mean()) / (p.std() + 1e-10))
+            model_std = np.std(normed, axis=0)
+            confidence = 1.0 / (1.0 + model_std)
+        else:
+            confidence = np.ones_like(mean_scores) * 0.5
+        return mean_scores, confidence
 
     # ── 4  timestamps (rebal_h apart) ─────────────────────────────
     all_ts = sorted(df["timestamp"].unique())
@@ -240,7 +255,7 @@ def main():
             snap = df[df["timestamp"] == ts]
             if len(snap) < 20:
                 continue
-            scores = predict_ensemble(snap)
+            scores, _ = predict_ensemble(snap)
             median_s = np.median(scores)
             edges_abs = np.abs(scores - median_s)
             edge_samples.extend(edges_abs.tolist())
@@ -302,7 +317,7 @@ def main():
         px1 = dict(zip(snap1["symbol"], snap1["close"]))
 
         # ── predict & rank at ts0 ────────────────────────────────
-        scores = predict_ensemble(snap0)
+        scores, confidence = predict_ensemble(snap0)
         syms = snap0["symbol"].values
         median_score = np.median(scores)
         edges = scores - median_score
@@ -405,9 +420,10 @@ def main():
         # Confidence-weighted sizing with optional edge boost
         score_dict = dict(zip(syms, scores))
         edge_dict = dict(zip(syms, abs_edges))
+        conf_dict = dict(zip(syms, confidence))
 
         def compute_weights(symbols, is_long=True):
-            """Compute position weights with optional edge-boost."""
+            """Compute position weights with optional edge-boost × confidence."""
             if len(symbols) == 0:
                 return {}
             syms_list = list(symbols)
@@ -419,7 +435,9 @@ def main():
                     e = edge_dict.get(s, 0)
                     ratio = e / edge_p75           # 1.0 at P75
                     boost = 1.0 + min(ratio, 3.0)  # cap at 4x (to avoid over-concentration)
-                    raw_w.append(boost)
+                    # Multiply by confidence: high-agreement → more capital
+                    c = conf_dict.get(s, 0.5) if not getattr(args, 'no_conf', False) else 1.0
+                    raw_w.append(boost * c)
                 raw_w = np.array(raw_w)
                 w = raw_w / raw_w.sum()
             else:

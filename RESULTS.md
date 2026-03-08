@@ -393,13 +393,52 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 - **Скрипт**: `python fetch_crypto_news.py --days 730` (2 года, ~2.5 часа при rate limit)
 
 ## Конфигурация (текущая — ensemble + edge-boost + leverage)
-- **Capital**: $500 стартовый, OKX futures
+- **Capital**: $5,000, OKX futures (demo)
 - **Model**: Ensemble LGB v6 (5) + LGB v7 (5) + CatBoost (5) = **15 models**
 - **Sizing**: Edge-boost (weight ∝ 1 + edge/P75, cap 4x) → высоко-edge позиции получают больше капитала
 - **Positions**: 5 long + 5 short
-- **Rebalance**: every 24h
-- **Leverage**: 3x (optimal: WR 67%, Sharpe 8.04, MaxDD -18.7%)
+- **Rebalance**: every 12h
+- **Leverage**: 3x
+- **Threshold**: min_score ≥ 1.0 (skip signals with |score| < 1.0)
 - **Risk**: kelly=100%, DD_stop=-20%, DD_resume=-8%
-- **Event filter**: FOMC/CPI calendar (48 дат), leverage × 0.3 near events
+- **Features**: 171 (включая funding_rate, long_short_ratio, cross_coin_dispersion, FNG)
+- **Sentiment data**: cron каждые 8h обновляет funding rates, L/S ratio, FNG
 - **Cost model**: 4 bps/side (taker + slippage) + 1bp/8h funding
-- **Запуск**: `python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --npos 5 --edge-boost --event-filter --days 60 --capital 500`
+- **Dashboard**: invest.arturt.com (scores, threshold, edge-boost, model stats)
+- **VPS**: 185.42.163.63, systemd service `crypto-trader`
+- **Запуск**: `python run_trading.py --mode paper --loop --capital 5000 --rebal 12`
+
+## Production Log (9 марта 2026)
+
+### Feature fix
+- **Проблема**: 5 фичей отсутствовали в production `build_features()`, заполнялись нулями:
+  - `funding_rate` (ALL model groups), `long_short_ratio` (CB), `cross_coin_dispersion` (CB), `funding_vs_market` (CB), `market_funding_std` (CB)
+- **Причина**: `funding_rates.parquet` и `long_short_ratio.parquet` не загружались; `cross_coin_dispersion` вычислялась, но удалялась в `df.drop()`
+- **Фикс**: добавлена загрузка sentiment parquet файлов, убрана cross_coin_dispersion из drop
+- **Sentiment cron**: каждые 8h обновление через `download_sentiment.py`
+
+### Edge-boost в production
+- **Было**: equal-weight sizing (все позиции одинаковый USD)
+- **Стало**: edge-boost proportional sizing (weight = 1 + min(|score|/P75, 3))
+- Champion backtest использовал edge-boost (Sharpe 8.04), production — нет
+
+### 12h vs 24h backtest (с edge-boost, 60d, $5000, 3x)
+| Метрика | 12h | 24h |
+|---------|-----|-----|
+| Return | **+56.1%** | +39.6% |
+| Ann. Return | ~341% | ~241% |
+| Sharpe | **+4.56** | +4.15 |
+| Calmar | **22.30** | 14.79 |
+| Win Rate | **61%** | 57% |
+| PF | 1.53 | **1.75** |
+| Trades | 1084 | 548 |
+| Costs | 23.1% | **13.4%** |
+
+> 12h лучше по return, Sharpe, Calmar, WR. 24h лучше по costs и PF. Для production выбрали 12h.
+
+### Проблема: нет шортов
+- **Ситуация**: 19 из 50 монет заблокированы на OKX demo (MATIC, FTM, FLOW, CHZ, MKR и др.)
+- Все сильные short-сигналы (|score| > 1.0) приходятся на **заблокированные** монеты
+- Tradeable shorts: 10 монет, но все со score от -0.02 до -0.92 (ниже threshold 1.0)
+- **Решение**: рассмотреть снижение threshold для shorts или переход на live account (больше доступных инструментов)
+

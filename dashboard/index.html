@@ -142,6 +142,11 @@
                     <span class="text-dark-400">Total uPnL</span>
                     <span id="total-upnl" class="font-mono font-semibold">—</span>
                 </div>
+                <!-- Pending Orders -->
+                <div id="orders-section" class="mt-4 pt-3 border-t border-dark-700/50 hidden">
+                    <h3 class="text-sm font-semibold text-yellow-400 mb-2">⏳ Pending Orders</h3>
+                    <div class="space-y-1" id="orders-list"></div>
+                </div>
             </div>
 
             <!-- Recent Trades -->
@@ -177,7 +182,7 @@
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-semibold text-white">System</h2>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
                 <div>
                     <span class="text-dark-500">Models</span>
                     <div id="sys-models" class="font-mono text-dark-200">—</div>
@@ -187,14 +192,42 @@
                     <div id="sys-rebal" class="font-mono text-dark-200">—</div>
                 </div>
                 <div>
-                    <span class="text-dark-500">Risk</span>
-                    <div id="sys-risk" class="font-mono text-dark-200">—</div>
+                    <span class="text-dark-500">Threshold</span>
+                    <div id="sys-threshold" class="font-mono text-accent-light">—</div>
+                </div>
+                <div>
+                    <span class="text-dark-500">Edge Boost</span>
+                    <div id="sys-edge-boost" class="font-mono text-dark-200">—</div>
                 </div>
                 <div>
                     <span class="text-dark-500">Cycle</span>
                     <div id="sys-cycle" class="font-mono text-dark-200">#—</div>
                 </div>
             </div>
+        </div>
+
+        <!-- Model Prediction Log -->
+        <div class="glass-card rounded-xl p-6 fade-in">
+            <h2 class="text-lg font-semibold text-white mb-4">Model Stats</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                    <span class="text-dark-500">Avg Win Score</span>
+                    <div id="stat-avg-win-score" class="font-mono text-profit">—</div>
+                </div>
+                <div>
+                    <span class="text-dark-500">Avg Loss Score</span>
+                    <div id="stat-avg-loss-score" class="font-mono text-loss">—</div>
+                </div>
+                <div>
+                    <span class="text-dark-500">Long WR</span>
+                    <div id="stat-long-wr" class="font-mono text-dark-200">—</div>
+                </div>
+                <div>
+                    <span class="text-dark-500">Short WR</span>
+                    <div id="stat-short-wr" class="font-mono text-dark-200">—</div>
+                </div>
+            </div>
+            <div class="mt-3 text-xs text-dark-600" id="model-tag">v6+v7+CB ensemble • 15 models • edge-boost</div>
         </div>
 
     </main>
@@ -359,11 +392,18 @@
             } else {
                 posList.innerHTML = positions.map(p => {
                     const isLong = p.side === 'long';
+                    const scoreStr = p.score ? (p.score >= 0 ? '+' : '') + p.score.toFixed(3) : '—';
+                    const scoreColor = p.score > 0 ? 'text-profit' : p.score < 0 ? 'text-loss' : 'text-dark-400';
+                    const conf = p.confidence || 0;
+                    const confPct = Math.round(conf * 100);
+                    const confColor = conf >= 0.65 ? 'text-profit' : conf >= 0.5 ? 'text-yellow-400' : 'text-loss';
                     return `
                     <div class="position-row flex items-center justify-between py-2 px-3 rounded-lg transition-colors">
                         <div class="flex items-center gap-3">
                             <span class="badge ${isLong ? 'long-badge' : 'short-badge'}">${p.side}</span>
                             <span class="font-medium text-white text-sm">${p.symbol}</span>
+                            <span class="font-mono text-xs ${scoreColor}">${scoreStr}</span>
+                            <span class="font-mono text-xs ${confColor}" title="Model confidence (agreement)">${confPct}%</span>
                         </div>
                         <div class="flex items-center gap-4 text-sm">
                             <span class="text-dark-400 font-mono">$${(p.notional || p.usd || 0).toFixed(0)}</span>
@@ -381,6 +421,31 @@
             const totalUpnl = positions.reduce((sum, p) => sum + (p.upnl || 0), 0);
             document.getElementById('total-upnl').innerHTML = colorPnl(totalUpnl);
 
+            // ── Pending Orders ──
+            const orders = d.orders || [];
+            const ordersSection = document.getElementById('orders-section');
+            const ordersList = document.getElementById('orders-list');
+            if (orders.length > 0) {
+                ordersSection.classList.remove('hidden');
+                ordersList.innerHTML = orders.map(o => {
+                    const isBuy = o.side === 'buy';
+                    return `
+                    <div class="flex justify-between items-center text-xs py-1">
+                        <div class="flex items-center gap-2">
+                            <span class="badge ${isBuy ? 'long-badge' : 'short-badge'} text-xs">${o.side}</span>
+                            <span class="text-dark-200">${o.symbol}</span>
+                        </div>
+                        <div class="flex items-center gap-3 text-dark-400">
+                            <span>${o.type}</span>
+                            <span class="font-mono">$${(o.price || 0).toFixed(2)}</span>
+                            <span class="font-mono">${o.filled || 0}/${o.amount || 0}</span>
+                        </div>
+                    </div>`;
+                }).join('');
+            } else {
+                ordersSection.classList.add('hidden');
+            }
+
             // ── Trades ──
             const tradesList = document.getElementById('trades-list');
             const trades = d.trades || [];
@@ -389,12 +454,15 @@
             } else {
                 tradesList.innerHTML = trades.slice(0, 30).map(t => {
                     const isWin = (t.pnl || 0) >= 0;
+                    const scoreStr = t.score ? (t.score >= 0 ? '+' : '') + t.score.toFixed(2) : '';
+                    const scoreColor = t.score > 0 ? 'text-profit' : t.score < 0 ? 'text-loss' : 'text-dark-400';
                     return `
                     <div class="flex items-center justify-between py-2 px-3 rounded-lg position-row transition-colors text-sm">
                         <div class="flex items-center gap-3">
                             <span class="w-2 h-2 rounded-full ${isWin ? 'bg-profit' : 'bg-loss'}"></span>
                             <span class="badge ${t.side === 'long' ? 'long-badge' : 'short-badge'}">${t.side || '?'}</span>
                             <span class="text-white font-medium">${t.symbol}</span>
+                            ${scoreStr ? `<span class="font-mono text-xs ${scoreColor}">${scoreStr}</span>` : ''}
                         </div>
                         <div class="flex items-center gap-4">
                             <span class="font-mono w-20 text-right ${isWin ? 'text-profit' : 'text-loss'}">
@@ -410,27 +478,39 @@
             const slongs = (d.signals || []).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
             const sshorts = (d.signals || []).filter(s => s.score < 0).sort((a, b) => a.score - b.score).slice(0, 5);
 
-            document.getElementById('signals-long').innerHTML = slongs.length ? slongs.map(s => `
+            document.getElementById('signals-long').innerHTML = slongs.length ? slongs.map(s => {
+                const conf = s.confidence || 0;
+                const confPct = Math.round(conf * 100);
+                const confColor = conf >= 0.65 ? 'text-profit' : conf >= 0.5 ? 'text-yellow-400' : 'text-loss';
+                return `
                 <div class="flex justify-between items-center text-sm">
                     <span class="text-dark-200">${s.symbol}</span>
                     <div class="flex items-center gap-2">
+                        <span class="font-mono text-xs ${confColor}" title="Confidence">${confPct}%</span>
                         <div class="w-24 h-1.5 bg-dark-800 rounded-full overflow-hidden">
                             <div class="h-full bg-profit rounded-full" style="width: ${Math.min(s.score / 2 * 100, 100)}%"></div>
                         </div>
                         <span class="font-mono text-xs text-profit w-12 text-right">+${s.score.toFixed(3)}</span>
                     </div>
-                </div>`).join('') : '<div class="text-dark-500 text-sm">—</div>';
+                </div>`;
+            }).join('') : '<div class="text-dark-500 text-sm">—</div>';
 
-            document.getElementById('signals-short').innerHTML = sshorts.length ? sshorts.map(s => `
+            document.getElementById('signals-short').innerHTML = sshorts.length ? sshorts.map(s => {
+                const conf = s.confidence || 0;
+                const confPct = Math.round(conf * 100);
+                const confColor = conf >= 0.65 ? 'text-profit' : conf >= 0.5 ? 'text-yellow-400' : 'text-loss';
+                return `
                 <div class="flex justify-between items-center text-sm">
                     <span class="text-dark-200">${s.symbol}</span>
                     <div class="flex items-center gap-2">
+                        <span class="font-mono text-xs ${confColor}" title="Confidence">${confPct}%</span>
                         <div class="w-24 h-1.5 bg-dark-800 rounded-full overflow-hidden">
                             <div class="h-full bg-loss rounded-full" style="width: ${Math.min(Math.abs(s.score) / 2 * 100, 100)}%"></div>
                         </div>
                         <span class="font-mono text-xs text-loss w-12 text-right">${s.score.toFixed(3)}</span>
                     </div>
-                </div>`).join('') : '<div class="text-dark-500 text-sm">—</div>';
+                </div>`;
+            }).join('') : '<div class="text-dark-500 text-sm">—</div>';
 
             // ── Equity Chart ──
             allEquityData = (d.equity_history || []).map(e => ({ x: e.time, y: e.equity }));
@@ -440,8 +520,29 @@
             // ── System ──
             document.getElementById('sys-models').textContent = d.models || '15 (LGB×10 + CB×5)';
             document.getElementById('sys-rebal').textContent = d.rebal_hours ? `${d.rebal_hours}h` : '12h';
-            document.getElementById('sys-risk').textContent = `DD stop: ${((d.dd_stop || -0.20) * 100).toFixed(0)}%`;
+            document.getElementById('sys-threshold').textContent = `min_score ≥ ${d.min_score || 0}`;
+            document.getElementById('sys-edge-boost').textContent = d.edge_boost ? '✅ ON' : '❌ OFF';
             document.getElementById('sys-cycle').textContent = `#${d.cycle || 0}`;
+
+            // ── Model Stats ──
+            const allTrades = d.trades || [];
+            if (allTrades.length > 0) {
+                const wins = allTrades.filter(t => (t.pnl || 0) > 0);
+                const losses = allTrades.filter(t => (t.pnl || 0) < 0);
+                const longTrades = allTrades.filter(t => t.side === 'long');
+                const shortTrades = allTrades.filter(t => t.side === 'short');
+
+                const avgWinScore = wins.length > 0 ? wins.reduce((s, t) => s + Math.abs(t.score || 0), 0) / wins.length : 0;
+                const avgLossScore = losses.length > 0 ? losses.reduce((s, t) => s + Math.abs(t.score || 0), 0) / losses.length : 0;
+                const longWR = longTrades.length > 0 ? (longTrades.filter(t => (t.pnl || 0) > 0).length / longTrades.length * 100).toFixed(0) : '—';
+                const shortWR = shortTrades.length > 0 ? (shortTrades.filter(t => (t.pnl || 0) > 0).length / shortTrades.length * 100).toFixed(0) : '—';
+
+                document.getElementById('stat-avg-win-score').textContent = avgWinScore > 0 ? avgWinScore.toFixed(3) : '—';
+                document.getElementById('stat-avg-loss-score').textContent = avgLossScore > 0 ? avgLossScore.toFixed(3) : '—';
+                document.getElementById('stat-long-wr').textContent = longWR !== '—' ? `${longWR}%` : '—';
+                document.getElementById('stat-short-wr').textContent = shortWR !== '—' ? `${shortWR}%` : '—';
+            }
+            document.getElementById('model-tag').textContent = `v6+v7+CB ensemble • ${d.models || '15 models'} • ${d.edge_boost ? 'edge-boost ON' : 'equal-weight'} • threshold ${d.min_score || 0}`;
 
         } catch (err) {
             console.error('Dashboard load error:', err);

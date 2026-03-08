@@ -152,6 +152,7 @@ DEFAULT_RISK = {
     'dd_resume': -0.08,
     'confidence_threshold': 0.0,
     'min_score': 1.0,             # skip signals with |score| < this (sweep: no loss vs 0.0-0.7)
+    'edge_boost': True,           # weight positions proportional to |score| (champion backtest)
 }
 
 
@@ -375,6 +376,41 @@ def build_features(df):
         df['fng_momentum'] = df['fng_value'] - df['fng_ma30']
         df.drop(columns=['date'], inplace=True, errors='ignore')
 
+    # Funding rates (critical — used by ALL model groups)
+    fund_path = os.path.join(root, 'data', 'sentiment', 'funding_rates.parquet')
+    if os.path.exists(fund_path):
+        fund = pd.read_parquet(fund_path)
+        fund['timestamp'] = pd.to_datetime(fund['timestamp'], utc=True)
+        fund = fund.sort_values('timestamp')
+        if 'fundingRate' in fund.columns:
+            fund = fund.rename(columns={'fundingRate': 'funding_rate'})
+        df = df.merge(fund[['timestamp', 'symbol', 'funding_rate']],
+                      on=['timestamp', 'symbol'], how='left')
+        df['funding_rate'] = df['funding_rate'].fillna(0)
+        # Market-level funding stats (used by CatBoost)
+        mf = df.groupby('timestamp')['funding_rate'].agg(['mean', 'std']).reset_index()
+        mf.columns = ['timestamp', 'market_avg_funding', 'market_funding_std']
+        df = df.merge(mf, on='timestamp', how='left')
+        df['funding_vs_market'] = df['funding_rate'] - df['market_avg_funding'].fillna(0)
+        df.drop(columns=['market_avg_funding'], inplace=True, errors='ignore')
+        print(f"   ✅ Funding rates merged")
+    else:
+        print(f"   ⚠️  No funding data at {fund_path}")
+        for c in ['funding_rate', 'market_funding_std', 'funding_vs_market']:
+            df[c] = 0.0
+
+    # Long/Short ratio (used by CatBoost)
+    lsr_path = os.path.join(root, 'data', 'sentiment', 'long_short_ratio.parquet')
+    if os.path.exists(lsr_path):
+        lsr = pd.read_parquet(lsr_path)
+        lsr['timestamp'] = pd.to_datetime(lsr['timestamp'], utc=True)
+        df = df.merge(lsr[['timestamp', 'symbol', 'long_short_ratio']],
+                      on=['timestamp', 'symbol'], how='left')
+        df['long_short_ratio'] = df['long_short_ratio'].fillna(1.0)
+        print(f"   ✅ L/S ratio merged")
+    else:
+        df['long_short_ratio'] = 1.0
+
     # News sentiment features (from fetch_crypto_news.py)
     news_path = os.path.join(root, 'data', 'sentiment', 'crypto_news.parquet')
     if os.path.exists(news_path):
@@ -441,8 +477,8 @@ def build_features(df):
             lambda x: x.rolling(w).var() + 1e-10)
         df[f'btc_beta_{w}h'] = cov / var
 
-    # Clean up
-    df.drop(columns=['btc_close', 'eth_close', 'btc_r', 'cross_coin_dispersion'], inplace=True, errors='ignore')
+    # Clean up (keep cross_coin_dispersion — used by CatBoost models)
+    df.drop(columns=['btc_close', 'eth_close', 'btc_r'], inplace=True, errors='ignore')
 
     # Replace inf/nan
     for col in df.select_dtypes(include=[np.number]).columns:
@@ -588,7 +624,7 @@ def load_catboost_models(results_dir):
 
 
 def generate_lgb_signal(df, models, feat_cols):
-    """Generate signal from LGB model ensemble."""
+    """Generate signal from LGB model ensemble. Returns (signal_df, raw_preds_matrix)."""
     latest = df.groupby('symbol').last().reset_index()
 
     # Align features to what model expects
@@ -608,7 +644,8 @@ def generate_lgb_signal(df, models, feat_cols):
         all_preds.append(m.predict(X))
 
     latest['pred_lgb'] = np.mean(all_preds, axis=0)
-    return latest[['symbol', 'pred_lgb']].copy()
+    # Return raw predictions for confidence calculation
+    return latest[['symbol', 'pred_lgb']].copy(), np.array(all_preds)
 
 
 def generate_signal(df, feat_cols, root):
@@ -619,14 +656,21 @@ def generate_signal(df, feat_cols, root):
     """
     signals = {}
 
+    # Collect raw predictions from all individual models for confidence
+    all_raw_preds = []  # list of (n_models, n_coins) arrays
+    symbols_order = None
+
     # ── LGB v6 (12h target, best single model) ──
     lgb_v6_dir = os.path.join(root, 'results_v6')
     try:
         models = load_lgb_models(lgb_v6_dir)
         if models:
-            sig = generate_lgb_signal(df, models, feat_cols)
+            sig, raw_preds = generate_lgb_signal(df, models, feat_cols)
             sig = sig.rename(columns={'pred_lgb': 'pred_lgb_v6'})
             signals['lgb_v6'] = sig
+            if symbols_order is None:
+                symbols_order = sig['symbol'].tolist()
+            all_raw_preds.append(raw_preds)
             print(f"   ✅ LGB v6: {len(models)} models, {len(sig)} coins")
     except Exception as e:
         print(f"   ⚠️  LGB v6 failed: {e}")
@@ -636,9 +680,10 @@ def generate_signal(df, feat_cols, root):
     try:
         models = load_lgb_models(lgb_v7_dir)
         if models:
-            sig = generate_lgb_signal(df, models, feat_cols)
+            sig, raw_preds = generate_lgb_signal(df, models, feat_cols)
             sig = sig.rename(columns={'pred_lgb': 'pred_lgb_v7'})
             signals['lgb_v7'] = sig
+            all_raw_preds.append(raw_preds)
             print(f"   ✅ LGB v7: {len(models)} models, {len(sig)} coins")
     except Exception as e:
         print(f"   ⚠️  LGB v7 failed: {e}")
@@ -658,9 +703,10 @@ def generate_signal(df, feat_cols, root):
                 for col in missing:
                     latest[col] = 0.0
             X = latest[model_features].values
-            all_preds = [m.predict(X) for m in cb_models]
-            latest['pred_cb'] = np.mean(all_preds, axis=0)
+            cb_preds = [m.predict(X) for m in cb_models]
+            latest['pred_cb'] = np.mean(cb_preds, axis=0)
             signals['catboost'] = latest[['symbol', 'pred_cb']].copy()
+            all_raw_preds.append(np.array(cb_preds))
             print(f"   ✅ CatBoost: {len(cb_models)} models, {len(latest)} coins")
     except Exception as e:
         print(f"   ⚠️  CatBoost failed: {e}")
@@ -706,6 +752,29 @@ def generate_signal(df, feat_cols, root):
         result[col] = (result[col] - result[col].mean()) / (result[col].std() + 1e-10)
 
     result['score'] = sum(result[c] for c in pred_cols) / len(pred_cols)
+
+    # ── Confidence: model agreement (low std → high confidence) ──
+    if all_raw_preds:
+        # Stack all individual model predictions: shape (n_total_models, n_coins)
+        stacked = np.vstack(all_raw_preds)  # e.g. (15, 50)
+        # Normalize each model group to same scale before computing std
+        for i, raw in enumerate(all_raw_preds):
+            for j in range(raw.shape[0]):
+                row = raw[j]
+                stacked[sum(r.shape[0] for r in all_raw_preds[:i]) + j] = \
+                    (row - row.mean()) / (row.std() + 1e-10)
+        model_std = np.std(stacked, axis=0)  # per-coin disagreement
+        # confidence = 1 / (1 + std), ranges from 0 to 1
+        confidence = 1.0 / (1.0 + model_std)
+        result['confidence'] = confidence
+        result['model_std'] = model_std
+        avg_conf = confidence.mean()
+        high_conf = (confidence > 0.6).sum()
+        print(f"   📊 Confidence: avg={avg_conf:.3f}, high(>0.6)={high_conf}/{len(result)}")
+    else:
+        result['confidence'] = 0.5
+        result['model_std'] = 0.0
+
     return result.sort_values('score', ascending=False).reset_index(drop=True)
 
 
@@ -794,29 +863,45 @@ def construct_portfolio(signals, capital, risk_cfg, state):
     actual_n_short = min(n_short, len(short_candidates))
 
     positions = []
-    if actual_n_long > 0:
-        per_long = round(long_capital / actual_n_long, 2)
-        for _, row in long_candidates.head(actual_n_long).iterrows():
-            if per_long < 5:  # OKX minimum
+
+    # Edge-boost: weight proportional to |score| (mirrors champion backtest)
+    edge_boost = risk_cfg.get('edge_boost', True)
+
+    def _weighted_alloc(candidates, total_capital, side):
+        """Allocate capital proportional to |score| × confidence with edge-boost."""
+        if len(candidates) == 0:
+            return []
+        scores_abs = candidates['score'].abs().values
+        conf_vals = candidates['confidence'].values if 'confidence' in candidates.columns else np.ones(len(candidates))
+        if edge_boost and scores_abs.max() > 0:
+            p75 = np.percentile(scores_abs, 75) if len(scores_abs) >= 4 else scores_abs.mean()
+            p75 = max(p75, 1e-6)
+            raw_w = np.array([1.0 + min(s / p75, 3.0) for s in scores_abs])
+        else:
+            raw_w = np.ones(len(candidates))
+        # Multiply by confidence: high-agreement positions get more capital
+        raw_w = raw_w * conf_vals
+        weights = raw_w / raw_w.sum()
+        result = []
+        for (_, row), w in zip(candidates.iterrows(), weights):
+            usd = round(total_capital * w, 2)
+            if usd < 5:  # OKX minimum
                 continue
-            positions.append({
+            conf = round(row.get('confidence', 0.5), 3) if 'confidence' in row.index else 0.5
+            result.append({
                 'symbol': row['symbol'],
-                'side': 'long',
-                'usd': per_long,
+                'side': side,
+                'usd': usd,
                 'score': round(row['score'], 4),
+                'confidence': conf,
             })
+        return result
+
+    if actual_n_long > 0:
+        positions.extend(_weighted_alloc(long_candidates.head(actual_n_long), long_capital, 'long'))
 
     if actual_n_short > 0:
-        per_short = round(short_capital / actual_n_short, 2)
-        for _, row in short_candidates.head(actual_n_short).iterrows():
-            if per_short < 5:
-                continue
-            positions.append({
-                'symbol': row['symbol'],
-                'side': 'short',
-                'usd': per_short,
-                'score': round(row['score'], 4),
-            })
+        positions.extend(_weighted_alloc(short_candidates.head(actual_n_short), short_capital, 'short'))
 
     total_alloc = sum(p['usd'] for p in positions)
     n_l = sum(1 for p in positions if p['side'] == 'long')
@@ -968,8 +1053,9 @@ def execute(exchange, positions, dry_run=True, leverage=3, tracker=None):
         side = 'buy' if pos['side'] == 'long' else 'sell'
 
         if dry_run:
+            conf = pos.get('confidence', 0)
             print(f"      [DRY] {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
-                  f"(score: {pos['score']:+.3f})")
+                  f"(score: {pos['score']:+.3f}, conf: {conf:.0%})")
             results.append({**pos, 'status': 'dry_run'})
             continue
 
@@ -1356,9 +1442,32 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
                         'usd': float(row.get('usd', 0) or 0),
                         'closed': row.get('exit_time', ''),
                         'hold_h': float(row.get('hold_hours', 0) or 0),
+                        'score': float(row.get('score', 0) or 0),
                     })
 
         # Open positions — try live from OKX, fallback to target
+        # Build score + confidence lookup: prefer ENTRY scores (not current signal)
+        entry_scores = state.get('entry_scores', {})
+        score_lookup = {}
+        conf_lookup = {}
+        # 1. Entry scores first (from when position was opened)
+        for sym, es in entry_scores.items():
+            score_lookup[sym] = es.get('score', 0)
+            conf_lookup[sym] = es.get('confidence', 0.5)
+        # 2. Current cycle positions (overwrite if fresh)
+        if positions:
+            for p in positions:
+                score_lookup[p['symbol']] = p.get('score', 0)
+                conf_lookup[p['symbol']] = p.get('confidence', 0.5)
+        # 3. Signals as last resort
+        if signals is not None and len(signals) > 0:
+            for _, row in signals.iterrows():
+                sym = row.get('symbol', '')
+                if sym and sym not in score_lookup:
+                    score_lookup[sym] = round(float(row.get('score', 0)), 4)
+                if sym and sym not in conf_lookup and 'confidence' in row.index:
+                    conf_lookup[sym] = round(float(row.get('confidence', 0.5)), 3)
+
         pos_data = []
         if exchange:
             try:
@@ -1366,12 +1475,15 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
                 for p in live:
                     contracts = float(p.get('contracts', 0))
                     if contracts > 0:
+                        sym = p.get('symbol', '').replace(':USDT', '')
                         pos_data.append({
-                            'symbol': p.get('symbol', '').replace(':USDT', ''),
+                            'symbol': sym,
                             'side': p.get('side', ''),
                             'notional': abs(float(p.get('notional', 0))),
                             'upnl': float(p.get('unrealizedPnl', 0) or 0),
                             'upnl_pct': float(p.get('percentage', 0) or 0),
+                            'score': score_lookup.get(sym, 0),
+                            'confidence': conf_lookup.get(sym, 0.5),
                         })
             except Exception:
                 pass
@@ -1384,7 +1496,29 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
                     'notional': p['usd'],
                     'upnl': 0,
                     'upnl_pct': 0,
+                    'score': p.get('score', 0),
+                    'confidence': p.get('confidence', 0.5),
                 })
+
+        # Open/pending orders from OKX
+        orders_data = []
+        if exchange:
+            try:
+                open_orders = exchange.fetch_open_orders()
+                for o in open_orders:
+                    sym = o.get('symbol', '').replace(':USDT', '')
+                    orders_data.append({
+                        'symbol': sym,
+                        'side': o.get('side', ''),
+                        'type': o.get('type', 'limit'),
+                        'price': float(o.get('price', 0) or 0),
+                        'amount': float(o.get('amount', 0) or 0),
+                        'filled': float(o.get('filled', 0) or 0),
+                        'status': o.get('status', 'open'),
+                        'created': o.get('datetime', ''),
+                    })
+            except Exception:
+                pass
 
         # Signals from latest model run
         sig_data = []
@@ -1396,6 +1530,7 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
                 sig_data.append({
                     'symbol': row.get('symbol', ''),
                     'score': round(float(row.get('score', 0)), 4),
+                    'confidence': round(float(row.get('confidence', 0.5)), 3),
                 })
 
         # Live equity = capital + realized PnL + unrealized PnL
@@ -1430,6 +1565,8 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
             'max_dd': round(max_dd, 4),
             'dd_stop': risk_cfg.get('dd_stop', -0.20),
             'models': '15 (LGB v6×5 + v7×5 + CB×5)',
+            'min_score': risk_cfg.get('min_score', 0.0),
+            'edge_boost': risk_cfg.get('edge_boost', False),
 
             # Stats
             'total_trades': stats.get('total_trades', 0),
@@ -1443,6 +1580,7 @@ def _export_dashboard(state, positions, signals, tracker, risk_cfg, args, rebal_
             'positions': pos_data,
             'trades': closed_trades,
             'signals': sig_data,
+            'orders': orders_data,
         }
 
         # Append live equity point to history (every export = every 5min from bg thread)
@@ -1831,14 +1969,31 @@ def main():
         state['_last_signals'] = signals
         state['_last_positions'] = positions
 
+        # Store entry scores/confidence for dashboard (persists across cycles)
+        entry_scores = state.get('entry_scores', {})  # {symbol: {score, confidence, time}}
+        if positions:
+            now_str = datetime.now(timezone.utc).isoformat()
+            for p in positions:
+                sym = p['symbol']
+                if sym not in entry_scores or entry_scores[sym].get('side') != p['side']:
+                    # New position or side flipped — record entry score
+                    entry_scores[sym] = {
+                        'score': p.get('score', 0),
+                        'confidence': p.get('confidence', 0.5),
+                        'side': p['side'],
+                        'time': now_str,
+                    }
+            state['entry_scores'] = entry_scores
+
         if not positions:
             print("   (no positions this cycle)")
         else:
-            print(f"\n   {'Symbol':<15} {'Side':<6} {'USD':>8} {'Score':>8}")
-            print(f"   {'─' * 40}")
+            print(f"\n   {'Symbol':<15} {'Side':<6} {'USD':>8} {'Score':>8} {'Conf':>6}")
+            print(f"   {'─' * 48}")
             for pos in positions:
+                conf = pos.get('confidence', 0)
                 print(f"   {pos['symbol']:<15} {pos['side']:<6} ${pos['usd']:>7.0f} "
-                      f"{pos['score']:>+8.3f}")
+                      f"{pos['score']:>+8.3f} {conf:>5.0%}")
 
         # ── Telegram: positions alert ──
         if tg and tg.enabled:
@@ -1862,6 +2017,14 @@ def main():
             results = diff_rebalance(exchange, positions,
                                      leverage=risk_cfg.get('leverage', 3),
                                      tracker=tracker)
+            # Clean up entry_scores for closed positions
+            if positions:
+                active_syms = {p['symbol'] for p in positions}
+                es = state.get('entry_scores', {})
+                stale = [k for k in es if k not in active_syms]
+                for k in stale:
+                    del es[k]
+                state['entry_scores'] = es
             # Print trade stats after each cycle
             tracker.print_stats()
             # ── Telegram: fills + stats ──
