@@ -106,6 +106,9 @@ REGIME_COLS = {
     'market_avg_funding', 'market_funding_skew',
     # v6: binary features that should NOT be ranked
     'is_asian_session',
+    # News sentiment (market-level, should NOT be ranked cross-sectionally)
+    'market_news_count_24h', 'market_news_sentiment_24h',
+    'news_sentiment_24h', 'news_sentiment_7d', 'news_sentiment_momentum',
 }
 
 # Cost model for perpetual swaps — v6 (12h rebalance)
@@ -440,6 +443,46 @@ def add_sentiment_features(df, project_root):
             var = df.groupby('symbol')['btc_ret_1h'].transform(
                 lambda x: x.rolling(w).var() + 1e-10)
             df[f'btc_beta_{w}h'] = cov / var
+
+    # ---- 5. Crypto News Sentiment (from fetch_crypto_news.py) ----
+    news_path = os.path.join(sent_dir, 'crypto_news.parquet')
+    if os.path.exists(news_path):
+        print("      Loading news sentiment features...")
+        news = pd.read_parquet(news_path)
+        news['timestamp'] = pd.to_datetime(news['timestamp'], utc=True)
+
+        # News features: per-coin + market-level
+        news_per_coin_cols = [
+            'news_count_1h', 'news_count_24h', 'news_count_7d',
+            'news_sentiment_1h', 'news_sentiment_24h', 'news_sentiment_7d',
+            'news_sentiment_momentum', 'news_volume_zscore',
+        ]
+        news_market_cols = ['market_news_count_24h', 'market_news_sentiment_24h']
+
+        # Merge per-coin features
+        merge_cols = ['timestamp', 'symbol'] + [c for c in news_per_coin_cols if c in news.columns]
+        per_coin_news = news[merge_cols].drop_duplicates(['timestamp', 'symbol'])
+        df = df.merge(per_coin_news, on=['timestamp', 'symbol'], how='left')
+
+        # Merge market-level features (same for all coins at each timestamp)
+        market_merge = ['timestamp'] + [c for c in news_market_cols if c in news.columns]
+        market_news = news[market_merge].drop_duplicates('timestamp')
+        df = df.merge(market_news, on='timestamp', how='left', suffixes=('', '_dup'))
+        # Drop any duplicated columns from merge
+        dup_cols = [c for c in df.columns if c.endswith('_dup')]
+        if dup_cols:
+            df.drop(columns=dup_cols, inplace=True)
+
+        # Fill missing news data with 0 (no news = neutral)
+        for col in news_per_coin_cols + news_market_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna(0)
+
+        n_with_news = (df['news_count_24h'] > 0).sum() if 'news_count_24h' in df.columns else 0
+        print(f"      News: {n_with_news:,} rows with news "
+              f"({n_with_news / len(df) * 100:.1f}%)")
+    else:
+        print(f"      ⚠️  No news data at {news_path} (run fetch_crypto_news.py first)")
 
     n_feats_after = len([c for c in df.columns if c not in EXCLUDE_COLS
                          and not c.startswith('target_') and c not in ['date', 'ts_8h']])

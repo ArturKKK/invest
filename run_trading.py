@@ -338,6 +338,30 @@ def build_features(df):
         df['fng_momentum'] = df['fng_value'] - df['fng_ma30']
         df.drop(columns=['date'], inplace=True, errors='ignore')
 
+    # News sentiment features (from fetch_crypto_news.py)
+    news_path = os.path.join(root, 'data', 'sentiment', 'crypto_news.parquet')
+    if os.path.exists(news_path):
+        news = pd.read_parquet(news_path)
+        news['timestamp'] = pd.to_datetime(news['timestamp'], utc=True)
+        news_per_coin = [
+            'news_count_1h', 'news_count_24h', 'news_count_7d',
+            'news_sentiment_1h', 'news_sentiment_24h', 'news_sentiment_7d',
+            'news_sentiment_momentum', 'news_volume_zscore',
+        ]
+        news_market = ['market_news_count_24h', 'market_news_sentiment_24h']
+        merge_cols = ['timestamp', 'symbol'] + [c for c in news_per_coin if c in news.columns]
+        df = df.merge(news[merge_cols].drop_duplicates(['timestamp', 'symbol']),
+                      on=['timestamp', 'symbol'], how='left')
+        market_merge = ['timestamp'] + [c for c in news_market if c in news.columns]
+        df = df.merge(news[market_merge].drop_duplicates('timestamp'),
+                      on='timestamp', how='left', suffixes=('', '_dup'))
+        dup_cols = [c for c in df.columns if c.endswith('_dup')]
+        if dup_cols:
+            df.drop(columns=dup_cols, inplace=True)
+        for col in news_per_coin + news_market:
+            if col in df.columns:
+                df[col] = df[col].fillna(0)
+
     # Synthetic positioning (formula matches v5 training)
     for short, long in [(4, 24), (12, 48), (24, 168)]:
         fr = f'ret_{short}h'

@@ -15,6 +15,10 @@ ta               # technical analysis indicators
 
 # Data
 ccxt             # crypto exchange API
+requests         # HTTP requests for news fetching
+
+# NLP / Sentiment
+vaderSentiment   # VADER sentiment analysis for news
 
 # Optional (for HIST transformer, only needed on GPU cluster)
 # torch

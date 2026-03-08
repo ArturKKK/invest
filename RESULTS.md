@@ -345,12 +345,52 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 10. ✅ **Edge-boost sizing** → Sharpe 5.93, **WR 70%**, PF 2.17 ← 🔥 ПРОРЫВ
 11. ❌ Adaptive rebalance (P90 trigger) → слишком много ранних ребалансов, costs +130%
 12. ✅ **CatBoost в ансамбль** → Sharpe **8.04**, PF **2.85**, +37.2% ← 🔥🔥 НОВЫЙ ЧЕМПИОН
-13. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
-14. ⬜ Retrain HIST v2 с 12h target → 4-way ensemble
-15. ⬜ News/event monitoring (CPI, FOMC, крипто-регуляции, листинги)
-16. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
-17. ⬜ Агрессивный режим: 5-10x leverage + strict DD stop для $500→$5000
-18. ⬜ OKX API key → paper trading → live с плечом
+13. ❌ **Dynamic leverage (3x→5x/7x)** → DD резко растёт: -35.5% (5x), -49.1% (7x). Причина: "model is confident" ≠ "model is right". Одна ошибка на 5-7x стирает недели прибыли. **ОТВЕРГНУТО.**
+14. ✅ **Event filter (FOMC/CPI)** → снижение leverage до 30% за 18ч до / 6ч после макро-событий. 48 дат на 2025-2026. В тесте 60d: 2 события поймано, минимальное влияние на текущий период, но страховка на будущее.
+15. 🔄 **News sentiment pipeline** → CryptoCompare historical news + VADER NLP → 10 новых фич per-coin. Скрипт готов (`fetch_crypto_news.py`), данные качаются.
+16. ⬜ Retrain с news features → сравнить с текущим чемпионом
+17. ⬜ Maker orders вместо taker (0.02% vs 0.03% — экономия 33% на fees)
+18. ⬜ Retrain HIST v2 с 12h target → 4-way ensemble
+19. ⬜ On-chain / order book features (funding rate live, OI, whale alerts)
+20. ⬜ OKX API key → paper trading → live с плечом
+
+## $500 → $5000 анализ
+- **10x за 1 месяц невозможно**: нужен +8%/день, что нереалистично
+- **Dynamic leverage не помогает**: DD растёт быстрее прибыли
+- **Реалистичный путь**: compounding при +37%/60d ($500→$685→$938→$1285→$1760→$2412→$3304→$4527→$5000)
+- **Срок**: ~7 месяцев через дисциплинированное компаундирование
+- **Ускорители**: news features → лучше модель → выше return → быстрее compound
+
+## Dynamic Leverage — Эксперименты (ОТВЕРГНУТО)
+| Вариант | Return | MaxDD | Sharpe | PF | ЛИКВИДАЦИЯ? |
+|---------|--------|-------|--------|-----|-------------|
+| 3x (base) | +37.2% | -18.7% | 8.04 | 2.85 | Нет |
+| 3x→5x (P90+) | +14.0% | -35.5% | 6.64 | 2.39 | ⚠️ DD>33% |
+| 3x→7x (P90+) | +52.8% | -49.1% | 8.02 | 2.82 | 💀 DD>33% |
+| 5x static | +56% | -28% | — | — | 💀 |
+| 7x static | +63% | -37% | — | — | 💀 |
+| 10x static | +56% | -62% | — | — | 💀 |
+
+> **Вывод**: leverage > 3x при DD threshold -33% = ликвидация. Единственный путь к 5x+ — улучшить модель (больше WR, меньше DD).
+
+## Event Filter — FOMC/CPI Calendar
+- **48 дат** в MACRO_EVENTS (2025-2026): все FOMC rate decisions + US CPI releases
+- **Механизм**: `is_near_event(ts, hours_before=18, hours_after=6)` — снижение leverage до 30% от нормального
+- **Результат в тесте**: 2 события поймано за 60 дней, return чуть ниже (+33.8% vs +37.2%) из-за сниженного leverage в те дни
+- **Ценность**: страховка на будущее, когда FOMC или CPI вызовут резкое движение
+
+## News Sentiment Pipeline (NEW)
+- **Источник**: CryptoCompare News API (free tier, 3000 calls/hour)  
+- **NLP**: VADER sentiment analysis на заголовках новостей
+- **Фичи** (10 штук per coin):
+  - `news_count_1h/24h/7d` — количество новостей (per-coin rolling)
+  - `news_sentiment_1h/24h/7d` — средний sentiment [-1,+1]
+  - `news_sentiment_momentum` — 24h sentiment − 7d sentiment
+  - `news_volume_zscore` — z-score объёма новостей vs 30d baseline
+  - `market_news_count_24h` — market-wide news volume
+  - `market_news_sentiment_24h` — market-wide sentiment
+- **Статус**: fetcher ready, данные за 3 дня протестированы (1600 news, 56% mapped to coins)
+- **Скрипт**: `python fetch_crypto_news.py --days 730` (2 года, ~2.5 часа при rate limit)
 
 ## Конфигурация (текущая — ensemble + edge-boost + leverage)
 - **Capital**: $500 стартовый, OKX futures
@@ -360,5 +400,6 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 - **Rebalance**: every 24h
 - **Leverage**: 3x (optimal: WR 67%, Sharpe 8.04, MaxDD -18.7%)
 - **Risk**: kelly=100%, DD_stop=-20%, DD_resume=-8%
+- **Event filter**: FOMC/CPI calendar (48 дат), leverage × 0.3 near events
 - **Cost model**: 4 bps/side (taker + slippage) + 1bp/8h funding
-- **Запуск**: `python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --npos 5 --edge-boost --days 60 --capital 500`
+- **Запуск**: `python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --npos 5 --edge-boost --event-filter --days 60 --capital 500`
