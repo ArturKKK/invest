@@ -380,7 +380,6 @@ def main():
         if not has_test:
             print(f"\n   ✅ Production models saved (no test evaluation)")
             if args.production:
-                from datetime import datetime
                 prod_meta = {
                     'mode': 'production',
                     'model_type': 'CatBoost',
