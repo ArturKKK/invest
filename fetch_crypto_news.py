@@ -1126,6 +1126,47 @@ def print_news_summary(df):
 
 
 # ─── Main ─────────────────────────────────────────────────────────
+def _find_gaps(raw_df, min_articles_per_month=50):
+    """
+    Detect internal gaps in raw news data.
+    Returns list of (start_ts, end_ts) tuples for missing periods.
+    """
+    raw_df = raw_df.copy()
+    raw_df['dt'] = pd.to_datetime(raw_df['published_on'], unit='s', utc=True)
+    raw_df['month'] = raw_df['dt'].dt.to_period('M')
+    
+    monthly = raw_df.groupby('month').size()
+    
+    # Full expected range
+    min_month = monthly.index.min()
+    max_month = monthly.index.max()
+    all_months = pd.period_range(min_month, max_month, freq='M')
+    
+    gaps = []
+    gap_start = None
+    
+    for m in all_months:
+        count = monthly.get(m, 0)
+        if count < min_articles_per_month:
+            if gap_start is None:
+                gap_start = m
+        else:
+            if gap_start is not None:
+                # End of gap — convert to timestamps
+                start_ts = int(gap_start.start_time.replace(tzinfo=timezone.utc).timestamp())
+                end_ts = int(m.start_time.replace(tzinfo=timezone.utc).timestamp())
+                gaps.append((start_ts, end_ts))
+                gap_start = None
+    
+    # Handle trailing gap
+    if gap_start is not None:
+        start_ts = int(gap_start.start_time.replace(tzinfo=timezone.utc).timestamp())
+        end_ts = int(max_month.end_time.replace(tzinfo=timezone.utc).timestamp())
+        gaps.append((start_ts, end_ts))
+    
+    return gaps
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch crypto + political news and build sentiment features")
     parser.add_argument("--days", type=int, default=730, help="Days of history to fetch (default: 730)")
@@ -1141,6 +1182,8 @@ def main():
                             "cryptobert (GPU/crypto, best) [default: vader]")
     parser.add_argument("--workers", type=int, default=4,
                        help="Parallel download workers (default: 4, use 1 for sequential)")
+    parser.add_argument("--fill-gaps", action="store_true",
+                       help="Detect and fill internal gaps in existing raw news data")
     args = parser.parse_args()
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -1153,6 +1196,7 @@ def main():
         if args.source in ("crypto", "all"):
             resume_ts = None
             checkpoint_df = None
+            cc_news = []
             
             # ALWAYS check existing data — don't re-download what we have
             existing_df, existing_oldest_ts = _load_checkpoint()
@@ -1163,7 +1207,34 @@ def main():
                 now_dt = datetime.now(timezone.utc)
                 gap_hours = (now_dt - existing_newest).total_seconds() / 3600
                 
-                if gap_hours < 24:
+                # ── Fill internal gaps ────────────────────────────
+                if args.fill_gaps:
+                    gaps = _find_gaps(existing_df)
+                    if gaps:
+                        print(f"\n🔍 Found {len(gaps)} internal gap(s) to fill:")
+                        for gs, ge in gaps:
+                            gs_d = datetime.fromtimestamp(gs, tz=timezone.utc).strftime('%Y-%m-%d')
+                            ge_d = datetime.fromtimestamp(ge, tz=timezone.utc).strftime('%Y-%m-%d')
+                            gap_days = (ge - gs) // 86400
+                            print(f"   📅 {gs_d} → {ge_d} ({gap_days} days)")
+                        
+                        for gi, (gs, ge) in enumerate(gaps):
+                            gs_d = datetime.fromtimestamp(gs, tz=timezone.utc).strftime('%Y-%m-%d')
+                            ge_d = datetime.fromtimestamp(ge, tz=timezone.utc).strftime('%Y-%m-%d')
+                            gap_days = (ge - gs) // 86400
+                            print(f"\n   ▶ Filling gap {gi+1}/{len(gaps)}: {gs_d} → {ge_d}...")
+                            gap_news = fetch_cryptocompare_news(
+                                days=gap_days + 1,
+                                resume_from_ts=ge,  # start from end of gap, paginate backward
+                                api_key=args.cc_api_key, workers=args.workers
+                            )
+                            cc_news.extend(gap_news)
+                            print(f"     ✅ Got {len(gap_news):,} items for this gap")
+                    else:
+                        print("✅ No internal gaps found!")
+                # ── End fill gaps ─────────────────────────────────
+                
+                if gap_hours < 24 and not args.fill_gaps:
                     print(f"✅ Data already up to date ({existing_newest.strftime('%Y-%m-%d %H:%M')}, "
                           f"{gap_hours:.0f}h ago). Nothing to fetch.")
                     cc_news = []

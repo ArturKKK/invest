@@ -127,6 +127,8 @@ REGIME_COLS = {
     'political_news_count_24h', 'political_sentiment_24h',
     'political_sentiment_7d', 'political_sentiment_shock',
     'political_news_volume_zscore',
+    # Binary flags (should NOT be ranked)
+    'has_news_data',
 }
 
 # Cost model for perpetual swaps — v6 (12h rebalance)
@@ -552,10 +554,32 @@ def add_sentiment_features(df, project_root, skip_news=False):
         if dup_cols:
             df.drop(columns=dup_cols, inplace=True)
 
-        # Fill missing news data with 0 (no news = neutral)
-        for col in news_per_coin_cols + all_market_cols:
+        # ── Smart NaN handling for news features ──────────────────
+        # Problem: fillna(0) makes "no data available" look like "no news
+        # happened", creating a date/regime leak when data has coverage gaps.
+        # Solution: add has_news_data flag, use NaN for missing periods,
+        # and let LightGBM handle NaN natively (use_missing=true by default).
+        
+        # has_news_data: 1 where news parquet has coverage, NaN otherwise.
+        # This lets the model distinguish "genuinely 0 news" from "no data".
+        if 'news_count_24h' in df.columns:
+            # news_count_24h is NaN only where no data — after merge left join
+            # If it's 0, it means the parquet had data (the count was genuinely 0)
+            df['has_news_data'] = (~df['news_count_24h'].isna()).astype(float)
+            # Replace NaN→NaN, keep 0s as 0s (they are real zeros from covered periods)
+            # Do NOT fillna(0) — let LightGBM handle NaN natively
+            n_no_data = (df['has_news_data'] == 0).sum()
+            n_total = len(df)
+            print(f"      ⚠️  News coverage: {n_total - n_no_data:,}/{n_total:,} rows "
+                  f"({(n_total - n_no_data)/n_total*100:.1f}%), "
+                  f"{n_no_data:,} rows with NaN (no data)")
+        
+        # Count features: use log1p for heavy-tailed distributions
+        for col in ['news_count_1h', 'news_count_24h', 'news_count_7d',
+                     'market_news_count_24h', 'political_news_count_24h']:
             if col in df.columns:
-                df[col] = df[col].fillna(0)
+                # log1p only where data exists (NaN stays NaN)
+                df[col] = np.log1p(df[col])
 
         n_with_news = (df['news_count_24h'] > 0).sum() if 'news_count_24h' in df.columns else 0
         print(f"      News: {n_with_news:,} rows with news "
