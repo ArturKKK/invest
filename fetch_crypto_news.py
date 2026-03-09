@@ -1182,7 +1182,7 @@ def print_news_summary(df):
 
 
 # ─── Main ─────────────────────────────────────────────────────────
-def _find_gaps(raw_df, min_articles_per_month=50):
+def _find_gaps(raw_df, min_articles_per_month=3000):
     """
     Detect internal gaps in raw news data.
     Returns list of (start_ts, end_ts) tuples for missing periods.
