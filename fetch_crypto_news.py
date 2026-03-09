@@ -1238,7 +1238,7 @@ def main():
                             gap_news = fetch_cryptocompare_news(
                                 days=gap_days + 1,
                                 resume_from_ts=ge,  # start from end of gap, paginate backward
-                                api_key=args.cc_api_key, workers=1  # single thread for reliability
+                                api_key=args.cc_api_key, workers=args.workers
                             )
                             cc_news.extend(gap_news)
                             print(f"     ✅ Got {len(gap_news):,} items for this gap")
