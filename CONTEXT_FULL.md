@@ -1,0 +1,359 @@
+# Полный контекст проекта invest — ML Trading System для криптовалют
+
+**Дата**: 9 марта 2026  
+**Автор**: Артур Табаков  
+**Цель**: автоматическая торговля криптовалютами с плечом, $500 стартовый капитал → максимизация прибыли
+
+---
+
+## 1. Что это за проект
+
+ML-система для прогнозирования 12-часовых доходностей 50 криптовалют. Модель даёт скор для каждой монеты → берём топ-5 в лонг, худшие 5 в шорт → ребалансируем каждые 12 часов. Торгуем через OKX futures (пока demo).
+
+**Стек**: Python, LightGBM, CatBoost, XGBoost, Optuna, CCXT (биржевое API), VADER (NLP для новостей). VPS на 185.42.163.63, дашборд на invest.arturt.com. Обучение на GPU-кластере.
+
+---
+
+## 2. Данные
+
+### Источники
+- **OHLCV**: 50 криптовалют, часовые свечи с 2021 года (через CCXT/Binance). ~2.5M строк.
+- **Fear & Greed Index**: ежедневный индикатор настроений рынка (alternative.me API)
+- **Funding rates (OKX)**: каждые 8 часов, funding rate
+- **Binance Futures Derivatives** (NEW, Dec 2021+, data.binance.vision):
+  - `binance_futures_metrics.parquet` (81MB, 1.8M rows) — OI, top-trader L/S ratio, global L/S ratio, taker buy/sell ratio
+  - `binance_funding_rates.parquet` (1.2MB, 294K rows) — funding rates from Jan 2020
+  - 50 символов, 1h частота (resample из 5min)
+  - Фичи: OI change (1/4/12/24h), OI zscore, OI×return interaction, taker imbalance, taker CVD, taker flow zscore, top L/S changes, funding surprise, L/S divergence
+- **Long/Short ratio**: соотношение лонг/шорт позиций
+- **News**: CryptoCompare News API → VADER sentiment analysis → 10 фичей per coin:
+  - `news_count_1h/24h/7d` — количество новостей  
+  - `news_sentiment_1h/24h/7d` — средний sentiment [-1, +1]
+  - `news_sentiment_momentum` — 24h sentiment − 7d sentiment
+  - `news_volume_zscore` — z-score объёма новостей vs 30d
+  - `market_news_count_24h`, `market_news_sentiment_24h` — market-wide
+
+### Feature engineering (186 фичей у XGBoost)
+- **Price/Volume**: returns (1h, 4h, 12h, 24h, 3d, 7d), volatility (Garman-Klass), VWAP distance, MA ratios (72h, 168h, 336h, 720h), volume surge, range expansion
+- **Momentum**: z-scores, acceleration, trend strength, direction quality
+- **Cross-asset**: BTC beta (48h, 168h), cross-coin dispersion, breadth (% positive), correlation
+- **Sentiment**: FNG value/MA7/MA30/momentum, funding rate, L/S ratio, synthetic positioning (reversal signals)
+- **Session/Regime**: is_asian_session, regime features (volatility regime, trend regime)
+- **News (10 фичей)**: per-coin и market-wide sentiment + volume
+- **News interactions (23 фичи, `nx_*`, только XGBoost)**: sentiment×volume, news burst, sentiment-price divergence, sentiment×momentum, coin-vs-market sentiment, sentiment×volatility, sentiment×fear&greed, news cluster detection, sentiment acceleration, funding×news, cross-coin news asymmetry
+
+### Target
+- `target_ret_12h` — доходность через 12 часов (rank-normalized per timestamp)
+
+### Train/Val/Test split (walk-forward)
+- **Window 1**: Train → 2023-06-30, Val 2023-07 → 2024-06, Test 2024-07 → 2024-12
+- **Window 2**: Train → 2024-01-01, Val 2024-01 → 2024-12, Test 2025-01 → 2025-03
+- **Window 3**: Train → 2024-06-29, Val 2024-07 → 2024-12, Test 2025-01 → latest
+- **Production**: Train → 2025-09, Val → 2026-03 (max data, no test holdout)
+- **Fast Sim 365d**: март 2025 → март 2026 (полностью OOS, 9 месяцев после конца train)
+
+---
+
+## 3. Модели — что пробовали, что работает
+
+### Текущий ансамбль (15 моделей, live)
+
+| Модель | Алгоритм | Фичей | News? | Seeds | DDStop Sharpe (avg) |
+|--------|----------|-------|-------|-------|---------------------|
+| **LGB v6** | LightGBM (leaf-wise) | 121 | Нет | 5 | **1.81** |
+| **LGB v7** | LightGBM (leaf-wise) | 127 | Нет | 5 | **1.88** |
+| **CatBoost** | CatBoost (ordered/symmetric) | 130 | **Да (8 news)** | 5 | **1.51** |
+
+Финальный сигнал = `mean(15 предсказаний)`. Каждая модель обучена с 5 разными random seeds.
+
+### XGBoost + News Interactions (обучается сейчас, эксперимент #9)
+
+| Модель | Алгоритм | Фичей | News? | Уникальность |
+|--------|----------|-------|-------|--------------|
+| **XGBoost** | XGBoost (level-wise) | 186 | **Да (10 news + 23 interactions)** | Явные interaction features |
+
+23 news interaction features (`nx_*`):
+- `nx_sent_x_count_*` — sentiment × объём новостей (много позитивных новостей = сильный сигнал)
+- `nx_burst_ratio`, `nx_is_burst`, `nx_burst_x_sent` — обнаружение всплеска новостей
+- `nx_sent_price_div` — позитивные новости + падение цены = контрарный сигнал
+- `nx_sent_mom_align` — sentiment alignment с ценовым моментумом
+- `nx_sent_vs_market`, `nx_count_vs_market` — coin vs market sentiment gap
+- `nx_sent_x_vol` — sentiment × волатильность
+- `nx_sent_x_fear` — sentiment в контексте Fear & Greed
+- `nx_high_vol_positive/negative` — новостные кластеры
+- `nx_sent_accel`, `nx_sent_accel_7d` — ускорение sentiment
+- `nx_funding_x_sent`, `nx_funding_sent_div` — funding rate × news
+- `nx_news_in_dispersion` — новости в период ценовой дисперсии
+
+**Ожидаемый ансамбль после**: 20 моделей (LGB v6×5 + v7×5 + CatBoost×5 + XGBoost×5). Три разных GBDT алгоритма (leaf-wise, symmetric, level-wise) для максимальной декорреляции ошибок.
+
+### Что пробовали и отвергли
+
+| Эксперимент | Результат | Почему не работает |
+|-------------|-----------|-------------------|
+| **LGB v8** (8 лет данных, 2017+) | Sharpe 0.68 (vs 1.17 у v7) | Крипторынок 2017-2020 ≠ 2021+. Старые паттерны разбавляют полезные |
+| **HIST v1/v2** (Transformer) | LS Sharpe 2.93 в паре с v5 | Сложная архитектура, нестабильная. Не retraiнили с 12h target |
+| **LGB с news** | DDStop Sharpe -36..47% хуже | LGB leaf-wise переоценивает шумные news фичи |
+| **v7 blended target** (75% 12h + 25% 24h) | ≈ v6 | Усложнение без прироста |
+| **min-conf 0.85** | Sharpe 6.61→3.77 на 365d | Режет 40% сделок, многие прибыльные. На 60d выглядит хорошо (10.02), но на полном году вредит |
+| **Dynamic leverage** (3x→5x/7x) | MaxDD -35..49% | DD растёт быстрее прибыли, риск ликвидации |
+| **P75 + seed agree filter** | WR 34%, -47% | Когда сиды согласны — ловушка, а не уверенность |
+| **P90 edge filter** | Sharpe ↓ vs P75 | Слишком мало сделок, пустые слоты |
+| **Adaptive rebalance** (P90 trigger) | Costs +130% | Слишком много ранних ребалансов |
+
+### Что работает
+
+| Идея | Эффект | Статус |
+|------|--------|--------|
+| **12h target** (aligned с holding period) | Sharpe +4x vs v5 | ✅ live |
+| **Edge-boost sizing** (weight ∝ edge) | Sharpe 2.79→5.93, WR 56%→70% | ✅ live |
+| **CatBoost в ансамбль** (с news) | Sharpe 5.93→8.04 (60d) / 6.61 (365d) | ✅ live |
+| **Confidence weighting** (1/(1+std)) | Sharpe 2.27→2.48 | ✅ live |
+| **Гибридный news**: LGB без news + CB с news | Sharpe +45% vs all-with-news | ✅ live |
+| **Concentration cap** (max alloc = confidence) | Убирает 100% на 1 позицию | ✅ live |
+| **Event filter** (FOMC/CPI) | Страховка от макро-шоков | ✅ live |
+
+---
+
+## 4. Текущие результаты (лучший бэктест)
+
+### Pipeline бэктест (walk-forward, кластер)
+
+**LGB v6 (W3)**: Rank IC 0.028, ICIR 0.427, LS Sharpe 1.12, DDStop Sharpe **1.81**  
+**LGB v7 (avg 3W)**: Rank IC 0.029, ICIR 0.406, LS Sharpe 1.17, DDStop Sharpe **1.88**  
+**CatBoost с news (avg 3W)**: ICIR 0.369, LS Sharpe 1.07, DDStop Sharpe **1.51**
+
+### Fast Sim — реальные данные, Binance spot
+
+#### Лучший конфиг: 365d, 1x leverage, 12h rebal, без min-conf
+| Метрика | Значение |
+|---------|----------|
+| **Sharpe** | **6.61** |
+| Return | +21.3% (ann ~21%) |
+| Max DD | -5.4% |
+| Win Rate | 61% |
+| Profit Factor | 1.86 |
+| Trades | 1140 |
+| Costs | 5.1% |
+
+#### С leverage 3x, 365d
+| Метрика | Значение |
+|---------|----------|
+| Sharpe | 4.55 |
+| Return | +48.7% |
+| Max DD | -18.1% |
+
+#### Полная сетка конфигов (9 марта 2026)
+
+| # | Период | Lev | Rebal | min-conf | Return | Sharpe | WR | PF | MaxDD |
+|---|--------|-----|-------|----------|--------|--------|-----|------|-------|
+| 1 | 60d | 3x | 24h | — | +21.7% | 2.03 | 62% | 1.33 | -21.7% |
+| 2 | 60d | 3x | 24h | 0.85 | +1.2% | 0.73 | 62% | 1.12 | -18.1% |
+| 3 | 60d | 1x | 12h | 0.85 | +6.7% | 2.23 | 66% | 1.25 | -5.6% |
+| 4 | 60d | 1x | 12h | — | +8.3% | 2.69 | 60% | 1.30 | -6.5% |
+| 5 | 365d | 1x | 12h | 0.85 | +15.1% | 3.77 | 63% | 1.46 | -5.1% |
+| **6** | **365d** | **1x** | **12h** | **—** | **+21.3%** | **6.61** | **61%** | **1.86** | **-5.4%** |
+| 7 | 365d | 3x | 24h | — | +48.7% | 4.55 | 65% | 1.85 | -18.1% |
+
+### Историческая 60d симуляция ($500 start, 3x, ensemble с CatBoost)
+| Метрика | Значение |
+|---------|----------|
+| Sharpe | 8.04 |
+| Return | +37.2% |
+| WR | 67% |
+| PF | 2.85 |
+| Max DD | -18.7% |
+
+> ⚠️ Sharpe 8.04 — на коротком удачном 60d окне. На 365d реалистичная оценка: 6.61. Не обманывайся коротким окном.
+
+---
+
+## 5. Ключевые инсайты (выученное)
+
+1. **В крипто 4 года данных > 8 лет.** Рынок 2017-2020 совершенно другой, старые паттерны вредят (v8 провал).
+2. **News помогают CatBoost, но вредят LGB.** Ordered boosting лучше справляется с шумными фичами. Гибрид (LGB без news + CB с news) оптимален.
+3. **min-conf filter — ловушка.** На 60d выглядит великолепно (Sharpe 10.02), на 365d вредит (3.77). Удаляет 40% сделок, среди которых много прибыльных.
+4. **Edge-boost sizing > equal weight.** Давать больше капитала высоко-уверенным сигналам = Sharpe +113%.
+5. **Seed agreement ≠ уверенность.** Когда все 5 seeds модели согласны — это часто ловушка (WR 34%).
+6. **Leverage > 3x = ликвидация.** При DD threshold -33% любой leverage выше 3x рано или поздно убивает.
+7. **12h holding period оптимален.** 4h = слишком много costs, 24h = упущенные возможности.
+8. **Ансамбль > одиночная модель.** v6+v7 = Sharpe 2.79 vs 2.54 (v6) / 2.73 (v7).
+9. **Больше фичей ≠ лучше.** v7 (127 фичей) ≈ v6 (121 фича). v8 (153 фичи) хуже.
+10. **Sentiment (FNG) — топовые фичи** в LGB. close_ma_ratios и volatility — топовые в CatBoost. Разные модели смотрят на разное → ансамбль сильнее.
+11. **Residual-target и hybrid-norm улучшают IC, но вредят DDStop Sharpe.** Rank_IC +0.003, но DDStop до -47%. Baseline остаётся лучше по P&L.
+12. **News features добавляют ~10 фичей средней важности** (news_count_7d в top-25 CatBoost), но снижают DDStop Sharpe у всех LGB на 30-47% vs no-news baseline. CatBoost устойчив к news.
+
+---
+
+## 6. Текущая production конфигурация
+
+```
+Capital:        $5,000 (OKX demo)
+Models:         15 (LGB v6×5 + v7×5 + CatBoost×5)
+Features:       LGB: 121-127 (без news), CatBoost: 130 (с news)
+Positions:      5 long + 5 short
+Rebalance:      12h
+Leverage:       1x (3x опционально)
+Sizing:         edge-boost (weight ∝ 1 + edge/P75, cap 4x)
+min-conf:       отключён (вредит на 365d)
+Risk:           kelly=100%, DD_stop=-20%, DD_resume=-8%
+Event filter:   FOMC/CPI → leverage 30%
+Costs:          ~4 bps/side (taker+slippage) + 1bp/8h funding
+Dashboard:      invest.arturt.com
+VPS:            185.42.163.63
+Sentiment cron: каждые 8h
+```
+
+---
+
+## 7. Архитектура кода
+
+```
+run_pipeline_v6.py          — LGB v6 train pipeline (base)
+run_pipeline_v7.py          — LGB v7 train pipeline (blended target)
+run_pipeline_catboost.py    — CatBoost train pipeline (ordered boosting)
+run_pipeline_xgboost.py     — XGBoost train pipeline (news interactions)
+run_trading.py              — Live/paper trading bot (OKX)
+run_fast_sim.py             — Fast backtest simulator (ensemble)
+run_leverage_sim.py         — Leverage/edge sweep tool
+run_train_all.sh            — Train all models: bash run_train_all.sh <exp_name>
+fetch_crypto_news.py        — News fetcher (CryptoCompare → parquet)
+src/data/download_binance_futures.py — Binance Futures derivatives downloader
+dashboard/                  — Web dashboard (invest.arturt.com)
+data/features/              — crypto_features_1h.parquet (2.5M rows, 107 cols)
+data/sentiment/             — news, binance metrics/funding, fear&greed, etc.
+data/raw/                   — Per-symbol OHLCV parquets
+results/production/         — Текущие production модели
+  lgb_v6_no_news/           — LGB v6 (5 seeds)
+  lgb_v7_no_news/           — LGB v7 (5 seeds)
+  catboost_with_news/       — CatBoost (5 seeds)
+results/exp10_.../          — A/B тест: residual/hybrid/null-importance
+results/archive/            — Старые эксперименты (exp02-exp07)
+```
+
+---
+
+## 8. Текущие задачи и план
+
+### Сейчас (в процессе)
+- ⏳ **Обучение exp11 с Binance derivatives данными** (OI, taker buy/sell, L/S ratios, funding rate). Данные скачаны (81MB metrics + 1.2MB funding, Dec 2021+). Код обновлен. Ожидает запуска `bash run_train_all.sh exp11_with_derivatives`.
+
+### Следующие шаги (приоритезированы)
+
+#### Meta-model (стэкинг) — 1-2 дня
+- Не предсказывает цену — предсказывает **когда базовые модели правы**
+- Вход: предсказания 20 моделей + их дисперсия + режим рынка
+- Выход: P(trade profitable) → торгуем только когда meta-model уверена
+- Отличие от min-conf: meta-model учится на паттернах ("когда LGB и CatBoost расходятся в тренде, прав CatBoost"), а min-conf просто считает std
+- **Ожидаемый эффект**: WR +3-5%, прямой путь к 65-67% WR
+
+#### Regime detector — 0.5 дня
+- HMM или кластеризация: определяет режим рынка (тренд / боковик / паника)
+- Разные модели сильны в разных режимах → в панике не торгуем, в тренде даём CatBoost больше веса
+- **Ожидаемый эффект**: WR +2-3%, снижение MaxDD
+
+#### Temporal Fusion Transformer (TFT) — 3-5 дней на код, часы на обучение
+- Нейросеть для time series, видит последовательность 48-168 часов (не одну строку)
+- Может выучить паттерны типа "3 часа роста → откат → затишье → продолжение"
+- GBDT не умеет видеть порядок данных, TFT умеет → низкая корреляция с деревьями
+- Данные: те же самые, просто подаются как последовательности
+- Зависимости: pytorch, pytorch-forecasting, pytorch-lightning
+- **Ожидаемый эффект**: WR +1-3%, качественно другой сигнал
+
+#### On-chain данные — 2-3 дня
+- Whale movements, exchange inflows/outflows, active addresses, NVT ratio
+- Данных нет у текущих моделей → гарантированно некоррелированный сигнал
+- Нужен API (Glassnode, CryptoQuant или free alternatives)
+
+#### Другое
+- ⬜ Production retrain на train→2025-09 (после анализа exp11 результатов)
+- ⬜ Maker orders (экономия 33% на fees: 0.02% vs 0.03%)
+- ⬜ Adaptive confidence threshold (мягкий 0.70-0.75 вместо удалённого 0.85)
+- ⬜ Live trading с реальными $500 (после стабилизации)
+
+---
+
+## 9. Top фичи по моделям
+
+### LGB v6/v7 (sentiment-driven)
+1. fng_ma30 (Fear & Greed 30d MA)
+2. fng_momentum
+3. fng_ma7
+4. vol_12h_cs_rank
+5. close_ma720_ratio
+6. close_ma336_ratio
+7. btc_beta_168h
+8. breadth_pct_positive
+9. ret_sharpe_168h
+10. fng_value
+
+### CatBoost (price-structure-driven)
+1. close_ma336_ratio
+2. vol_12h_cs_rank
+3. close_ma720_ratio
+4. breadth_pct_positive
+5. gk_vol_24h
+6. fng_momentum
+7. ret_sharpe_168h
+8. gk_vol_168h
+9. fng_ma30
+10. ret_std_168h
+
+> LGB фокусируется на sentiment (FNG), CatBoost — на price structure и volatility. Это именно то, что делает ансамбль сильнее одиночной модели.
+
+### XGBoost — ждём результатов обучения
+
+---
+
+## 10. Метрики которые мы отслеживаем
+
+| Метрика | Что значит | Хорошее значение |
+|---------|-----------|------------------|
+| **Rank IC** | Spearman корреляция предсказания с реальным ранговым return | > 0.025 |
+| **Rank ICIR** | IC / std(IC) — стабильность IC | > 0.35 |
+| **LS Sharpe net** | Sharpe long-short стратегии за вычетом costs | > 1.0 |
+| **DDStop Sharpe** | Sharpe с drawdown stop (-25% → выход, -10% → вход) | > 1.5 |
+| **DDStop MaxDD** | Max drawdown с DD stop | > -50% |
+| **Win Rate (WR)** | % прибыльных ребалансировок | > 60% |
+| **Profit Factor (PF)** | Сумма wins / сумма losses | > 1.5 |
+| **Fast Sim Sharpe** | Sharpe на реальных OOS данных (365d) | > 3.0 |
+| **Max DD** | Максимальная просадка в fast sim | > -10% |
+
+---
+
+## 11. Хронология экспериментов
+
+| # | Дата | Эксперимент | Результат | Статус |
+|---|------|-------------|-----------|--------|
+| 1 | Фев 2026 | LGB v5 (4h target) | Sharpe 1.64, fast sim -8.3% | ❌ Не работает |
+| 2 | Фев 2026 | HIST v1/v2 (Transformer) | LS Sharpe 2.93 в ансамбле с v5 | ⚠️ Не retrainили |
+| 3 | Мар 2026 | LGB v6 (12h target, новые фичи) | DDStop Sharpe 1.81, fast sim +7.4% | ✅ В ансамбле |
+| 4 | Мар 2026 | LGB v7 (blended target, HPO) | DDStop Sharpe 1.88, fast sim +12.3% | ✅ В ансамбле |
+| 5 | Мар 2026 | LGB v8 (8 лет данных) | LS Sharpe 0.68, W2 провал | ❌ Отвергнуто |
+| 6 | Мар 2026 | CatBoost (ordered boosting) | DDStop Sharpe 1.51, fast sim Sharpe 6.61 | ✅ В ансамбле |
+| 7 | 8 Мар | News A/B тест | LGB без news + CB с news = лучший | ✅ Применено |
+| 8 | 9 Мар | Full sim grid (7 конфигов) | 365d 1x 12h no filter = Sharpe 6.61 | ✅ Документировано |
+| 9 | 9 Мар | XGBoost + news interactions | DDStop Sharpe 0.97 — слабее ансамбля, отложен | ⚠️ |
+| 10 | 9 Мар | A/B тесты: residual-target, hybrid-norm, null-importance | CatBoost baseline лучший DDStop 1.49 (comb 1.62); v7 baseline DDStop 1.49 (comb 1.61). Residual/hybrid улучшают IC но ухудшают DDStop. News фичи снижают DDStop всех LGB на 30-47%. | ✅ Задокументировано |
+| 11 | 9 Мар | Binance Futures derivatives data | Скачано: OI, taker, L/S, funding с Dec 2021 (data.binance.vision). 50 символов, 1.8M строк metrics + 294K funding. Новые фичи добавлены в pipeline. | ✅ Ожидает обучения |
+
+---
+
+## 12. Открытые вопросы
+
+1. **Win Rate** сейчас 61%. Цель — 65-70%. Как поднять без потери Sharpe?
+2. **Leverage**: 1x safe но медленно, 3x рискованно. Как найти оптимум?
+3. **Production retrain**: модели обучены на данных до 2024-06. Нужно retrain на данных до 2025-09 для улучшения.
+4. **Live trading**: когда переходить с demo на реальные деньги?
+5. **Новые данные**: on-chain, order book — какие API использовать?
+6. **Новые архитектуры**: TFT/LSTM давали бы некоррелированный сигнал, но сложнее в разработке.
+
+---
+
+## 13. Ключевые файлы для понимания кода
+
+- **`run_pipeline_v6.py`** (1265 строк) — базовый pipeline, все shared функции: `add_sentiment_features`, `add_multi_horizon_targets`, `evaluate_model`, walk-forward windows, constants
+- **`run_pipeline_xgboost.py`** (721 строка) — новая модель с news interaction features
+- **`run_fast_sim.py`** (636 строк) — симулятор, загрузка ансамбля, predict_ensemble
+- **`run_trading.py`** (2200+ строк) — live/paper trading bot, build_features, generate_signal
+- **`RESULTS.md`** (570 строк) — все результаты, таблицы, графики

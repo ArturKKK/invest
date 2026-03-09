@@ -749,6 +749,8 @@ def generate_signal(df, feat_cols, root):
     # Prefer production models (*_prod) if they exist
     lgb_v6_dir = os.path.join(root, 'results_v6_prod')
     if not os.path.isdir(lgb_v6_dir):
+        lgb_v6_dir = os.path.join(root, 'results', 'production', 'lgb_v6_no_news')
+    if not os.path.isdir(lgb_v6_dir):
         lgb_v6_dir = os.path.join(root, 'results_v6')
     try:
         models = load_lgb_models(lgb_v6_dir)
@@ -766,6 +768,8 @@ def generate_signal(df, feat_cols, root):
     # ── LGB v7 (blended 6h+12h+24h target) ──
     lgb_v7_dir = os.path.join(root, 'results_v7_prod')
     if not os.path.isdir(lgb_v7_dir):
+        lgb_v7_dir = os.path.join(root, 'results', 'production', 'lgb_v7_no_news')
+    if not os.path.isdir(lgb_v7_dir):
         lgb_v7_dir = os.path.join(root, 'results_v7')
     try:
         models = load_lgb_models(lgb_v7_dir)
@@ -780,6 +784,8 @@ def generate_signal(df, feat_cols, root):
 
     # ── CatBoost ──
     cb_dir = os.path.join(root, 'results_catboost_prod')
+    if not os.path.isdir(cb_dir):
+        cb_dir = os.path.join(root, 'results', 'production', 'catboost_with_news')
     if not os.path.isdir(cb_dir):
         cb_dir = os.path.join(root, 'results_catboost')
     try:

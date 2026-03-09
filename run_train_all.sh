@@ -1,28 +1,33 @@
 #!/bin/bash
 # =============================================================================
-#  Полный цикл обучения всех моделей с новыми флагами
-#  Запуск: bash run_train_all.sh
+#  Полный цикл обучения всех моделей
+#  Запуск: bash run_train_all.sh [EXP_NAME]
+#
+#  Пример: bash run_train_all.sh exp11_with_derivatives
+#
+#  Структура результатов:
+#    results/<EXP_NAME>/v6_baseline/
+#    results/<EXP_NAME>/v6_hybrid/
+#    results/<EXP_NAME>/catboost_baseline/
+#    results/<EXP_NAME>/logs/
 #
 #  Логика:
-#    Фаза 1 — A/B тесты (skip-hpo, быстро): каждый флаг отдельно
-#    Фаза 2 — Лучшая комбинация с HPO (долго, но один раз)
-#    Фаза 3 — CatBoost + XGBoost с теми же флагами
-#    Фаза 4 — Production модели (после проверки результатов)
-#
-#  skip-hpo: HPO = 50 Optuna trials × 5000 деревьев = часы на каждый пайплайн.
-#  Сначала находим лучшую комбинацию фичей на default params,
-#  потом один раз делаем HPO на ней.
+#    Фаза 1 — A/B тесты v6/v7 (skip-hpo, быстро)
+#    Фаза 2 — CatBoost + XGBoost
+#    Фаза 3 — HPO на лучших комбинациях (раскомментировать)
+#    Фаза 4 — Production модели (раскомментировать после проверки)
 # =============================================================================
 
 set -euo pipefail
 
-LOGS="logs"
+# ── Experiment naming ──
+EXP_NAME="${1:-exp_$(date +%Y%m%d_%H%M%S)}"
+EXP_DIR="results/${EXP_NAME}"
+LOGS="${EXP_DIR}/logs"
 mkdir -p "$LOGS"
 
-# Timestamp для уникальных имён логов
 TS=$(date +%Y%m%d_%H%M%S)
 
-# Цвета
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -46,131 +51,121 @@ run_step() {
 
 echo "============================================================"
 echo "  FULL TRAINING PIPELINE — $(date)"
-echo "  Logs → $LOGS/"
+echo "  Experiment: ${EXP_NAME}"
+echo "  Results  → ${EXP_DIR}/"
+echo "  Logs     → ${LOGS}/"
 echo "============================================================"
 echo ""
 
 # ============================================================
-# ФАЗА 1: A/B тесты — каждый флаг отдельно (skip-hpo)
+# ФАЗА 1: A/B тесты v6 (skip-hpo)
 # ============================================================
 echo -e "${YELLOW}═══ ФАЗА 1: A/B тесты v6 (skip-hpo) ═══${NC}"
 
-# 1a. Baseline v6 (как было, для сравнения)
 run_step "v6_baseline" \
     python run_pipeline_v6.py --skip-hpo \
-    --results results_v6_baseline
+    --results "${EXP_DIR}/v6_baseline"
 
-# 1b. Residual target
 run_step "v6_residual" \
     python run_pipeline_v6.py --skip-hpo --residual-target \
-    --results results_v6_residual
+    --results "${EXP_DIR}/v6_residual"
 
-# 1c. Hybrid normalization
 run_step "v6_hybrid" \
     python run_pipeline_v6.py --skip-hpo --hybrid-norm \
-    --results results_v6_hybrid
+    --results "${EXP_DIR}/v6_hybrid"
 
-# 1d. Residual + hybrid (combo)
 run_step "v6_res_hyb" \
     python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm \
-    --results results_v6_res_hyb
+    --results "${EXP_DIR}/v6_res_hyb"
 
-# 1e. Residual + hybrid + null importance FS
 run_step "v6_res_hyb_null" \
     python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --null-importance \
-    --results results_v6_res_hyb_null
+    --results "${EXP_DIR}/v6_res_hyb_null"
 
-# 1f. LambdaRank (отдельно — другой objective)
-run_step "v6_lambdarank" \
-    python run_pipeline_v6.py --skip-hpo --residual-target --lambdarank \
-    --results results_v6_lambdarank
+# LambdaRank — disabled (needs integer labels, see exp10 logs)
+# run_step "v6_lambdarank" \
+#     python run_pipeline_v6.py --skip-hpo --residual-target --lambdarank \
+#     --results "${EXP_DIR}/v6_lambdarank"
 
 # ============================================================
 # ФАЗА 1b: A/B тесты v7 (skip-hpo)
 # ============================================================
 echo -e "${YELLOW}═══ ФАЗА 1b: A/B тесты v7 (skip-hpo) ═══${NC}"
 
-# v7 baseline
 run_step "v7_baseline" \
     python run_pipeline_v7.py --skip-hpo \
-    --results results_v7_baseline
+    --results "${EXP_DIR}/v7_baseline"
 
-# v7 с лучшей комбинацией (residual + hybrid)
 run_step "v7_res_hyb" \
     python run_pipeline_v7.py --skip-hpo --residual-target --hybrid-norm \
-    --results results_v7_res_hyb
+    --results "${EXP_DIR}/v7_res_hyb"
 
-# v7 residual + hybrid + null importance
 run_step "v7_res_hyb_null" \
     python run_pipeline_v7.py --skip-hpo --residual-target --hybrid-norm --null-importance \
-    --results results_v7_res_hyb_null
+    --results "${EXP_DIR}/v7_res_hyb_null"
 
 # ============================================================
-# ФАЗА 2: CatBoost — те же комбинации
+# ФАЗА 2: CatBoost
 # ============================================================
 echo -e "${YELLOW}═══ ФАЗА 2: CatBoost (skip-hpo) ═══${NC}"
 
-# CatBoost baseline
 run_step "cb_baseline" \
     python run_pipeline_catboost.py --skip-hpo --gpu \
-    --results results_catboost_baseline
+    --results "${EXP_DIR}/catboost_baseline"
 
-# CatBoost residual + hybrid
 run_step "cb_res_hyb" \
     python run_pipeline_catboost.py --skip-hpo --gpu --residual-target --hybrid-norm \
-    --results results_catboost_res_hyb
+    --results "${EXP_DIR}/catboost_res_hyb"
 
 # ============================================================
-# ФАЗА 3: XGBoost (disabled в ансамбле, но обучим для сравнения)
+# ФАЗА 3: XGBoost
 # ============================================================
-echo -e "${YELLOW}═══ ФАЗА 3: XGBoost (skip-hpo, для сравнения) ═══${NC}"
+echo -e "${YELLOW}═══ ФАЗА 3: XGBoost (skip-hpo) ═══${NC}"
 
 run_step "xgb_res_hyb" \
     python run_pipeline_xgboost.py --skip-hpo --gpu --residual-target --hybrid-norm \
-    --results results_xgboost_res_hyb
+    --results "${EXP_DIR}/xgboost_res_hyb"
 
 # ============================================================
-# ФАЗА 4: HPO на лучших комбинациях (долго!)
-# Раскомментируй после проверки результатов фазы 1-3
+# ФАЗА 4: HPO (раскомментировать лучшую комбо)
 # ============================================================
-echo -e "${YELLOW}═══ ФАЗА 4: HPO на лучших комбинациях ═══${NC}"
-echo "  (раскомментируй в скрипте когда увидишь какая комбинация лучше)"
+echo -e "${YELLOW}═══ ФАЗА 4: HPO ═══${NC}"
+echo "  (раскомментируй лучшую комбинацию)"
 
 # run_step "v6_res_hyb_hpo" \
 #     python run_pipeline_v6.py --hpo-trials 50 --residual-target --hybrid-norm \
-#     --results results_v6_res_hyb_hpo
+#     --results "${EXP_DIR}/v6_res_hyb_hpo"
 
 # run_step "v7_res_hyb_hpo" \
 #     python run_pipeline_v7.py --hpo-trials 50 --residual-target --hybrid-norm \
-#     --results results_v7_res_hyb_hpo
+#     --results "${EXP_DIR}/v7_res_hyb_hpo"
 
 # run_step "cb_res_hyb_hpo" \
 #     python run_pipeline_catboost.py --hpo-trials 50 --gpu --residual-target --hybrid-norm \
-#     --results results_catboost_res_hyb_hpo
+#     --results "${EXP_DIR}/cb_res_hyb_hpo"
 
 # ============================================================
-# ФАЗА 5: Production (ТОЛЬКО после проверки!)
+# ФАЗА 5: Production (ПОСЛЕ проверки!)
 # ============================================================
 echo "  Фаза 5 (production) — раскомментируй после проверки"
 
 # run_step "v6_prod" \
 #     python run_pipeline_v6.py --production --residual-target --hybrid-norm \
-#     --results results_v6_prod
+#     --results results/production/lgb_v6_no_news
 
 # run_step "v7_prod" \
 #     python run_pipeline_v7.py --production --residual-target --hybrid-norm \
-#     --results results_v7_prod
+#     --results results/production/lgb_v7_no_news
 
 # run_step "cb_prod" \
 #     python run_pipeline_catboost.py --production --gpu --residual-target --hybrid-norm \
-#     --results results_catboost_prod
+#     --results results/production/catboost_with_news
 
 # ============================================================
 echo ""
 echo "============================================================"
 echo "  DONE — $(date)"
-echo "  Логи: $LOGS/"
-echo ""
-echo "  Сравнить результаты:"
-echo "    grep -h 'LS_DDStop_Sharpe\|Rank_IC\|window' results_v6_*/all_results_v6.json"
+echo "  Experiment: ${EXP_NAME}"
+echo "  Results:    ${EXP_DIR}/"
+echo "  Logs:       ${LOGS}/"
 echo "============================================================"

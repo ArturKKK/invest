@@ -201,11 +201,10 @@ def main():
 
     if args.ensemble:
         # Load LGB v6, v7 and CatBoost models (prefer *_prod if available)
-        for d in ["results_v6", "results_v7"]:
-            p = os.path.join(root, d + "_prod")
-            if not os.path.isdir(p):
-                p = os.path.join(root, d)
-            if os.path.isdir(p):
+        for d in ["results/production/lgb_v6_no_news", "results/production/lgb_v7_no_news",
+                  "results_v6_prod", "results_v6", "results_v7_prod", "results_v7"]:
+            p = os.path.join(root, d)
+            if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
                 ms = load_lgb_models(p)
                 if ms:
                     mf_g = ms[0].feature_name()
@@ -215,9 +214,13 @@ def main():
                     label = "PROD" if "_prod" in p else "research"
                     print(f"   {os.path.basename(p)}: {len(ms)} LGB models, {len(mf_g)} feats [{label}]")
         # CatBoost ensemble member
-        cb_dir = os.path.join(root, "results_catboost_prod")
-        if not os.path.isdir(cb_dir):
-            cb_dir = os.path.join(root, "results_catboost")
+        cb_dir = None
+        for _cb in ["results/production/catboost_with_news", "results_catboost_prod", "results_catboost"]:
+            _p = os.path.join(root, _cb)
+            if os.path.isdir(_p):
+                cb_dir = _p; break
+        if not cb_dir:
+            cb_dir = os.path.join(root, "results/production/catboost_with_news")
         if os.path.isdir(cb_dir):
             try:
                 ms = load_catboost_models(cb_dir)
@@ -235,9 +238,13 @@ def main():
             except ImportError:
                 print("   ⚠️  catboost not installed, skipping CatBoost models")
         # XGBoost + News Interactions ensemble member
-        xgb_dir = os.path.join(root, "results_xgboost_prod")
-        if not os.path.isdir(xgb_dir):
-            xgb_dir = os.path.join(root, "results_xgboost")
+        xgb_dir = None
+        for _xd in ["results/production/xgboost", "results_xgboost_prod", "results_xgboost"]:
+            _p = os.path.join(root, _xd)
+            if os.path.isdir(_p):
+                xgb_dir = _p; break
+        if not xgb_dir:
+            xgb_dir = os.path.join(root, "results/production/xgboost")
         if os.path.isdir(xgb_dir):
             try:
                 from run_trading import load_xgboost_models
@@ -260,12 +267,13 @@ def main():
     else:
         model_dir = args.model_dir
         if not model_dir:
-            for d in ["results_v8", "results_v7", "results_v6"]:
+            for d in ["results/production/lgb_v7_no_news", "results/production/lgb_v6_no_news",
+                      "results_v7", "results_v6"]:
                 p = os.path.join(root, d)
                 if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
                     model_dir = p; break
         if not model_dir:
-            model_dir = os.path.join(root, "results_v6")
+            model_dir = os.path.join(root, "results/production/lgb_v6_no_news")
         models = load_lgb_models(model_dir)
         if not models:
             print("❌ no models"); return
