@@ -535,7 +535,10 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None, worker
         results = []
         lock = threading.Lock()
         stop_event = threading.Event()
-        _fetch_worker(0, start_ts, cutoff_ts, api_key, delay, results, lock, stop_event)
+        try:
+            _fetch_worker(0, start_ts, cutoff_ts, api_key, delay, results, lock, stop_event)
+        except KeyboardInterrupt:
+            print("\n   ⚠️  Interrupted! Saving checkpoint...")
         
         # Checkpoint
         if results:
