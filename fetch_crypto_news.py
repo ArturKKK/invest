@@ -163,20 +163,30 @@ def _save_checkpoint(all_news):
 
 def _load_checkpoint():
     """
-    Load best available data for resume: checkpoint > raw_news.
+    Load best available data: merge checkpoint + raw_news to avoid data loss.
     Returns (DataFrame, oldest_timestamp) or (None, None).
     """
-    # Prefer checkpoint (more data from interrupted runs)
+    frames = []
     for path in [CHECKPOINT_PATH, RAW_NEWS_PATH]:
         if os.path.exists(path):
-            df = pd.read_parquet(path)
-            if len(df) > 0 and "published_on" in df.columns:
-                oldest_ts = int(df["published_on"].min())
-                oldest_date = datetime.fromtimestamp(oldest_ts, tz=timezone.utc)
-                print(f"   📂 Found {len(df):,} items in {os.path.basename(path)}, "
-                      f"oldest: {oldest_date.strftime('%Y-%m-%d')}")
-                return df, oldest_ts
-    return None, None
+            try:
+                df = pd.read_parquet(path)
+                if len(df) > 0 and "published_on" in df.columns:
+                    print(f"   📂 Found {len(df):,} items in {os.path.basename(path)}, "
+                          f"oldest: {datetime.fromtimestamp(int(df['published_on'].min()), tz=timezone.utc).strftime('%Y-%m-%d')}")
+                    frames.append(df)
+            except Exception as e:
+                print(f"   ⚠️  Failed to read {path}: {e}")
+    
+    if not frames:
+        return None, None
+    
+    # Merge and deduplicate
+    merged = pd.concat(frames, ignore_index=True)
+    merged = merged.drop_duplicates(subset=["title", "published_on"], keep="first")
+    oldest_ts = int(merged["published_on"].min())
+    print(f"   📂 Merged total: {len(merged):,} unique items")
+    return merged, oldest_ts
 
 
 # ─── Sentiment Scorers ─────────────────────────────────────────────
@@ -1232,6 +1242,15 @@ def main():
                             )
                             cc_news.extend(gap_news)
                             print(f"     ✅ Got {len(gap_news):,} items for this gap")
+                        # Save gap-fill results immediately so they survive ^C in tail fetch
+                        if cc_news:
+                            save_merged = pd.concat([existing_df, pd.DataFrame(cc_news)], ignore_index=True)
+                            save_merged = save_merged.drop_duplicates(subset=["title", "published_on"], keep="first")
+                            save_merged.to_parquet(CHECKPOINT_PATH, index=False)
+                            print(f"   💾 Saved {len(save_merged):,} items (existing + gaps) → checkpoint")
+                            # Update existing_df so tail fetch merges correctly
+                            existing_df = save_merged
+                            checkpoint_df = save_merged
                     else:
                         print("✅ No internal gaps found!")
                 # ── End fill gaps ─────────────────────────────────
