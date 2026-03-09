@@ -482,6 +482,10 @@ def _fetch_worker(worker_id, start_ts, cutoff_ts, api_key, delay, results_list, 
                 oldest_date = datetime.fromtimestamp(oldest_ts, tz=timezone.utc)
                 print(f"   {tag} Page {page}: {len(local_news):,} news, "
                       f"oldest: {oldest_date.strftime('%Y-%m-%d')}")
+                # Flush to shared results periodically so checkpoint can save them
+                with lock:
+                    results_list.extend(local_news)
+                local_news = []
             
             time.sleep(delay)
             
