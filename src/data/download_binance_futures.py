@@ -1,32 +1,45 @@
 #!/usr/bin/env python3
 """
-Download derivatives data from Binance Futures (public endpoints, no API key).
+Download derivatives data from Binance Futures (public, no API key needed).
 
-Data sources:
-1. Open Interest history — hourly, paginated (500 per request, ~months back)
-2. Taker Buy/Sell Volume — hourly, same pagination
-3. Top Trader Long/Short Ratio (accounts) — hourly
-4. Top Trader Long/Short Ratio (positions) — hourly
+Two data sources combined:
+  A) data.binance.vision — bulk CSV zips, 5min granularity, history from Dec 2021
+     Contains: OI, top-trader L/S, global L/S, taker buy/sell ratio per symbol
+  B) fapi.binance.com/fapi/v1/fundingRate — full funding rate history from Jan 2020
 
-Saves to data/sentiment/ alongside existing OKX data.
-Runs incrementally: loads existing parquet, fetches only new data.
+Strategy:
+  1. Download daily ZIP files from data.binance.vision for each symbol × each date
+  2. Resample 5min → 1h (OHLC for OI, mean for ratios)
+  3. Fetch Binance funding rates (8h frequency, since 2020)
+  4. Save everything to data/sentiment/binance_futures_metrics.parquet
+  5. Runs incrementally: skips dates that already exist in the parquet
+
+Output columns (per row = 1h × symbol):
+  - timestamp, symbol
+  - oi_value_usd (sum open interest value)
+  - top_ls_ratio, top_long_pct (top trader account long/short)
+  - global_ls_ratio, global_long_pct (all accounts)
+  - taker_buy_sell_ratio (taker volume ratio)
+  - funding_rate_binance (8h funding, forward-filled to 1h)
 
 Usage:
-  python src/data/download_binance_futures.py
-  python src/data/download_binance_futures.py --days 365  # fetch last 365 days
-  python src/data/download_binance_futures.py --symbol BTCUSDT  # single symbol
+  python src/data/download_binance_futures.py                    # full history
+  python src/data/download_binance_futures.py --start 2023-01-01 # from date
+  python src/data/download_binance_futures.py --symbol BTCUSDT   # single symbol
+  python src/data/download_binance_futures.py --skip-funding     # skip funding rates
 
-Note: These are /futures/data/* endpoints (analytics), NOT /fapi/v1/* (trading).
-      They work from most geos including Russia.
+Runtime: ~2-3 hours for full history (50 symbols × 1500+ days), ~1 min for daily update.
 """
 
 import os
 import sys
 import time
-import json
+import io
+import zipfile
 import argparse
 import warnings
 from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import numpy as np
@@ -40,9 +53,16 @@ urllib3.disable_warnings()
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         '..', '..', 'data', 'sentiment')
 
-BASE_URL = "https://fapi.binance.com"
+VISION_BASE = "https://data.binance.vision/data/futures/um/daily/metrics"
+FAPI_BASE = "https://fapi.binance.com"
 
-# All 50 symbols (futures use no slash: BTCUSDT)
+OUTPUT_FILE = 'binance_futures_metrics.parquet'
+FUNDING_FILE = 'binance_funding_rates.parquet'
+
+# Earliest date on data.binance.vision for metrics
+VISION_START = datetime(2021, 12, 1, tzinfo=timezone.utc)
+
+# All 50 symbols (futures format: BTCUSDT)
 SYMBOLS = [
     'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
     'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'LINKUSDT',
@@ -56,247 +76,226 @@ SYMBOLS = [
     'IOTAUSDT', 'ICXUSDT', 'ENSUSDT', 'IMXUSDT', 'GALAUSDT',
 ]
 
-# Map Binance symbol → our format (for merging with OHLCV data)
+
 def to_our_symbol(binance_sym: str) -> str:
     """BTCUSDT → BTC/USDT"""
     return binance_sym.replace('USDT', '/USDT')
 
-RATE_LIMIT_SLEEP = 0.12   # ~8 req/s (Binance limit ~10/s for public)
-MAX_RETRIES = 3
+
+# ── Part A: data.binance.vision bulk downloads ────────────────
+
+def download_day_zip(symbol: str, date: datetime) -> pd.DataFrame | None:
+    """Download one day's metrics zip for a symbol. Returns DataFrame or None."""
+    date_str = date.strftime('%Y-%m-%d')
+    url = f"{VISION_BASE}/{symbol}/{symbol}-metrics-{date_str}.zip"
+
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=20, verify=False)
+            if resp.status_code == 404:
+                return None  # no data for this symbol/date (e.g. futures not yet listed)
+            if resp.status_code == 200:
+                zf = zipfile.ZipFile(io.BytesIO(resp.content))
+                csv_name = zf.namelist()[0]
+                df = pd.read_csv(io.BytesIO(zf.read(csv_name)))
+                return df
+            if resp.status_code == 429:
+                time.sleep(5)
+                continue
+        except Exception:
+            time.sleep(2 ** attempt)
+
+    return None
 
 
-# ── generic paginated fetcher ─────────────────────────────────
-def fetch_paginated(endpoint: str, symbol: str, period: str = '1h',
-                    limit: int = 500, start_ms: int = None,
-                    end_ms: int = None) -> list[dict]:
-    """Fetch paginated data from Binance Futures analytics endpoint.
+def process_day_csv(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Parse raw 5min CSV into 1h resampled metrics.
 
-    Paginates backward from end_ms (or now) to start_ms.
-    Returns list of dicts with raw JSON data.
+    Columns in raw CSV:
+      create_time, symbol,
+      sum_open_interest, sum_open_interest_value,
+      count_toptrader_long_short_ratio, sum_toptrader_long_short_ratio,
+      count_long_short_ratio, sum_taker_long_short_vol_ratio
     """
-    url = BASE_URL + endpoint
-    all_records = []
-    current_end = end_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
+    df['timestamp'] = pd.to_datetime(df['create_time'], utc=True)
+    df = df.sort_values('timestamp')
 
-    while True:
-        params = {
-            'symbol': symbol,
-            'period': period,
-            'limit': limit,
-            'endTime': current_end,
-        }
-        if start_ms:
-            params['startTime'] = start_ms
+    # Parse numeric columns (some may be strings)
+    num_cols = {
+        'sum_open_interest_value': 'oi_value_usd',
+        'sum_toptrader_long_short_ratio': 'top_ls_ratio',
+        'count_toptrader_long_short_ratio': 'top_long_pct',
+        'count_long_short_ratio': 'global_ls_ratio',
+        'sum_taker_long_short_vol_ratio': 'taker_buy_sell_ratio',
+    }
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = requests.get(url, params=params, timeout=20, verify=False)
-                if resp.status_code == 429:
-                    # Rate limited — back off
-                    time.sleep(5)
-                    continue
-                if resp.status_code == 418:
-                    # IP banned — long backoff
-                    print(f"\n   ⚠️  IP temp-banned, sleeping 60s...")
-                    time.sleep(60)
-                    continue
-                if resp.status_code != 200:
-                    # Some symbols may not have futures (404/400)
-                    return all_records
-                data = resp.json()
-                break
-            except Exception as e:
-                if attempt == MAX_RETRIES - 1:
-                    return all_records
-                time.sleep(2 ** attempt)
+    result = pd.DataFrame()
+    result['timestamp'] = df['timestamp']
+
+    for src, dst in num_cols.items():
+        if src in df.columns:
+            result[dst] = pd.to_numeric(df[src], errors='coerce')
+
+    result = result.set_index('timestamp')
+
+    # Resample 5min → 1h
+    # OI: take last value in the hour (snapshot)
+    # Ratios: take mean over the hour
+    agg_rules = {}
+    if 'oi_value_usd' in result.columns:
+        agg_rules['oi_value_usd'] = 'last'
+    for col in ['top_ls_ratio', 'top_long_pct', 'global_ls_ratio', 'taker_buy_sell_ratio']:
+        if col in result.columns:
+            agg_rules[col] = 'mean'
+
+    hourly = result.resample('1h').agg(agg_rules).dropna(how='all')
+    hourly = hourly.reset_index()
+    hourly['symbol'] = to_our_symbol(symbol)
+
+    # Derive top_long_pct from the count ratio
+    # count_toptrader_long_short_ratio = longAccount / shortAccount count
+    # top_long_pct = long_count / (long_count + short_count) = ratio / (1 + ratio)
+    if 'top_long_pct' in hourly.columns:
+        r = hourly['top_long_pct']
+        hourly['top_long_pct'] = r / (1 + r)  # convert ratio to percentage
+
+    # Similarly for global
+    if 'global_ls_ratio' in hourly.columns:
+        hourly['global_long_pct'] = hourly['global_ls_ratio'] / (1 + hourly['global_ls_ratio'])
+
+    return hourly
+
+
+def download_metrics_bulk(symbols: list, start_date: datetime, end_date: datetime,
+                          existing_dates_per_symbol: dict = None,
+                          max_workers: int = 8) -> pd.DataFrame:
+    """Download all metric zips from data.binance.vision.
+
+    Uses ThreadPoolExecutor for parallel downloads per-symbol.
+    Skips dates already in existing_dates_per_symbol.
+    """
+    all_dates = []
+    d = max(start_date, VISION_START)
+    while d <= end_date:
+        all_dates.append(d)
+        d += timedelta(days=1)
+
+    print(f"\n📊 Downloading metrics from data.binance.vision")
+    print(f"   {len(symbols)} symbols × {len(all_dates)} days = "
+          f"{len(symbols) * len(all_dates):,} potential downloads")
+
+    if existing_dates_per_symbol:
+        total_skip = sum(len(v) for v in existing_dates_per_symbol.values())
+        print(f"   Skipping ~{total_skip:,} already-downloaded symbol-days")
+
+    all_dfs = []
+    total = len(symbols)
+    errors = 0
+
+    for sym_idx, sym in enumerate(symbols):
+        # Determine which dates to fetch for this symbol
+        existing = existing_dates_per_symbol.get(to_our_symbol(sym), set()) if existing_dates_per_symbol else set()
+        dates_to_fetch = [d for d in all_dates if d.strftime('%Y-%m-%d') not in existing]
+
+        if not dates_to_fetch:
+            sys.stdout.write(f"\r   [{sym_idx+1}/{total}] {sym}: all {len(all_dates)} days cached")
+            sys.stdout.flush()
+            continue
+
+        sym_dfs = []
+
+        def _fetch(date):
+            return date, download_day_zip(sym, date)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_fetch, d): d for d in dates_to_fetch}
+            for future in as_completed(futures):
+                try:
+                    date, raw_df = future.result()
+                    if raw_df is not None:
+                        hourly = process_day_csv(raw_df, sym)
+                        sym_dfs.append(hourly)
+                except Exception:
+                    errors += 1
+
+        if sym_dfs:
+            sym_combined = pd.concat(sym_dfs, ignore_index=True)
+            all_dfs.append(sym_combined)
+            n_rows = len(sym_combined)
         else:
-            break
+            n_rows = 0
 
-        if not data:
-            break
-
-        all_records.extend(data)
-
-        # Binance returns oldest→newest; paginate backward
-        oldest_ts = min(int(r.get('timestamp', r.get('createTime', 0))) for r in data)
-        if start_ms and oldest_ts <= start_ms:
-            break
-        if len(data) < limit:
-            break  # no more data
-
-        current_end = oldest_ts - 1
-        time.sleep(RATE_LIMIT_SLEEP)
-
-    return all_records
-
-
-# ── 1. Open Interest History ──────────────────────────────────
-def download_oi_history(symbols: list, start_ms: int, end_ms: int) -> pd.DataFrame | None:
-    """
-    Endpoint: /futures/data/openInterestHist
-    Returns: symbol, sumOpenInterest, sumOpenInterestValue, timestamp
-    Period: 1h
-    """
-    print(f"\n📊 Downloading Open Interest history ({len(symbols)} symbols)...")
-
-    all_dfs = []
-    for i, sym in enumerate(symbols):
-        records = fetch_paginated(
-            '/futures/data/openInterestHist',
-            symbol=sym, period='1h', limit=500,
-            start_ms=start_ms, end_ms=end_ms,
+        sys.stdout.write(
+            f"\r   [{sym_idx+1}/{total}] {sym}: {len(dates_to_fetch)} days → "
+            f"{n_rows} hourly rows ({len(all_dates)-len(dates_to_fetch)} cached)   "
         )
-        if records:
-            df = pd.DataFrame(records)
-            df['symbol'] = to_our_symbol(sym)
-            df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms', utc=True)
-            df['open_interest'] = df['sumOpenInterest'].astype(float)
-            df['oi_value_usd'] = df['sumOpenInterestValue'].astype(float)
-            df = df[['timestamp', 'symbol', 'open_interest', 'oi_value_usd']]
-            df = df.drop_duplicates(['timestamp', 'symbol']).sort_values('timestamp')
-            all_dfs.append(df)
-
-        sys.stdout.write(f"\r   [{i+1}/{len(symbols)}] {sym}: {len(records)} records   ")
         sys.stdout.flush()
-        time.sleep(RATE_LIMIT_SLEEP)
 
-    print()
+    print(f"\n   Download complete. Errors: {errors}")
+
     if not all_dfs:
-        print("   ❌ No OI data downloaded")
-        return None
+        return pd.DataFrame()
 
-    result = pd.concat(all_dfs, ignore_index=True).sort_values(['symbol', 'timestamp'])
-    print(f"   ✅ {len(result):,} rows, {result['symbol'].nunique()} symbols")
-    print(f"   Range: {result['timestamp'].min()} → {result['timestamp'].max()}")
+    result = pd.concat(all_dfs, ignore_index=True)
+    result = result.sort_values(['symbol', 'timestamp']).reset_index(drop=True)
+    print(f"   ✅ {len(result):,} new rows, {result['symbol'].nunique()} symbols")
     return result
 
 
-# ── 2. Taker Buy/Sell Volume ─────────────────────────────────
-def download_taker_volume(symbols: list, start_ms: int, end_ms: int) -> pd.DataFrame | None:
-    """
-    Endpoint: /futures/data/takerlongshortRatio
-    Returns: buySellRatio, sellVol, buyVol, timestamp
-    Period: 1h
+# ── Part B: Binance funding rates ─────────────────────────────
 
-    buySellRatio = buyVol / sellVol
-    We store both raw volumes + ratio.
+def download_funding_rates(symbols: list, start_date: datetime) -> pd.DataFrame:
+    """Download funding rate history from fapi/v1/fundingRate.
+
+    This endpoint supports startTime and has full history back to Jan 2020.
+    Funding is every 8h; we keep the raw 8h frequency (pipeline will merge).
     """
-    print(f"\n📊 Downloading Taker Buy/Sell Volume ({len(symbols)} symbols)...")
+    print(f"\n📊 Downloading Binance funding rates ({len(symbols)} symbols)...")
+    start_ms = int(start_date.timestamp() * 1000)
 
     all_dfs = []
     for i, sym in enumerate(symbols):
-        records = fetch_paginated(
-            '/futures/data/takerlongshortRatio',
-            symbol=sym, period='1h', limit=500,
-            start_ms=start_ms, end_ms=end_ms,
-        )
+        url = f"{FAPI_BASE}/fapi/v1/fundingRate"
+        records = []
+        current_start = start_ms
+
+        while True:
+            try:
+                resp = requests.get(url, params={
+                    'symbol': sym, 'startTime': current_start, 'limit': 1000
+                }, timeout=15, verify=False)
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                if not data:
+                    break
+                records.extend(data)
+                # Continue from after the last funding time
+                last_ts = max(int(r['fundingTime']) for r in data)
+                if last_ts <= current_start:
+                    break
+                current_start = last_ts + 1
+                time.sleep(0.1)
+            except Exception:
+                break
+
         if records:
             df = pd.DataFrame(records)
+            df['timestamp'] = pd.to_datetime(df['fundingTime'].astype(int), unit='ms', utc=True)
             df['symbol'] = to_our_symbol(sym)
-            df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms', utc=True)
-            df['taker_buy_sell_ratio'] = df['buySellRatio'].astype(float)
-            df['taker_buy_vol'] = df['buyVol'].astype(float)
-            df['taker_sell_vol'] = df['sellVol'].astype(float)
-            df = df[['timestamp', 'symbol', 'taker_buy_sell_ratio',
-                     'taker_buy_vol', 'taker_sell_vol']]
-            df = df.drop_duplicates(['timestamp', 'symbol']).sort_values('timestamp')
+            df['funding_rate_binance'] = df['fundingRate'].astype(float)
+            df = df[['timestamp', 'symbol', 'funding_rate_binance']]
+            df = df.drop_duplicates(['timestamp', 'symbol'])
             all_dfs.append(df)
 
-        sys.stdout.write(f"\r   [{i+1}/{len(symbols)}] {sym}: {len(records)} records   ")
+        sys.stdout.write(f"\r   [{i+1}/{len(symbols)}] {sym}: {len(records)} funding records   ")
         sys.stdout.flush()
-        time.sleep(RATE_LIMIT_SLEEP)
+        time.sleep(0.05)
 
     print()
     if not all_dfs:
-        print("   ❌ No taker volume data downloaded")
-        return None
-
-    result = pd.concat(all_dfs, ignore_index=True).sort_values(['symbol', 'timestamp'])
-    print(f"   ✅ {len(result):,} rows, {result['symbol'].nunique()} symbols")
-    print(f"   Range: {result['timestamp'].min()} → {result['timestamp'].max()}")
-    return result
-
-
-# ── 3. Top Trader Long/Short Ratio (accounts) ────────────────
-def download_top_ls_account(symbols: list, start_ms: int, end_ms: int) -> pd.DataFrame | None:
-    """
-    Endpoint: /futures/data/topLongShortAccountRatio
-    Returns: longShortRatio, longAccount, shortAccount, timestamp
-    Period: 1h
-    """
-    print(f"\n📊 Downloading Top Trader L/S Ratio (accounts) ({len(symbols)} symbols)...")
-
-    all_dfs = []
-    for i, sym in enumerate(symbols):
-        records = fetch_paginated(
-            '/futures/data/topLongShortAccountRatio',
-            symbol=sym, period='1h', limit=500,
-            start_ms=start_ms, end_ms=end_ms,
-        )
-        if records:
-            df = pd.DataFrame(records)
-            df['symbol'] = to_our_symbol(sym)
-            df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms', utc=True)
-            df['top_ls_ratio'] = df['longShortRatio'].astype(float)
-            df['top_long_pct'] = df['longAccount'].astype(float)
-            df['top_short_pct'] = df['shortAccount'].astype(float)
-            df = df[['timestamp', 'symbol', 'top_ls_ratio', 'top_long_pct', 'top_short_pct']]
-            df = df.drop_duplicates(['timestamp', 'symbol']).sort_values('timestamp')
-            all_dfs.append(df)
-
-        sys.stdout.write(f"\r   [{i+1}/{len(symbols)}] {sym}: {len(records)} records   ")
-        sys.stdout.flush()
-        time.sleep(RATE_LIMIT_SLEEP)
-
-    print()
-    if not all_dfs:
-        print("   ❌ No top trader L/S data downloaded")
-        return None
-
-    result = pd.concat(all_dfs, ignore_index=True).sort_values(['symbol', 'timestamp'])
-    print(f"   ✅ {len(result):,} rows, {result['symbol'].nunique()} symbols")
-    print(f"   Range: {result['timestamp'].min()} → {result['timestamp'].max()}")
-    return result
-
-
-# ── 4. Global Long/Short Ratio ───────────────────────────────
-def download_global_ls(symbols: list, start_ms: int, end_ms: int) -> pd.DataFrame | None:
-    """
-    Endpoint: /futures/data/globalLongShortAccountRatio
-    Returns: longShortRatio, longAccount, shortAccount, timestamp
-    Period: 1h
-
-    This is the GLOBAL (all traders) ratio, vs top-trader above.
-    """
-    print(f"\n📊 Downloading Global L/S Ratio ({len(symbols)} symbols)...")
-
-    all_dfs = []
-    for i, sym in enumerate(symbols):
-        records = fetch_paginated(
-            '/futures/data/globalLongShortAccountRatio',
-            symbol=sym, period='1h', limit=500,
-            start_ms=start_ms, end_ms=end_ms,
-        )
-        if records:
-            df = pd.DataFrame(records)
-            df['symbol'] = to_our_symbol(sym)
-            df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms', utc=True)
-            df['global_ls_ratio'] = df['longShortRatio'].astype(float)
-            df['global_long_pct'] = df['longAccount'].astype(float)
-            df['global_short_pct'] = df['shortAccount'].astype(float)
-            df = df[['timestamp', 'symbol', 'global_ls_ratio',
-                     'global_long_pct', 'global_short_pct']]
-            df = df.drop_duplicates(['timestamp', 'symbol']).sort_values('timestamp')
-            all_dfs.append(df)
-
-        sys.stdout.write(f"\r   [{i+1}/{len(symbols)}] {sym}: {len(records)} records   ")
-        sys.stdout.flush()
-        time.sleep(RATE_LIMIT_SLEEP)
-
-    print()
-    if not all_dfs:
-        print("   ❌ No global L/S data downloaded")
-        return None
+        print("   ❌ No funding data")
+        return pd.DataFrame()
 
     result = pd.concat(all_dfs, ignore_index=True).sort_values(['symbol', 'timestamp'])
     print(f"   ✅ {len(result):,} rows, {result['symbol'].nunique()} symbols")
@@ -305,77 +304,101 @@ def download_global_ls(symbols: list, start_ms: int, end_ms: int) -> pd.DataFram
 
 
 # ── incremental save ──────────────────────────────────────────
-def save_incremental(new_df: pd.DataFrame, filename: str, key_cols: list):
-    """Merge new data with existing parquet, dedup by key_cols, save."""
+
+def save_incremental(new_df: pd.DataFrame, filename: str):
+    """Merge new data with existing parquet, dedup, save."""
     path = os.path.join(DATA_DIR, filename)
+    key_cols = ['timestamp', 'symbol']
+
     if os.path.exists(path):
         existing = pd.read_parquet(path)
         existing['timestamp'] = pd.to_datetime(existing['timestamp'], utc=True)
         combined = pd.concat([existing, new_df], ignore_index=True)
         combined = combined.drop_duplicates(key_cols, keep='last')
         n_new = len(combined) - len(existing)
-        print(f"   💾 {filename}: {len(existing):,} existing + {n_new:,} new = {len(combined):,}")
+        print(f"   💾 {filename}: {len(existing):,} + {n_new:,} new = {len(combined):,}")
     else:
         combined = new_df
-        print(f"   💾 {filename}: {len(combined):,} rows (new file)")
+        print(f"   💾 {filename}: {len(combined):,} rows (new)")
 
     combined = combined.sort_values(key_cols).reset_index(drop=True)
     combined.to_parquet(path, index=False)
     return combined
 
 
+def get_existing_dates(filename: str) -> dict[str, set]:
+    """Get set of date strings per symbol already in the parquet."""
+    path = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(path):
+        return {}
+
+    df = pd.read_parquet(path, columns=['timestamp', 'symbol'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+    df['date_str'] = df['timestamp'].dt.strftime('%Y-%m-%d')
+
+    result = {}
+    for sym, group in df.groupby('symbol'):
+        result[sym] = set(group['date_str'].unique())
+
+    return result
+
+
 # ── main ──────────────────────────────────────────────────────
+
 def main():
-    parser = argparse.ArgumentParser(description="Download Binance Futures data")
-    parser.add_argument('--days', type=int, default=180,
-                        help="Days of history to fetch (default: 180)")
+    parser = argparse.ArgumentParser(description="Download Binance Futures derivatives data")
+    parser.add_argument('--start', type=str, default='2021-12-01',
+                        help="Start date YYYY-MM-DD (default: 2021-12-01, earliest available)")
     parser.add_argument('--symbol', type=str, default=None,
-                        help="Single symbol to fetch (e.g. BTCUSDT)")
-    parser.add_argument('--skip-oi', action='store_true')
-    parser.add_argument('--skip-taker', action='store_true')
-    parser.add_argument('--skip-ls', action='store_true')
+                        help="Single symbol (e.g. BTCUSDT)")
+    parser.add_argument('--skip-funding', action='store_true',
+                        help="Skip funding rate download")
+    parser.add_argument('--skip-metrics', action='store_true',
+                        help="Skip OI/LS/taker metrics download")
+    parser.add_argument('--workers', type=int, default=8,
+                        help="Parallel download threads per symbol (default: 8)")
     args = parser.parse_args()
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
     symbols = [args.symbol] if args.symbol else SYMBOLS
-    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    start_ms = int((datetime.now(timezone.utc) - timedelta(days=args.days)).timestamp() * 1000)
+    start_date = datetime.strptime(args.start, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+    end_date = datetime.now(timezone.utc) - timedelta(days=1)  # yesterday (today's zip not ready yet)
 
     print("=" * 70)
-    print("  BINANCE FUTURES DATA DOWNLOADER")
-    print(f"  {len(symbols)} symbols, last {args.days} days")
-    print(f"  {datetime.utcfromtimestamp(start_ms/1000):%Y-%m-%d} → "
-          f"{datetime.utcfromtimestamp(end_ms/1000):%Y-%m-%d}")
+    print("  BINANCE FUTURES DATA DOWNLOADER (data.binance.vision + API)")
+    print(f"  {len(symbols)} symbols")
+    print(f"  Metrics: {start_date:%Y-%m-%d} → {end_date:%Y-%m-%d} ({(end_date-start_date).days} days)")
+    print(f"  Funding: {'skip' if args.skip_funding else f'{start_date:%Y-%m-%d} → now'}")
     print("=" * 70)
 
-    # 1. Open Interest
-    if not args.skip_oi:
-        oi = download_oi_history(symbols, start_ms, end_ms)
-        if oi is not None:
-            save_incremental(oi, 'binance_open_interest.parquet',
-                           ['timestamp', 'symbol'])
+    # ── 1. Metrics (OI, L/S, taker) from data.binance.vision ──
+    if not args.skip_metrics:
+        existing = get_existing_dates(OUTPUT_FILE)
+        new_metrics = download_metrics_bulk(
+            symbols, start_date, end_date,
+            existing_dates_per_symbol=existing,
+            max_workers=args.workers,
+        )
+        if len(new_metrics) > 0:
+            save_incremental(new_metrics, OUTPUT_FILE)
 
-    # 2. Taker volume
-    if not args.skip_taker:
-        taker = download_taker_volume(symbols, start_ms, end_ms)
-        if taker is not None:
-            save_incremental(taker, 'binance_taker_volume.parquet',
-                           ['timestamp', 'symbol'])
+    # ── 2. Funding rates from API ─────────────────────────────
+    if not args.skip_funding:
+        # Always start from 2020 for funding (full history available)
+        funding_start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        # Check existing funding data to start from where we left off
+        funding_path = os.path.join(DATA_DIR, FUNDING_FILE)
+        if os.path.exists(funding_path):
+            existing_funding = pd.read_parquet(funding_path)
+            last_ts = pd.to_datetime(existing_funding['timestamp']).max()
+            if pd.notna(last_ts):
+                funding_start = last_ts.to_pydatetime().replace(tzinfo=timezone.utc)
+                print(f"\n   Funding: resuming from {funding_start:%Y-%m-%d %H:%M}")
 
-    # 3. Top trader L/S ratio
-    if not args.skip_ls:
-        top_ls = download_top_ls_account(symbols, start_ms, end_ms)
-        if top_ls is not None:
-            save_incremental(top_ls, 'binance_top_ls_ratio.parquet',
-                           ['timestamp', 'symbol'])
-
-    # 4. Global L/S ratio
-    if not args.skip_ls:
-        global_ls = download_global_ls(symbols, start_ms, end_ms)
-        if global_ls is not None:
-            save_incremental(global_ls, 'binance_global_ls_ratio.parquet',
-                           ['timestamp', 'symbol'])
+        funding = download_funding_rates(symbols, funding_start)
+        if len(funding) > 0:
+            save_incremental(funding, FUNDING_FILE)
 
     # ── Summary ───────────────────────────────────────────────
     print(f"\n{'='*70}")
@@ -384,13 +407,14 @@ def main():
     for f in sorted(os.listdir(DATA_DIR)):
         if f.startswith('binance_') and f.endswith('.parquet'):
             p = os.path.join(DATA_DIR, f)
-            size = os.path.getsize(p) / 1024
+            size_mb = os.path.getsize(p) / 1024 / 1024
             df_tmp = pd.read_parquet(p)
             nsym = df_tmp['symbol'].nunique() if 'symbol' in df_tmp.columns else 0
             ts_min = pd.to_datetime(df_tmp['timestamp']).min()
             ts_max = pd.to_datetime(df_tmp['timestamp']).max()
-            print(f"   {f}: {len(df_tmp):,} rows, {nsym} symbols, "
-                  f"{ts_min:%Y-%m-%d} → {ts_max:%Y-%m-%d} ({size:.0f} KB)")
+            print(f"   {f}")
+            print(f"      {len(df_tmp):,} rows, {nsym} syms, "
+                  f"{ts_min:%Y-%m-%d} → {ts_max:%Y-%m-%d} ({size_mb:.1f} MB)")
 
 
 if __name__ == '__main__':

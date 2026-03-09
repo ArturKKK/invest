@@ -575,6 +575,7 @@ TSZSCORE_COLS = {
     'funding_surprise',
     'top_ls_change_12h', 'top_ls_change_24h', 'top_ls_zscore',
     'ls_divergence',
+    'funding_rate_binance',
 }
 
 
