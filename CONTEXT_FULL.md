@@ -349,6 +349,29 @@ results/archive/            — Старые эксперименты (exp02-exp
 | 11 | 9 Мар | Binance Futures derivatives data | Скачано: OI, taker, L/S, funding с Dec 2021 (data.binance.vision). 50 символов, 1.8M строк metrics + 294K funding. Новые фичи добавлены в pipeline. | ✅ Данные есть |
 | 12 | 10 Мар | exp11_ablation — derivatives A/B | **v7_baseline DDStop 2.12 (+42% vs exp10)**, v6_res_hyb_null 1.64, CatBoost 1.54. Derivatives МАССИВНО помогают LGB. | ✅ Задокументировано |
 | 13 | 10 Мар | News data gap-fill | 950k статей, 67/67 месяцев ≥3000 шт. Готово для exp12. | ✅ Данные готовы |
+| 14 | 10 Мар | AI Architecture Review | Внешний AI: meta-model risk scaler, LambdaRank, derivatives-only, vol targeting, short constraints | ✅ Рекомендации записаны |
+| 15 | 10 Мар | Реализация п.1-4: LambdaRank, short-blocked, derivatives-only pipeline | Код написан, тестируется на кластере (exp12) | ⏳ Ждём результаты |
+| 16 | 10 Мар | Реализация п.5-6: meta-risk + vol targeting | A/B тест на старых моделях — **meta-risk Sharpe +57%** vs baseline. Подробности ниже. | ✅ Задокументировано |
+
+### Результаты A/B теста meta-risk + vol targeting (10 марта 2026)
+
+**Условия**: 365 дней, offline данные (crypto_features_1h.parquet), production модели (старые, без derivatives). Ensemble v6+v7+CB, edge-boost, 1x leverage, rebal=12h.
+
+| Variant | Return | MaxDD | Sharpe | Sharpe HAC | Calmar | WR | PF | Avg meta-risk |
+|---------|--------|-------|--------|-----------|--------|----|----|---------------|
+| **baseline** (boost) | +34.4% | -23.1% | 0.56 | 0.55 | 1.49 | 54% | 1.06 | — |
+| **+meta-risk** | +51.1% | -25.4% | **0.88** | **0.88** | **2.01** | 54% | 1.09 | 1.25x |
+| **+vol-target 30%** | +27.8% | -27.7% | 0.69 | 0.68 | 1.00 | 55% | 1.07 | — |
+| **+meta+vol** | +39.4% | -27.8% | **0.93** | **0.92** | 1.42 | 55% | 1.10 | 1.23x |
+| **+meta+short-blocked** | +19.4% | -19.7% | 0.18 | 0.18 | 0.98 | 55% | 1.02 | 1.27x |
+
+**Выводы**:
+1. **Meta-risk — основной выигрыш**: Sharpe +57% (0.56→0.88), Return +49% (34→51%), Calmar +35%.
+2. **Vol targeting** добавляет меньше (+23% Sharpe), но улучшает WR на 1pp.
+3. **Вместе** дают лучший Sharpe (0.93) и WR (55%), но return ниже чем meta-risk alone.
+4. **Short-blocked** сильно режет прибыль (19.4% vs 51.1%) — OKX ограничения критичны.
+5. **Avg meta-risk scale ~1.25x** — система в среднем увеличивает позиции (модели уверены + рынок растёт).
+6. **Осторожно**: meta-risk scale 1.25x может быть overfitted к бычьему рынку. Перепроверить на bear-market окне.
 
 ### Подробные результаты exp10 — A/B тест news features (9 марта 2026)
 

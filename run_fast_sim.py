@@ -156,6 +156,9 @@ def main():
     ap.add_argument("--meta-risk", action="store_true",
                     help="Meta-model risk scaler: adjust gross exposure (0.3x-1.5x) based on "
                          "model agreement, regime, recent performance, score spread.")
+    ap.add_argument("--data", type=str, default=None,
+                    help="Path to pre-built features parquet (offline mode). "
+                         "If set, skips live fetch + feature engineering.")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -202,19 +205,58 @@ def main():
     print("=" * 70)
 
     # ── 1  data ───────────────────────────────────────────────────
-    print(f"\n📊 Fetching {total_h}h …")
-    raw = fetch_ohlcv(SYMBOLS, total_h)
-    if raw is None or len(raw) == 0:
-        print("❌ fetch failed"); return
-    print(f"   {raw.shape}, {raw['symbol'].nunique()} symbols")
+    if args.data:
+        # Offline mode: load pre-built features from parquet
+        print(f"\n📊 Loading offline data: {args.data}")
+        df = pd.read_parquet(args.data)
+        if 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+        # Ensure symbol column exists
+        if 'symbol' not in df.columns and df.index.names and 'symbol' in df.index.names:
+            df = df.reset_index()
+        print(f"   {df.shape}, {df['symbol'].nunique()} symbols")
+        print(f"   Date range: {df['timestamp'].min()} → {df['timestamp'].max()}")
 
-    # ── 2  features ───────────────────────────────────────────────
-    print("🔧 Features …")
-    df = build_features(raw)
-    fc = [c for c in df.columns if c not in EXCLUDE_COLS
-          and not c.startswith("target_")
-          and df[c].dtype in ("float64","float32","int64","int32")]
-    df = cross_sectional_rank(df, fc)
+        # Enrich with features computed at runtime (same as pipeline)
+        from run_pipeline_v6 import (
+            add_multi_horizon_targets, add_cross_asset_features,
+            add_advanced_regime_features, add_12h_features,
+            add_derivatives_features, add_sentiment_features,
+        )
+        print("   Enriching features (cross-asset, regime, 12h, sentiment, derivatives)...")
+        df = add_multi_horizon_targets(df)
+        df = add_cross_asset_features(df)
+        df = add_advanced_regime_features(df)
+        df = add_12h_features(df)
+        df = add_sentiment_features(df, root, news_mode='none')  # no news for LGB
+        df = add_derivatives_features(df, root)
+
+        # Clean infinities
+        for col in df.select_dtypes(include=[np.number]).columns:
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+
+        # Feature columns
+        fc = [c for c in df.columns if c not in EXCLUDE_COLS
+              and not c.startswith("target_")
+              and df[c].dtype in ("float64", "float32", "int64", "int32")]
+        df[fc] = df[fc].fillna(0)
+        df = cross_sectional_rank(df, fc)
+        print(f"   Final: {df.shape}, {len(fc)} features")
+
+    else:
+        print(f"\n📊 Fetching {total_h}h …")
+        raw = fetch_ohlcv(SYMBOLS, total_h)
+        if raw is None or len(raw) == 0:
+            print("❌ fetch failed"); return
+        print(f"   {raw.shape}, {raw['symbol'].nunique()} symbols")
+
+        # ── 2  features ───────────────────────────────────────────
+        print("🔧 Features …")
+        df = build_features(raw)
+        fc = [c for c in df.columns if c not in EXCLUDE_COLS
+              and not c.startswith("target_")
+              and df[c].dtype in ("float64","float32","int64","int32")]
+        df = cross_sectional_rank(df, fc)
 
     # ── 3  models ─────────────────────────────────────────────────
     print("📡 Models …")
