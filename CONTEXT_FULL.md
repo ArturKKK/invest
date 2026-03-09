@@ -246,16 +246,16 @@ results/archive/            — Старые эксперименты (exp02-exp
 4. ⏳ **Short constraints в симуляции** — 19/50 монет нельзя шортить на OKX demo. Сим должен это отражать.
 
 #### Следующий приоритет:
-5. ⬜ **Meta-model как risk scaler** (НЕ stacking)
-   - Не "торгуем/не торгуем", а управляет **gross exposure** (0.3x…1.5x)
-   - LogReg/маленький GBDT на OOF predictions: mean_pred, std, |LGB-CB|, regime, dispersion, funding-stress
-   - Требует walk-forward OOF predictions
-   - **Ожидаемый эффект**: WR +3-5%, MaxDD↓
+5. ⏳ **Meta-model как risk scaler** (НЕ stacking) — РЕАЛИЗОВАНО в run_fast_sim.py `--meta-risk`
+   - Управляет **gross exposure** (0.3x…1.5x) на основе 5 сигналов:
+   - Model agreement (confidence), score spread, recent WR, DD depth, regime
+   - Weighted composite → scale factor, applied ПОСЛЕ vol targeting
+   - **Тестирование**: `python run_fast_sim.py --ensemble --edge-boost --meta-risk`
 
-6. ⬜ **Regime-dependent sizing + vol targeting**
-   - short_gross = base × f(regime): 1.0 neutral, 0.5 trend-up, 1.2 panic
-   - leverage_t = target_vol / realized_vol_portfolio (clipped)
-   - **Ожидаемый эффект**: MaxDD↓, WR↑ в bull market
+6. ⏳ **Vol targeting** — РЕАЛИЗОВАНО в run_fast_sim.py `--vol-target-ann 0.30`
+   - leverage_t = target_vol / realized_vol_portfolio (rolling, clipped 0.2x–2.0x)
+   - Дефолтный lookback = vol_lookback из risk config (50 шагов)
+   - **Рекомендуемый запуск**: `--vol-target-ann 0.30 --meta-risk` (вместе)
 
 #### Когда-нибудь потом:
 7. ⬜ **Liquidation / basis / funding premium** фичи — нужны данные (CoinGlass? Coinalyze?)

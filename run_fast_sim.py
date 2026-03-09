@@ -41,6 +41,11 @@ except ImportError:
 COST_SIDE = 0.0003 + 0.0001          # taker 3bps + slippage 1bp
 FUNDING_PER_8H = 0.0001              # ~1bp per 8h funding cost for leveraged positions
 
+# ── Vol-targeting + meta-risk defaults ─────────────────────────────
+DEFAULT_VOL_TARGET_ANN = 0.30        # 30% annual portfolio vol target
+META_RISK_MIN  = 0.3                 # minimum risk scale (never zero)
+META_RISK_MAX  = 1.5                 # allow slight upscale on ideal conditions
+
 
 def compute_hac_sharpe(returns, rebal_h):
     """Newey-West HAC-adjusted Sharpe ratio.
@@ -145,6 +150,12 @@ def main():
     ap.add_argument("--short-blocked", action="store_true",
                     help="Block shorting OKX-restricted symbols (19 coins). "
                          "Simulates real OKX constraints for realistic backtest.")
+    ap.add_argument("--vol-target-ann", type=float, default=0.0,
+                    help="Portfolio vol targeting: annualized target vol (e.g. 0.30 = 30%%). "
+                         "Scales gross exposure inversely to recent realized vol. 0=off.")
+    ap.add_argument("--meta-risk", action="store_true",
+                    help="Meta-model risk scaler: adjust gross exposure (0.3x-1.5x) based on "
+                         "model agreement, regime, recent performance, score spread.")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -178,7 +189,10 @@ def main():
     adapt_str = "adaptive" if args.adaptive_rebal else ""
     dynlev_str = f"dynlev→{args.max_lev:.0f}x" if args.dynamic_lev else ""
     evtfilt_str = "evtfilt" if args.event_filter else ""
-    mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, adapt_str, dynlev_str, evtfilt_str] if s]
+    voltgt_str = f"voltgt{args.vol_target_ann:.0%}" if args.vol_target_ann > 0 else ""
+    metarisk_str = "meta-risk" if args.meta_risk else ""
+    mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, adapt_str,
+                               dynlev_str, evtfilt_str, voltgt_str, metarisk_str] if s]
     mode_str = '+'.join(mode_parts) if mode_parts else 'baseline'
     print("=" * 70)
     print(f"  FAST SIMULATION")
@@ -383,17 +397,102 @@ def main():
         print(f"   Vol computed for {len(coin_vol)} symbols, "
               f"median={np.median(list(coin_vol.values())):.4f}")
 
-    # ── 5b  pre-compute regime indicator (for regime shorts) ──────
+    # ── 5b  pre-compute regime indicator (for regime shorts / meta-risk) ──
     regime_col = None
-    if args.regime_shorts > 0:
+    if args.regime_shorts > 0 or args.meta_risk:
         for rcol in ['btc_regime_168', 'btc_above_ma720', 'btc_trend_ma_168']:
             if rcol in df.columns:
                 regime_col = rcol
                 break
         if regime_col:
-            print(f"   Regime shorts: using '{regime_col}' column")
+            print(f"   Regime column: '{regime_col}'")
         else:
-            print("   ⚠️  No regime column found, regime-shorts disabled")
+            print("   ⚠️  No regime column found, regime features disabled")
+
+    # ── 5c  vol targeting setup ───────────────────────────────────
+    vol_target_ann = args.vol_target_ann
+    if vol_target_ann > 0:
+        # Convert annual vol target to per-step vol target
+        steps_per_year = 365 * 24 / rebal_h
+        vol_target_step = vol_target_ann / np.sqrt(steps_per_year)
+        print(f"   Vol targeting: {vol_target_ann:.0%} annual → "
+              f"{vol_target_step:.4f} per-step, lookback={vol_lb}")
+    else:
+        vol_target_step = 0.0
+
+    # ── 5d  meta-risk scaler setup ────────────────────────────────
+    if args.meta_risk:
+        print(f"   Meta-risk scaler: ON (range {META_RISK_MIN:.1f}x–{META_RISK_MAX:.1f}x)")
+
+    def compute_meta_risk(confidence_arr, scores_arr, ret_buf, equity, peak,
+                          snap_df=None, regime_col=None):
+        """Compute risk scaling factor (0.3 – 1.5) from multiple risk signals.
+
+        Factors (each contributes a 0-1 score, then combined):
+        1. Model agreement  — mean confidence of top/bottom selections
+        2. Score spread     — how differentiated are long vs short scores
+        3. Recent perf      — rolling win rate from ret_buf
+        4. Current DD depth — deeper DD → reduce risk
+        5. Regime           — bull regime → slightly higher base
+        """
+        signals = []
+        weights = []
+
+        # 1. Model agreement (higher = better, range ~0.3-0.8 typically)
+        if len(confidence_arr) > 0:
+            mean_conf = np.mean(confidence_arr)
+            # Map 0.3-0.7 → 0-1
+            conf_score = np.clip((mean_conf - 0.3) / 0.4, 0.0, 1.0)
+            signals.append(conf_score)
+            weights.append(0.25)
+
+        # 2. Score spread (higher = model has clear opinions)
+        if len(scores_arr) > 5:
+            spread = np.percentile(scores_arr, 90) - np.percentile(scores_arr, 10)
+            # Map spread: low (<0.01) = uncertain, high (>0.05) = confident
+            spread_score = np.clip(spread / 0.05, 0.0, 1.0)
+            signals.append(spread_score)
+            weights.append(0.20)
+
+        # 3. Recent performance (rolling win rate, last 20 steps)
+        if len(ret_buf) >= 5:
+            recent = ret_buf[-20:]
+            recent_wr = sum(1 for r in recent if r > 0) / len(recent)
+            # Map: 40% WR → 0.0, 60% → 1.0
+            perf_score = np.clip((recent_wr - 0.40) / 0.20, 0.0, 1.0)
+            signals.append(perf_score)
+            weights.append(0.25)
+        else:
+            # Not enough history → neutral
+            signals.append(0.5)
+            weights.append(0.15)
+
+        # 4. DD depth — deeper DD means we should be cautious
+        dd_now = equity / peak - 1 if peak > 0 else 0
+        # Map: 0% DD → 1.0, -15%→ 0.3, -20% → 0.0
+        dd_score = np.clip(1.0 + dd_now / 0.20, 0.0, 1.0)
+        signals.append(dd_score)
+        weights.append(0.20)
+
+        # 5. Regime (optional)
+        if snap_df is not None and regime_col and regime_col in snap_df.columns:
+            btc_snap = snap_df[snap_df['symbol'] == 'BTC/USDT']
+            if len(btc_snap) > 0:
+                regime_val = btc_snap[regime_col].values[0]
+                # Bull regime → slightly favor risk (0.6), bear → cautious (0.3)
+                regime_score = 0.3 + 0.4 * regime_val  # maps 0→0.3, 1→0.7
+                signals.append(regime_score)
+                weights.append(0.10)
+
+        # Weighted combination → scale
+        if not signals:
+            return 1.0
+        w = np.array(weights)
+        w = w / w.sum()
+        composite = np.dot(signals, w)
+        # Map composite (0-1) to risk scale (META_RISK_MIN - META_RISK_MAX)
+        risk_scale = META_RISK_MIN + composite * (META_RISK_MAX - META_RISK_MIN)
+        return float(np.clip(risk_scale, META_RISK_MIN, META_RISK_MAX))
 
     # ── 6  simulate ───────────────────────────────────────────────
     print(f"\n{'─'*70}")
@@ -404,6 +503,10 @@ def main():
     skip_count = 0                    # steps where edge filter blocked all positions
     early_rebal_count = 0             # adaptive early rebalances triggered
     event_reduce_count = 0            # steps where event filter reduced leverage
+    meta_risk_sum = 0.0               # for reporting avg meta-risk
+    meta_risk_count = 0
+    vol_scale_sum = 0.0               # for reporting avg vol scale
+    vol_scale_count = 0
 
     held_L: dict[str, float] = {}     # symbol → entry_price
     held_S: dict[str, float] = {}
@@ -660,6 +763,34 @@ def main():
         hours_between = max(1, int((ts1 - ts0).total_seconds() / 3600)) if hasattr(ts1, 'total_seconds') else rebal_h
 
         total_alloc = equity * kelly * step_leverage
+
+        # ── Vol targeting: scale gross exposure to target portfolio vol ──
+        if vol_target_step > 0 and len(ret_buf) >= max(10, vol_lb // 2):
+            recent_rets = np.array(ret_buf[-vol_lb:])
+            realized_vol = np.std(recent_rets)
+            if realized_vol > 1e-8:
+                vol_scale = vol_target_step / realized_vol
+                vol_scale = np.clip(vol_scale, 0.2, 2.0)  # don't go crazy
+            else:
+                vol_scale = 1.0
+            total_alloc *= vol_scale
+            vol_scale_sum += vol_scale
+            vol_scale_count += 1
+
+        # ── Meta-risk scaler: adjust gross exposure based on multi-signal ──
+        if args.meta_risk:
+            # Use confidence of selected positions (long + short)
+            selected_idx = list(new_L | new_S)
+            sel_conf = np.array([conf_dict.get(s, 0.5) for s in selected_idx])
+            sel_scores = scores  # all scores for spread calc
+            risk_scale = compute_meta_risk(
+                sel_conf, sel_scores, ret_buf, equity, peak,
+                snap_df=snap0, regime_col=regime_col
+            )
+            total_alloc *= risk_scale
+            meta_risk_sum += risk_scale
+            meta_risk_count += 1
+
         half_alloc = total_alloc / 2  # half for longs, half for shorts
         short_alloc = half_alloc * regime_scale  # reduced in bull regime
 
@@ -784,6 +915,12 @@ def main():
             print(f"   Early rebal:{early_rebal_count} (adaptive P90+ triggers)")
         if event_reduce_count > 0:
             print(f"   Event filt: {event_reduce_count} steps (leverage reduced near FOMC/CPI)")
+        if vol_scale_count > 0:
+            avg_vs = vol_scale_sum / vol_scale_count
+            print(f"   Vol target: {vol_target_ann:.0%} ann, avg scale {avg_vs:.2f}x")
+        if meta_risk_count > 0:
+            avg_mr = meta_risk_sum / meta_risk_count
+            print(f"   Meta-risk:  avg scale {avg_mr:.2f}x ({META_RISK_MIN:.1f}–{META_RISK_MAX:.1f})")
         if leverage > 1:
             print(f"   Leverage:   {lev_str}")
             liq_dd = -1.0 / leverage  # approximate liquidation DD
