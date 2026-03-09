@@ -540,9 +540,20 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None, worker
         except KeyboardInterrupt:
             print("\n   ⚠️  Interrupted! Saving checkpoint...")
         
-        # Checkpoint
+        # Merge with existing checkpoint
         if results:
-            _save_checkpoint(results)
+            new_df = pd.DataFrame(results)
+            if os.path.exists(CHECKPOINT_PATH):
+                try:
+                    existing = pd.read_parquet(CHECKPOINT_PATH)
+                    merged = pd.concat([existing, new_df], ignore_index=True)
+                    merged = merged.drop_duplicates(subset=["title", "published_on"], keep="first")
+                except Exception:
+                    merged = new_df
+            else:
+                merged = new_df
+            merged.to_parquet(CHECKPOINT_PATH, index=False)
+            print(f"   💾 Checkpoint: {len(merged):,} items → {CHECKPOINT_PATH}")
         
         return results
     
@@ -553,6 +564,28 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None, worker
     all_news = []
     lock = threading.Lock()
     stop_event = threading.Event()
+    _last_checkpoint_count = [0]  # mutable for closure
+    
+    def _save_merged_checkpoint():
+        """Save all_news merged with existing checkpoint data."""
+        with lock:
+            current = list(all_news)
+        if not current:
+            return
+        new_df = pd.DataFrame(current)
+        # Merge with existing checkpoint if present
+        if os.path.exists(CHECKPOINT_PATH):
+            try:
+                existing = pd.read_parquet(CHECKPOINT_PATH)
+                merged = pd.concat([existing, new_df], ignore_index=True)
+                merged = merged.drop_duplicates(subset=["title", "published_on"], keep="first")
+            except Exception:
+                merged = new_df
+        else:
+            merged = new_df
+        merged.to_parquet(CHECKPOINT_PATH, index=False)
+        _last_checkpoint_count[0] = len(current)
+        print(f"   💾 Checkpoint: {len(merged):,} items → {CHECKPOINT_PATH}")
     
     print(f"   ⚡ Splitting {total_range // 86400} days into {workers} chunks of ~{chunk_size // 86400} days")
     
@@ -573,21 +606,25 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None, worker
             futures.append(fut)
         
         try:
-            # Wait for all workers; checkpoint periodically
+            # Wait for all workers; checkpoint every 30s if new data arrived
             while not all(f.done() for f in futures):
                 time.sleep(30)
                 with lock:
-                    if len(all_news) > 0 and len(all_news) % 25000 < 1000:
-                        _save_checkpoint(all_news)
+                    current_count = len(all_news)
+                if current_count > _last_checkpoint_count[0] + 1000:
+                    _save_merged_checkpoint()
         except KeyboardInterrupt:
             print("\n   ⚠️  Interrupted! Saving checkpoint...")
             stop_event.set()
+            # Give workers a moment to flush their local_news
+            time.sleep(2)
+            _save_merged_checkpoint()
             for f in futures:
                 f.cancel()
     
     # Final checkpoint
     if all_news:
-        _save_checkpoint(all_news)
+        _save_merged_checkpoint()
     
     print(f"   ✅ Total fetched: {len(all_news):,} news items")
     return all_news
