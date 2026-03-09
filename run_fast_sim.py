@@ -132,6 +132,12 @@ def main():
                     help="Max leverage for dynamic-lev mode (default: 7)")
     ap.add_argument("--event-filter", action="store_true",
                     help="Reduce positions near FOMC/CPI events to avoid tail risk")
+    ap.add_argument("--smooth-signal", type=float, default=0.0,
+                    help="Signal smoothing: EMA weight on previous scores (0=off, 0.4=recommended)")
+    ap.add_argument("--vol-size", action="store_true",
+                    help="Vol-adjusted sizing: weight ∝ edge / coin_vol (inverse-vol)")
+    ap.add_argument("--regime-shorts", type=float, default=0.0,
+                    help="Regime short scaling: in bull regime, scale short allocation to X (e.g. 0.5)")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -328,7 +334,34 @@ def main():
             edge_p75 = 0.0
             edge_p90 = 0.0
 
-    # ── 5  simulate ───────────────────────────────────────────────
+    # ── 5  pre-compute per-coin realized vol (for vol-adjusted sizing) ──
+    coin_vol: dict[str, float] = {}
+    if args.vol_size:
+        print(f"\n📊 Pre-computing per-coin realized vol (24h rolling std)...")
+        df = df.sort_values(['symbol', 'timestamp'])
+        df['_ret_1h'] = df.groupby('symbol')['close'].pct_change(1)
+        df['_rvol_24h'] = df.groupby('symbol')['_ret_1h'].transform(
+            lambda x: x.rolling(24, min_periods=12).std()
+        )
+        latest = df.dropna(subset=['_rvol_24h']).groupby('symbol')['_rvol_24h'].last()
+        coin_vol = latest.to_dict()
+        df.drop(columns=['_ret_1h', '_rvol_24h'], inplace=True)
+        print(f"   Vol computed for {len(coin_vol)} symbols, "
+              f"median={np.median(list(coin_vol.values())):.4f}")
+
+    # ── 5b  pre-compute regime indicator (for regime shorts) ──────
+    regime_col = None
+    if args.regime_shorts > 0:
+        for rcol in ['btc_regime_168', 'btc_above_ma720', 'btc_trend_ma_168']:
+            if rcol in df.columns:
+                regime_col = rcol
+                break
+        if regime_col:
+            print(f"   Regime shorts: using '{regime_col}' column")
+        else:
+            print("   ⚠️  No regime column found, regime-shorts disabled")
+
+    # ── 6  simulate ───────────────────────────────────────────────
     print(f"\n{'─'*70}")
     equity   = args.capital
     peak     = args.capital
@@ -342,6 +375,7 @@ def main():
     held_S: dict[str, float] = {}
     prev_alloc_L: dict[str, float] = {}   # symbol → dollar allocation (prev step)
     prev_alloc_S: dict[str, float] = {}
+    prev_scores: dict[str, float] = {}    # symbol → previous score (for signal smoothing)
     results: list[dict] = []
     cum_cost = 0.0
     cum_dollar_turnover = 0.0
@@ -376,6 +410,18 @@ def main():
         # ── predict & rank at ts0 ────────────────────────────────
         scores, confidence = predict_ensemble(snap0)
         syms = snap0["symbol"].values
+
+        # ── Signal smoothing: EMA blend with previous step scores ─
+        if args.smooth_signal > 0 and prev_scores:
+            alpha = args.smooth_signal  # weight on previous
+            smoothed = np.copy(scores)
+            for i_s, sym in enumerate(syms):
+                if sym in prev_scores:
+                    smoothed[i_s] = (1 - alpha) * scores[i_s] + alpha * prev_scores[sym]
+            scores = smoothed
+        # Store for next step
+        prev_scores = dict(zip(syms, scores))
+
         median_score = np.median(scores)
         edges = scores - median_score
         abs_edges = np.abs(edges)
@@ -497,30 +543,28 @@ def main():
 
         def compute_weights(symbols, is_long=True):
             """Compute position weights with optional edge-boost × confidence.
-            Cap per position = its confidence (high conf → more capital allowed)."""
+            Cap per position = its confidence (high conf → more capital allowed).
+            Optional vol-adjustment: weight ∝ 1/σ (inverse-volatility sizing)."""
             if len(symbols) == 0:
                 return {}
             syms_list = list(symbols)
+
+            # --- Base weights ---
             if args.edge_boost and edge_p75 > 0:
-                # Edge-proportional: high-edge positions get more weight
-                # boost = 1 for edge at P50, ~2 at P75, ~3 at P90
                 raw_w = []
                 conf_arr = []
                 for s in syms_list:
                     e = edge_dict.get(s, 0)
-                    ratio = e / edge_p75           # 1.0 at P75
-                    boost = 1.0 + min(ratio, 3.0)  # cap at 4x (to avoid over-concentration)
-                    # Multiply by confidence: high-agreement → more capital
+                    ratio = e / edge_p75
+                    boost = 1.0 + min(ratio, 3.0)
                     c = conf_dict.get(s, 0.5) if not getattr(args, 'no_conf', False) else 1.0
                     raw_w.append(boost * c)
                     conf_arr.append(c)
                 raw_w = np.array(raw_w)
                 w = raw_w / raw_w.sum()
-                # Cap per position at its confidence (floor 15%, ceiling 40%)
                 max_w = np.clip(np.array(conf_arr), 0.15, 0.40)
                 w = np.minimum(w, max_w)
             else:
-                # Original softmax-like weighting
                 if is_long:
                     arr = np.array([score_dict[s] for s in syms_list])
                 else:
@@ -528,10 +572,29 @@ def main():
                 arr = arr - arr.mean()
                 w = np.exp(arr * 2)
                 w = w / w.sum()
+
+            # --- Vol-adjusted sizing: scale by 1/σ ---
+            if args.vol_size:
+                vol_arr = np.array([coin_vol.get(s, 0.05) for s in syms_list])
+                vol_arr = np.clip(vol_arr, 0.005, 0.20)  # cap extremes
+                inv_vol = 1.0 / vol_arr
+                w = w * inv_vol
+                w = w / w.sum()  # re-normalise
+
             return dict(zip(syms_list, w))
 
         weight_L = compute_weights(new_L, is_long=True)
         weight_S = compute_weights(new_S, is_long=False)
+
+        # ── Regime short scaling: reduce shorts in bull regime ────
+        regime_scale = 1.0
+        if args.regime_shorts > 0 and regime_col:
+            # Get regime value from current snapshot (BTC row)
+            btc_snap = snap0[snap0['symbol'] == 'BTC/USDT']
+            if len(btc_snap) > 0 and regime_col in btc_snap.columns:
+                regime_val = btc_snap[regime_col].values[0]
+                if regime_val > 0.5:  # bullish regime
+                    regime_scale = args.regime_shorts  # e.g. 0.5 = halve short alloc
 
         # ── compute changes ───────────────────────────────────────
         open_L  = new_L - set(held_L)
@@ -544,11 +607,12 @@ def main():
 
         total_alloc = equity * kelly * step_leverage
         half_alloc = total_alloc / 2  # half for longs, half for shorts
+        short_alloc = half_alloc * regime_scale  # reduced in bull regime
 
         # ── Dollar-turnover cost model ────────────────────────────
         # Compute target dollar allocation for each symbol
         new_alloc_L = {s: half_alloc * weight_L.get(s, 0) for s in new_L}
-        new_alloc_S = {s: half_alloc * weight_S.get(s, 0) for s in new_S}
+        new_alloc_S = {s: short_alloc * weight_S.get(s, 0) for s in new_S}
 
         # Dollar turnover = sum |new_alloc − prev_alloc| per symbol
         dollar_turnover = 0.0
@@ -579,7 +643,7 @@ def main():
         for sym in new_S:
             p0 = px0.get(sym, 0); p1 = px1.get(sym, p0)
             w = weight_S.get(sym, 1.0 / max(len(new_S), 1))
-            if p0 > 0: fwd_pnl += half_alloc * w * (-(p1 - p0) / p0)
+            if p0 > 0: fwd_pnl += short_alloc * w * (-(p1 - p0) / p0)
 
         equity += fwd_pnl - step_cost
         peak = max(peak, equity)

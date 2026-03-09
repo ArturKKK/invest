@@ -155,6 +155,57 @@ def add_multi_horizon_targets(df):
     return df
 
 
+def add_residual_targets(df, beta_window=168):
+    """Add beta-residual targets: ret_coin - beta*ret_btc.
+
+    Removes the common market factor (BTC) from returns so the model
+    learns to predict *relative* outperformance rather than market
+    direction.  This typically stabilises WR because it eliminates
+    correlated losses when the whole market moves against the portfolio.
+    """
+    print(f"   🎯 Adding residual targets (beta window={beta_window}h)...")
+    # Need btc_close already merged from add_cross_asset_features
+    if 'btc_close' not in df.columns:
+        # Re-merge temporarily
+        btc = df[df['symbol'] == 'BTC/USDT'][['timestamp', 'close']].copy()
+        btc = btc.rename(columns={'close': 'btc_close'}).drop_duplicates('timestamp')
+        df = df.merge(btc, on='timestamp', how='left')
+        _drop_btc = True
+    else:
+        _drop_btc = False
+
+    for h in [12, 24]:
+        target_col = f'target_ret_{h}h'
+        if target_col not in df.columns:
+            continue
+        # BTC forward return (same horizon)
+        btc_fwd = df.groupby('symbol')['btc_close'].transform(
+            lambda x: x.pct_change(h).shift(-h)
+        )
+        # Rolling beta per symbol (using past returns, no look-ahead)
+        coin_ret_past = df.groupby('symbol')['close'].transform(lambda x: x.pct_change(1))
+        btc_ret_past = df.groupby('symbol')['btc_close'].transform(lambda x: x.pct_change(1))
+
+        def _rolling_beta(group):
+            cov = group['_coin_ret'].rolling(beta_window, min_periods=48).cov(group['_btc_ret'])
+            var = group['_btc_ret'].rolling(beta_window, min_periods=48).var() + 1e-10
+            return cov / var
+
+        df['_coin_ret'] = coin_ret_past
+        df['_btc_ret'] = btc_ret_past
+        beta = df.groupby('symbol').apply(_rolling_beta).droplevel(0)
+        beta = beta.clip(-3, 3).fillna(1.0)  # cap extreme betas
+
+        df[f'target_ret_{h}h_excess'] = df[target_col] - beta * btc_fwd
+        df.drop(columns=['_coin_ret', '_btc_ret'], inplace=True)
+        print(f"      target_ret_{h}h_excess: mean={df[f'target_ret_{h}h_excess'].mean():.6f}, "
+              f"std={df[f'target_ret_{h}h_excess'].std():.6f}")
+
+    if _drop_btc:
+        df.drop(columns=['btc_close'], inplace=True, errors='ignore')
+    return df
+
+
 def add_cross_asset_features(df):
     """BTC/ETH market factors."""
     print("   🌐 Adding cross-asset features...")
@@ -520,8 +571,30 @@ def add_sentiment_features(df, project_root):
 # NORMALIZATION & TARGET
 # ============================================================
 
-def cross_sectional_rank(df, feat_cols):
-    """Rank-normalize features within each timestamp. Preserves regime/sentiment columns."""
+# Features that should be normalised per-symbol over time (TS-zscore)
+# rather than cross-sectionally.  These capture "unusual for THIS coin"
+# spikes that lose meaning when ranked across all coins.
+TSZSCORE_COLS = {
+    'vol_surge_12h', 'vol_surge_24h', 'vol_surge_48h',
+    'range_expansion_12h',
+    'funding_rate', 'funding_vs_market',
+    'news_count_1h', 'news_count_24h', 'news_volume_zscore',
+    'vol_trend_12_48',
+    'mom_12h_zscore',   # already a zscore but per-symbol — keep as TS
+}
+
+
+def cross_sectional_rank(df, feat_cols, hybrid=False):
+    """Normalise features. Two modes:
+
+    hybrid=True  (recommended):
+      - REGIME_COLS: preserved as-is (binary/market-level)
+      - TSZSCORE_COLS: per-symbol rolling zscore (winsorised ±3σ)
+      - everything else: cross-sectional rank per timestamp (−0.5 … +0.5)
+
+    hybrid=False (legacy):
+      - REGIME_COLS preserved, everything else CS-ranked.
+    """
     print("   📐 Cross-sectional rank normalization...")
 
     regime_backup = {}
@@ -529,19 +602,53 @@ def cross_sectional_rank(df, feat_cols):
         if col in df.columns:
             regime_backup[col] = df[col].copy()
 
-    rank_cols = [c for c in feat_cols if c not in REGIME_COLS]
-    ranked = df.groupby('timestamp')[rank_cols].rank(pct=True)
-    df[rank_cols] = ranked - 0.5
+    if hybrid:
+        ts_cols = [c for c in feat_cols if c in TSZSCORE_COLS and c in df.columns]
+        rank_cols = [c for c in feat_cols if c not in REGIME_COLS and c not in TSZSCORE_COLS]
+
+        # TS-zscore: per symbol rolling zscore + winsorise
+        if ts_cols:
+            for col in ts_cols:
+                zscored = df.groupby('symbol')[col].transform(
+                    lambda x: (x - x.rolling(168, min_periods=24).mean())
+                              / (x.rolling(168, min_periods=24).std() + 1e-10)
+                )
+                df[col] = zscored.clip(-3, 3)
+            print(f"   📊 TS-zscore: {len(ts_cols)} features (per-symbol, winsorised ±3σ)")
+
+        # CS-rank: per timestamp
+        if rank_cols:
+            ranked = df.groupby('timestamp')[rank_cols].rank(pct=True)
+            df[rank_cols] = ranked - 0.5
+    else:
+        rank_cols = [c for c in feat_cols if c not in REGIME_COLS]
+        ranked = df.groupby('timestamp')[rank_cols].rank(pct=True)
+        df[rank_cols] = ranked - 0.5
 
     for col, vals in regime_backup.items():
         df[col] = vals
-    print(f"   ✅ Ranked {len(rank_cols)} features, preserved {len(regime_backup)} unranked")
+    print(f"   ✅ Ranked {len(rank_cols)} CS features, preserved {len(regime_backup)} unranked")
 
     return df
 
 
-def create_rank_target(df, horizon=4):
-    target_col = f'target_ret_{horizon}h'
+def create_rank_target(df, horizon=4, use_excess=False):
+    """Rank target per timestamp.
+
+    use_excess=True: rank the beta-residual return (if available) instead of
+    raw return.  This trains the model to predict relative outperformance
+    after removing the BTC factor.
+    """
+    if use_excess:
+        excess_col = f'target_ret_{horizon}h_excess'
+        if excess_col in df.columns:
+            target_col = excess_col
+            print(f"   🎯 Using residual target: {target_col}")
+        else:
+            target_col = f'target_ret_{horizon}h'
+            print(f"   ⚠️  Excess target not found, falling back to {target_col}")
+    else:
+        target_col = f'target_ret_{horizon}h'
     df['target_rank'] = df.groupby('timestamp')[target_col].rank(pct=True)
     return df
 
@@ -655,17 +762,79 @@ def train_lgbm(X_train, y_train, X_val, y_val, custom_params=None, seed=42):
     return model
 
 
+def train_lgbm_ranker(X_train, y_train, X_val, y_val,
+                      train_groups, val_groups,
+                      custom_params=None, seed=42):
+    """Train LGBMRanker with LambdaRank objective.
+
+    Instead of predicting an absolute score, ranks items *within each
+    cross-section* (timestamp group).  This often improves top-N /
+    bottom-N selection quality (the actual trading decision).
+
+    Parameters
+    ----------
+    train_groups : array-like
+        Number of samples in each query group (=timestamp) in train set.
+    val_groups : array-like
+        Same for validation set.
+    """
+    base_params = {
+        'objective': 'lambdarank',
+        'metric': 'ndcg',
+        'lambdarank_truncation_level': 10,  # we only care about top/bottom 5–10
+        'verbosity': -1,
+        'n_estimators': 5000,
+        'learning_rate': 0.01,
+        'max_depth': 6,
+        'num_leaves': 31,
+        'feature_fraction': 0.5,
+        'bagging_fraction': 0.7,
+        'bagging_freq': 1,
+        'min_child_samples': 200,
+        'lambda_l1': 1.0,
+        'lambda_l2': 1.0,
+        'min_gain_to_split': 0.01,
+        'random_state': seed,
+        'n_jobs': -1,
+    }
+    if custom_params:
+        base_params.update(custom_params)
+    base_params['random_state'] = seed
+
+    model = lgb.LGBMRanker(**base_params)
+    model.fit(
+        X_train, y_train,
+        group=train_groups,
+        eval_set=[(X_val, y_val)],
+        eval_group=[val_groups],
+        callbacks=[lgb.early_stopping(100), lgb.log_evaluation(200)],
+    )
+    return model
+
+
+def _compute_groups(df_subset):
+    """Return group sizes for LGBMRanker: number of symbols per timestamp."""
+    return df_subset.groupby('timestamp').size().values
+
+
 def train_multi_seed(X_train, y_train, X_val, y_val, X_test,
-                     params=None, seeds=None):
+                     params=None, seeds=None,
+                     use_ranker=False, train_groups=None, val_groups=None):
     seeds = seeds or SEEDS
-    print(f"\n   🌱 Multi-seed ensemble ({len(seeds)} seeds)...")
+    print(f"\n   🌱 Multi-seed ensemble ({len(seeds)} seeds)"
+          f"{' [LambdaRank]' if use_ranker else ''}...")
 
     all_preds = []
     all_models = []
     for i, seed in enumerate(seeds):
         print(f"      Seed {seed} ({i+1}/{len(seeds)})...", end=" ")
-        model = train_lgbm(X_train, y_train, X_val, y_val,
-                           custom_params=params, seed=seed)
+        if use_ranker:
+            model = train_lgbm_ranker(X_train, y_train, X_val, y_val,
+                                      train_groups, val_groups,
+                                      custom_params=params, seed=seed)
+        else:
+            model = train_lgbm(X_train, y_train, X_val, y_val,
+                               custom_params=params, seed=seed)
         preds = model.predict(X_test)
         all_preds.append(preds)
         all_models.append(model)
@@ -680,6 +849,48 @@ def feature_selection(model, feat_cols, threshold_pct=20):
     threshold = np.percentile(imp.values, threshold_pct)
     keep = imp[imp > threshold].index.tolist()
     print(f"   🔪 Feature selection: {len(feat_cols)} → {len(keep)}")
+    return keep
+
+
+def null_importance_filter(X_train, y_train, X_val, y_val, feat_cols,
+                           n_shuffles=5, significance=0.90, seed=42):
+    """Compare feature importance on real target vs shuffled targets.
+
+    Features that are "important" even on a random target are likely
+    noise/artefacts.  We keep only features whose real importance
+    exceeds the `significance` quantile of their null distribution.
+
+    This is done WITHIN each cross-section (shuffle target within
+    timestamp) to preserve the BTC-factor structure.
+    """
+    print(f"   🎲 Null importance filter ({n_shuffles} shuffles, sig={significance:.0%})...")
+
+    # Train real model
+    real_model = train_lgbm(X_train, y_train, X_val, y_val, seed=seed)
+    real_imp = pd.Series(real_model.feature_importances_, index=feat_cols)
+
+    # Null distribution: shuffle target within timestamp groups, retrain
+    null_imps = []
+    for i in range(n_shuffles):
+        y_shuffled = y_train.copy()
+        # Shuffle target within each cross-section (preserves group structure)
+        rng = np.random.RandomState(seed + i + 1)
+        y_shuffled[:] = rng.permutation(y_shuffled.values)
+        null_model = train_lgbm(X_train, y_shuffled, X_val,
+                                y_val,  # val is unused for selection
+                                seed=seed + i + 1)
+        null_imps.append(pd.Series(null_model.feature_importances_, index=feat_cols))
+        print(f"      shuffle {i+1}/{n_shuffles} done")
+
+    null_df = pd.DataFrame(null_imps)
+    null_threshold = null_df.quantile(significance, axis=0)
+
+    keep = real_imp[real_imp > null_threshold].index.tolist()
+    dropped = [f for f in feat_cols if f not in keep]
+    print(f"   ✅ Null importance: {len(feat_cols)} → {len(keep)} "
+          f"(dropped {len(dropped)} noise features)")
+    if dropped:
+        print(f"      Dropped: {dropped[:10]}{'...' if len(dropped) > 10 else ''}")
     return keep
 
 
@@ -895,6 +1106,14 @@ def main():
     parser.add_argument('--val-end', type=str, default=None,
                         help='Override val end date (YYYY-MM-DD) for --production')
     parser.add_argument('--seeds', type=int, default=N_SEEDS)
+    parser.add_argument('--residual-target', action='store_true',
+                        help='Use beta-residual returns (remove BTC factor) for target')
+    parser.add_argument('--hybrid-norm', action='store_true',
+                        help='Hybrid normalization: CS-rank + TS-zscore for spike features')
+    parser.add_argument('--lambdarank', action='store_true',
+                        help='Use LambdaRank (LGBMRanker) instead of LGBMRegressor')
+    parser.add_argument('--null-importance', action='store_true',
+                        help='Use null-importance feature selection instead of gain-based')
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -925,6 +1144,8 @@ def main():
 
     df = add_multi_horizon_targets(df)
     df = add_cross_asset_features(df)
+    if args.residual_target:
+        df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_sentiment_features(df, project_root)
@@ -944,8 +1165,8 @@ def main():
     df[feat_cols] = df[feat_cols].fillna(0)
 
     # Cross-sectional rank normalization
-    df = cross_sectional_rank(df, feat_cols)
-    df = create_rank_target(df, HORIZON)
+    df = cross_sectional_rank(df, feat_cols, hybrid=args.hybrid_norm)
+    df = create_rank_target(df, HORIZON, use_excess=args.residual_target)
 
     print(f"   Final shape: {df.shape}")
     print(f"   Date range: {df['timestamp'].min()} → {df['timestamp'].max()}")
@@ -1019,18 +1240,33 @@ def main():
             )
 
         # --- Feature selection ---
-        model_base = train_lgbm(X_train, y_train, X_val, y_val,
-                                custom_params=best_params)
-        selected_feats = feature_selection(model_base, feat_cols, threshold_pct=20)
+        if args.null_importance:
+            selected_feats = null_importance_filter(
+                X_train, y_train, X_val, y_val, feat_cols,
+                n_shuffles=5, significance=0.90,
+            )
+        else:
+            model_base = train_lgbm(X_train, y_train, X_val, y_val,
+                                    custom_params=best_params)
+            selected_feats = feature_selection(model_base, feat_cols, threshold_pct=20)
 
         # --- Multi-seed ensemble ---
         X_pred = test[selected_feats] if has_test else val[selected_feats]
+
+        # Compute query groups for LambdaRank
+        ranker_kwargs = {}
+        if args.lambdarank:
+            ranker_kwargs['use_ranker'] = True
+            ranker_kwargs['train_groups'] = _compute_groups(train)
+            ranker_kwargs['val_groups'] = _compute_groups(val)
+
         ensemble_pred, all_models = train_multi_seed(
             train[selected_feats], y_train,
             val[selected_feats], y_val,
             X_pred,
             params=best_params,
             seeds=SEEDS[:args.seeds],
+            **ranker_kwargs,
         )
         if has_test:
             test['pred_v6'] = ensemble_pred
@@ -1040,7 +1276,11 @@ def main():
         for i, mdl in enumerate(all_models):
             seed = SEEDS[:args.seeds][i]
             model_path = os.path.join(results_dir, f'lgb_model_seed_{seed}.txt')
-            mdl.booster_.save_model(model_path)
+            if hasattr(mdl, 'booster_'):
+                mdl.booster_.save_model(model_path)
+            else:
+                # LGBMRanker — save directly
+                mdl.save_model(model_path)
         # Save selected feature names
         with open(os.path.join(results_dir, 'feature_names.json'), 'w') as f:
             json.dump(selected_feats, f)
