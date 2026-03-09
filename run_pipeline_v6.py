@@ -567,6 +567,199 @@ def add_sentiment_features(df, project_root):
     return df
 
 
+def add_derivatives_features(df, project_root):
+    """
+    Add features from Binance Futures derivatives data:
+    1. Open Interest — OI change, OI x return interaction, OI zscore
+    2. Taker Buy/Sell — imbalance, CVD proxy, flow zscore
+    3. Top Trader L/S Ratio — positioning, contrarian signals
+    4. Global L/S Ratio — crowd sentiment
+
+    These features capture what OTHER TRADERS are doing.
+    They are only available for ~6 months of recent history,
+    so NaN is filled with neutral values for older data.
+    """
+    print("   📊 Adding derivatives features (Binance Futures)...")
+    sent_dir = os.path.join(project_root, 'data', 'sentiment')
+    n_added = 0
+
+    # ---- 1. Open Interest ----
+    oi_path = os.path.join(sent_dir, 'binance_open_interest.parquet')
+    if os.path.exists(oi_path):
+        oi = pd.read_parquet(oi_path)
+        oi['timestamp'] = pd.to_datetime(oi['timestamp'], utc=True)
+        oi = oi.sort_values(['symbol', 'timestamp'])
+
+        # Raw OI value in USD
+        oi_merge = oi[['timestamp', 'symbol', 'oi_value_usd']].drop_duplicates(
+            ['timestamp', 'symbol'])
+        df = df.merge(oi_merge, on=['timestamp', 'symbol'], how='left')
+
+        # Per-symbol OI features
+        for sym in df['symbol'].unique():
+            mask = df['symbol'] == sym
+            oi_vals = df.loc[mask, 'oi_value_usd']
+
+            # OI change (pct) at various horizons
+            for h in [1, 4, 12, 24]:
+                df.loc[mask, f'oi_change_{h}h'] = oi_vals.pct_change(h)
+
+            # OI z-score (how unusual is current OI vs recent history)
+            roll_mean = oi_vals.rolling(168, min_periods=24).mean()
+            roll_std = oi_vals.rolling(168, min_periods=24).std() + 1e-10
+            df.loc[mask, 'oi_zscore_7d'] = (oi_vals - roll_mean) / roll_std
+
+        # OI × return interaction (key signal!)
+        # OI↑ + price↑ = new longs (bullish continuation)
+        # OI↑ + price↓ = new shorts (bearish pressure)
+        # OI↓ + price↑ = short squeeze
+        # OI↓ + price↓ = long liquidation
+        if 'ret_1h' in df.columns:
+            df['oi_ret_interaction'] = df['oi_change_1h'] * df['ret_1h']
+        if 'ret_12h' in df.columns:
+            df['oi_ret_interaction_12h'] = df['oi_change_12h'] * df['ret_12h']
+
+        # OI cross-sectional rank (which coins have unusual OI growth)
+        df['oi_change_12h_cs'] = df.groupby('timestamp')['oi_change_12h'].transform(
+            lambda x: x.rank(pct=True) - 0.5) if 'oi_change_12h' in df.columns else 0
+
+        # Fill NaN with 0 (neutral) for old data without OI
+        oi_cols = [c for c in df.columns if c.startswith('oi_')]
+        for col in oi_cols:
+            df[col] = df[col].fillna(0)
+
+        n_with_oi = (df['oi_value_usd'] != 0).sum()
+        n_added += len(oi_cols)
+        print(f"      OI: {n_with_oi:,} rows ({n_with_oi/len(df)*100:.1f}%), "
+              f"{len(oi_cols)} features")
+    else:
+        print(f"      ⚠️  No OI data (run download_binance_futures.py)")
+
+    # ---- 2. Taker Buy/Sell Volume ----
+    taker_path = os.path.join(sent_dir, 'binance_taker_volume.parquet')
+    if os.path.exists(taker_path):
+        taker = pd.read_parquet(taker_path)
+        taker['timestamp'] = pd.to_datetime(taker['timestamp'], utc=True)
+
+        # Taker imbalance = (buy - sell) / (buy + sell)
+        taker['taker_imbalance'] = (
+            (taker['taker_buy_vol'] - taker['taker_sell_vol'])
+            / (taker['taker_buy_vol'] + taker['taker_sell_vol'] + 1e-10)
+        )
+
+        taker_merge = taker[['timestamp', 'symbol', 'taker_buy_sell_ratio',
+                             'taker_imbalance']].drop_duplicates(['timestamp', 'symbol'])
+        df = df.merge(taker_merge, on=['timestamp', 'symbol'], how='left')
+
+        # Rolling taker features per symbol
+        for sym in df['symbol'].unique():
+            mask = df['symbol'] == sym
+            imb = df.loc[mask, 'taker_imbalance']
+
+            # CVD proxy: cumulative imbalance over 12h / 24h
+            df.loc[mask, 'taker_cvd_12h'] = imb.rolling(12, min_periods=3).sum()
+            df.loc[mask, 'taker_cvd_24h'] = imb.rolling(24, min_periods=6).sum()
+
+            # Taker flow z-score (unusual buying/selling vs 7d norm)
+            roll_mean = imb.rolling(168, min_periods=24).mean()
+            roll_std = imb.rolling(168, min_periods=24).std() + 1e-10
+            df.loc[mask, 'taker_flow_zscore'] = (imb - roll_mean) / roll_std
+
+        # Cross-sectional: which coins have unusual taker flow
+        df['taker_imbalance_cs'] = df.groupby('timestamp')['taker_imbalance'].transform(
+            lambda x: x.rank(pct=True) - 0.5)
+
+        taker_cols = ['taker_buy_sell_ratio', 'taker_imbalance',
+                      'taker_cvd_12h', 'taker_cvd_24h',
+                      'taker_flow_zscore', 'taker_imbalance_cs']
+        for col in taker_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna(0)
+
+        n_with_taker = (df['taker_imbalance'] != 0).sum()
+        n_added += len(taker_cols)
+        print(f"      Taker: {n_with_taker:,} rows ({n_with_taker/len(df)*100:.1f}%), "
+              f"{len(taker_cols)} features")
+    else:
+        print(f"      ⚠️  No taker volume data (run download_binance_futures.py)")
+
+    # ---- 3. Top Trader Long/Short Ratio ----
+    top_ls_path = os.path.join(sent_dir, 'binance_top_ls_ratio.parquet')
+    if os.path.exists(top_ls_path):
+        top_ls = pd.read_parquet(top_ls_path)
+        top_ls['timestamp'] = pd.to_datetime(top_ls['timestamp'], utc=True)
+
+        top_ls_merge = top_ls[['timestamp', 'symbol', 'top_ls_ratio',
+                               'top_long_pct']].drop_duplicates(['timestamp', 'symbol'])
+        df = df.merge(top_ls_merge, on=['timestamp', 'symbol'], how='left')
+
+        # Top trader L/S momentum (change over 12h/24h)
+        for sym in df['symbol'].unique():
+            mask = df['symbol'] == sym
+            ls = df.loc[mask, 'top_ls_ratio']
+            df.loc[mask, 'top_ls_change_12h'] = ls.pct_change(12)
+            df.loc[mask, 'top_ls_change_24h'] = ls.pct_change(24)
+
+            # Extreme positioning (top traders very long or very short)
+            roll_mean = ls.rolling(168, min_periods=24).mean()
+            roll_std = ls.rolling(168, min_periods=24).std() + 1e-10
+            df.loc[mask, 'top_ls_zscore'] = (ls - roll_mean) / roll_std
+
+        top_ls_cols = ['top_ls_ratio', 'top_long_pct',
+                       'top_ls_change_12h', 'top_ls_change_24h', 'top_ls_zscore']
+        for col in top_ls_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna(1.0 if 'ratio' in col else 0.5 if 'pct' in col else 0)
+
+        n_with_ls = (df['top_ls_ratio'] != 1.0).sum() if 'top_ls_ratio' in df.columns else 0
+        n_added += len(top_ls_cols)
+        print(f"      Top L/S: {n_with_ls:,} rows ({n_with_ls/len(df)*100:.1f}%), "
+              f"{len(top_ls_cols)} features")
+    else:
+        print(f"      ⚠️  No top trader L/S data (run download_binance_futures.py)")
+
+    # ---- 4. Global Long/Short Ratio ----
+    global_ls_path = os.path.join(sent_dir, 'binance_global_ls_ratio.parquet')
+    if os.path.exists(global_ls_path):
+        gls = pd.read_parquet(global_ls_path)
+        gls['timestamp'] = pd.to_datetime(gls['timestamp'], utc=True)
+
+        gls_merge = gls[['timestamp', 'symbol', 'global_ls_ratio']].drop_duplicates(
+            ['timestamp', 'symbol'])
+        df = df.merge(gls_merge, on=['timestamp', 'symbol'], how='left')
+
+        # Global vs top trader divergence (contrarian signal)
+        if 'top_ls_ratio' in df.columns:
+            df['ls_divergence'] = df['top_ls_ratio'] - df['global_ls_ratio']
+
+        gls_cols = ['global_ls_ratio']
+        if 'ls_divergence' in df.columns:
+            gls_cols.append('ls_divergence')
+        for col in gls_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna(1.0 if 'ratio' in col else 0)
+
+        n_added += len(gls_cols)
+        print(f"      Global L/S: {len(gls_cols)} features")
+    else:
+        print(f"      ⚠️  No global L/S data (run download_binance_futures.py)")
+
+    # ---- 5. Funding surprise (from existing funding data) ----
+    if 'funding_rate' in df.columns:
+        # Funding surprise = actual - expected (rolling mean)
+        for sym in df['symbol'].unique():
+            mask = df['symbol'] == sym
+            fr = df.loc[mask, 'funding_rate']
+            expected = fr.rolling(21 * 3, min_periods=3).mean()  # 21 funding periods ≈ 7 days
+            df.loc[mask, 'funding_surprise'] = fr - expected
+        df['funding_surprise'] = df['funding_surprise'].fillna(0)
+        n_added += 1
+        print(f"      Funding surprise: computed from existing funding data")
+
+    print(f"   ✅ Derivatives features: +{n_added} features")
+    return df
+
+
 # ============================================================
 # NORMALIZATION & TARGET
 # ============================================================
@@ -581,6 +774,13 @@ TSZSCORE_COLS = {
     'news_count_1h', 'news_count_24h', 'news_volume_zscore',
     'vol_trend_12_48',
     'mom_12h_zscore',   # already a zscore but per-symbol — keep as TS
+    # Derivatives features (spike-prone, need per-symbol zscore)
+    'oi_change_1h', 'oi_change_4h', 'oi_change_12h', 'oi_change_24h',
+    'oi_zscore_7d', 'oi_ret_interaction', 'oi_ret_interaction_12h',
+    'taker_imbalance', 'taker_cvd_12h', 'taker_cvd_24h', 'taker_flow_zscore',
+    'funding_surprise',
+    'top_ls_change_12h', 'top_ls_change_24h', 'top_ls_zscore',
+    'ls_divergence',
 }
 
 
@@ -1149,6 +1349,7 @@ def main():
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_sentiment_features(df, project_root)
+    df = add_derivatives_features(df, project_root)
 
     # Clean infinities
     for col in df.select_dtypes(include=[np.number]).columns:

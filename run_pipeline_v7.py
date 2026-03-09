@@ -552,6 +552,10 @@ def add_sentiment_features(df, project_root):
     return df
 
 
+# Import derivatives feature function from v6 to avoid code duplication
+from run_pipeline_v6 import add_derivatives_features  # noqa: E402
+
+
 # ============================================================
 # NORMALIZATION & TARGET
 # ============================================================
@@ -564,6 +568,13 @@ TSZSCORE_COLS = {
     'news_count_1h', 'news_count_24h', 'news_volume_zscore',
     'vol_trend_12_48',
     'mom_12h_zscore',
+    # Derivatives features (spike-prone, need per-symbol zscore)
+    'oi_change_1h', 'oi_change_4h', 'oi_change_12h', 'oi_change_24h',
+    'oi_zscore_7d', 'oi_ret_interaction', 'oi_ret_interaction_12h',
+    'taker_imbalance', 'taker_cvd_12h', 'taker_cvd_24h', 'taker_flow_zscore',
+    'funding_surprise',
+    'top_ls_change_12h', 'top_ls_change_24h', 'top_ls_zscore',
+    'ls_divergence',
 }
 
 
@@ -1095,6 +1106,7 @@ def main():
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_sentiment_features(df, project_root)
+    df = add_derivatives_features(df, project_root)
 
     # Clean infinities
     for col in df.select_dtypes(include=[np.number]).columns:

@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_pipeline_v6 import (
     add_multi_horizon_targets, add_cross_asset_features,
     add_advanced_regime_features, add_12h_features, add_sentiment_features,
+    add_derivatives_features,
     cross_sectional_rank, create_rank_target, add_residual_targets,
     evaluate_model, vol_target_returns, drawdown_stop_returns,
     compute_costs_per_period,
@@ -263,6 +264,7 @@ def main():
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_sentiment_features(df, project_root)
+    df = add_derivatives_features(df, project_root)
 
     # Clean infinities
     for col in df.select_dtypes(include=[np.number]).columns:
