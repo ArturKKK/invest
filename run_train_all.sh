@@ -82,10 +82,14 @@ run_step "v6_res_hyb_null" \
     python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --null-importance \
     --results "${EXP_DIR}/v6_res_hyb_null"
 
-# LambdaRank — disabled (needs integer labels, see exp10 logs)
-# run_step "v6_lambdarank" \
-#     python run_pipeline_v6.py --skip-hpo --residual-target --lambdarank \
-#     --results "${EXP_DIR}/v6_lambdarank"
+# LambdaRank — NOW FIXED (labels quantized to int quintiles 0-4)
+run_step "v6_lambdarank" \
+    python run_pipeline_v6.py --skip-hpo --lambdarank \
+    --results "${EXP_DIR}/v6_lambdarank"
+
+run_step "v7_lambdarank" \
+    python run_pipeline_v7.py --skip-hpo --lambdarank \
+    --results "${EXP_DIR}/v7_lambdarank"
 
 # ============================================================
 # ФАЗА 1b: A/B тесты v7 (skip-hpo)
@@ -169,6 +173,15 @@ run_step "xgb_res_hyb_no_news" \
     --results "${EXP_DIR}/xgboost_res_hyb_no_news"
 
 # ============================================================
+# ФАЗА 3b: Derivatives-Only Mini-Model
+# ============================================================
+echo -e "${YELLOW}═══ ФАЗА 3b: Derivatives-Only Mini-Model ═══${NC}"
+
+run_step "deriv_only" \
+    python run_pipeline_derivatives.py --skip-hpo \
+    --results "${EXP_DIR}/deriv_only"
+
+# ============================================================
 # ФАЗА 4: HPO (раскомментировать лучшую комбо)
 # ============================================================
 echo -e "${YELLOW}═══ ФАЗА 4: HPO ═══${NC}"
@@ -192,16 +205,20 @@ echo "  (раскомментируй лучшую комбинацию)"
 echo "  Фаза 5 (production) — раскомментируй после проверки"
 
 # run_step "v6_prod" \
-#     python run_pipeline_v6.py --production --residual-target --hybrid-norm \
+#     python run_pipeline_v6.py --production --skip-hpo --no-news \
 #     --results results/production/lgb_v6_no_news
 
 # run_step "v7_prod" \
-#     python run_pipeline_v7.py --production --residual-target --hybrid-norm \
+#     python run_pipeline_v7.py --production --skip-hpo \
 #     --results results/production/lgb_v7_no_news
 
 # run_step "cb_prod" \
-#     python run_pipeline_catboost.py --production --gpu --residual-target --hybrid-norm \
+#     python run_pipeline_catboost.py --production --skip-hpo --gpu \
 #     --results results/production/catboost_with_news
+
+# run_step "deriv_prod" \
+#     python run_pipeline_derivatives.py --production --skip-hpo \
+#     --results results/production/deriv_only
 
 # ============================================================
 echo ""

@@ -33,6 +33,10 @@ from run_trading import (
     fetch_ohlcv, build_features, cross_sectional_rank, load_lgb_models,
     load_catboost_models,
 )
+try:
+    from run_trading import _OKX_BLOCKED
+except ImportError:
+    _OKX_BLOCKED = set()
 
 COST_SIDE = 0.0003 + 0.0001          # taker 3bps + slippage 1bp
 FUNDING_PER_8H = 0.0001              # ~1bp per 8h funding cost for leveraged positions
@@ -138,6 +142,9 @@ def main():
                     help="Vol-adjusted sizing: weight ∝ edge / coin_vol (inverse-vol)")
     ap.add_argument("--regime-shorts", type=float, default=0.0,
                     help="Regime short scaling: in bull regime, scale short allocation to X (e.g. 0.5)")
+    ap.add_argument("--short-blocked", action="store_true",
+                    help="Block shorting OKX-restricted symbols (19 coins). "
+                         "Simulates real OKX constraints for realistic backtest.")
     ap.add_argument("--warmup",  type=int,   default=720)
     args = ap.parse_args()
     root = os.path.dirname(os.path.abspath(__file__))
@@ -262,6 +269,25 @@ def main():
                     print(f"   results_xgboost: {len(ms)} XGB models, {len(mf_g)} feats")
             except ImportError:
                 print("   ⚠️  xgboost not installed, skipping XGBoost models")
+        # Derivatives-Only mini-model ensemble member
+        deriv_dir = None
+        for _dd in ["results/production/deriv_only", "results_deriv"]:
+            _p = os.path.join(root, _dd)
+            if os.path.isdir(_p) and any(f.endswith('.txt') for f in os.listdir(_p)):
+                deriv_dir = _p; break
+        if deriv_dir:
+            ms = load_lgb_models(deriv_dir)
+            if ms:
+                fn_path = os.path.join(deriv_dir, 'feature_names.json')
+                if os.path.exists(fn_path):
+                    with open(fn_path) as _f:
+                        mf_g = json.load(_f)
+                else:
+                    mf_g = ms[0].feature_name()
+                for c in [c for c in mf_g if c not in df.columns]:
+                    df[c] = 0.0
+                model_groups.append((ms, mf_g))
+                print(f"   deriv_only: {len(ms)} LGB models, {len(mf_g)} feats")
         if not model_groups:
             print("❌ no models for ensemble"); return
     else:
@@ -507,6 +533,9 @@ def main():
             short_idx = []
             for idx in order_asc:
                 if edges[idx] <= -min_edge:
+                    # Skip OKX-blocked symbols when --short-blocked is on
+                    if args.short_blocked and _OKX_BLOCKED and syms[idx] in _OKX_BLOCKED:
+                        continue
                     short_idx.append(idx)
                 if len(short_idx) >= n_pos:
                     break
@@ -518,6 +547,23 @@ def main():
             nl = min(n_pos, n // 3)
             new_L = set(syms[order_desc[:nl]])
             new_S = set(syms[order_asc[:nl]])
+
+        # ── Short-blocked filter: skip OKX-restricted symbols for shorts ──
+        if args.short_blocked and _OKX_BLOCKED:
+            blocked_in_S = new_S & _OKX_BLOCKED
+            if blocked_in_S:
+                # Remove blocked symbols, backfill from next-worst candidates
+                new_S -= blocked_in_S
+                shortable_idx = [i for i in order_asc
+                                 if syms[i] not in new_S
+                                 and syms[i] not in new_L
+                                 and syms[i] not in _OKX_BLOCKED]
+                for idx in shortable_idx:
+                    if len(new_S) >= nl:
+                        break
+                    if min_edge > 0 and edges[idx] > -min_edge:
+                        continue
+                    new_S.add(syms[idx])
 
         if len(new_L) == 0 and len(new_S) == 0:
             # No positions pass the edge filter — skip step

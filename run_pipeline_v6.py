@@ -983,6 +983,20 @@ def train_lgbm(X_train, y_train, X_val, y_val, custom_params=None, seed=42):
     return model
 
 
+LAMBDARANK_NBINS = 5   # quintiles 0..4, matches top-5/bottom-5 trading logic
+
+
+def quantize_rank_target(y, n_bins=LAMBDARANK_NBINS):
+    """Convert float target_rank (0-1) to integer relevance labels (0..n_bins-1).
+
+    LGBMRanker requires integer labels.  We use equal-width bins:
+      [0, 0.2) → 0,  [0.2, 0.4) → 1,  ... [0.8, 1.0] → 4
+    Higher label = higher relevance (= higher expected return).
+    """
+    labels = np.clip((y * n_bins).astype(int), 0, n_bins - 1)
+    return labels
+
+
 def train_lgbm_ranker(X_train, y_train, X_val, y_val,
                       train_groups, val_groups,
                       custom_params=None, seed=42):
@@ -992,6 +1006,9 @@ def train_lgbm_ranker(X_train, y_train, X_val, y_val,
     cross-section* (timestamp group).  This often improves top-N /
     bottom-N selection quality (the actual trading decision).
 
+    y_train / y_val are float target_rank [0, 1] — automatically
+    quantized to int relevance labels (0..4 quintiles).
+
     Parameters
     ----------
     train_groups : array-like
@@ -999,10 +1016,14 @@ def train_lgbm_ranker(X_train, y_train, X_val, y_val,
     val_groups : array-like
         Same for validation set.
     """
+    # Quantize float rank → integer relevance (required by LGBMRanker)
+    y_train_int = quantize_rank_target(y_train)
+    y_val_int = quantize_rank_target(y_val)
+
     base_params = {
         'objective': 'lambdarank',
         'metric': 'ndcg',
-        'lambdarank_truncation_level': 10,  # we only care about top/bottom 5–10
+        'lambdarank_truncation_level': 5,  # top/bottom 5 = what we trade
         'verbosity': -1,
         'n_estimators': 5000,
         'learning_rate': 0.01,
@@ -1024,9 +1045,9 @@ def train_lgbm_ranker(X_train, y_train, X_val, y_val,
 
     model = lgb.LGBMRanker(**base_params)
     model.fit(
-        X_train, y_train,
+        X_train, y_train_int,
         group=train_groups,
-        eval_set=[(X_val, y_val)],
+        eval_set=[(X_val, y_val_int)],
         eval_group=[val_groups],
         callbacks=[lgb.early_stopping(100), lgb.log_evaluation(200)],
     )

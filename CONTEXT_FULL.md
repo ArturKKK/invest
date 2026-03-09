@@ -228,6 +228,7 @@ results/production/         — Текущие production модели
   lgb_v7_no_news/           — LGB v7 (5 seeds)
   catboost_with_news/       — CatBoost (5 seeds)
 results/exp10_.../          — A/B тест: residual/hybrid/null-importance
+results/exp11_ablation/     — Derivatives A/B тест (12 конфигураций)
 results/archive/            — Старые эксперименты (exp02-exp07)
 ```
 
@@ -235,40 +236,50 @@ results/archive/            — Старые эксперименты (exp02-exp
 
 ## 8. Текущие задачи и план
 
-### Сейчас (в процессе)
-- ⏳ **Обучение exp11 с Binance derivatives данными** (OI, taker buy/sell, L/S ratios, funding rate). Данные скачаны (81MB metrics + 1.2MB funding, Dec 2021+). Код обновлен. Ожидает запуска `bash run_train_all.sh exp11_with_derivatives`.
+### AI Architecture Review (10 марта 2026)
+Запрошен ревью у внешней AI. Ключевые рекомендации:
 
-### Следующие шаги (приоритезированы)
+#### Самое важное (делаем сейчас):
+1. ⏳ **Production retrain до 2025-09 + exp11 derivatives** — модели устарели (train→2024-06), derivatives дали +42%.
+2. ⏳ **LambdaRank в LGB** — objective=lambdarank, group=timestamp. Дёшево, может улучшить ранжирование top/bottom → WR↑.
+3. ⏳ **Derivatives-only мини-модель** — Ridge/маленький GBDT только на OI/taker/LS/funding → декоррелированный 4-й голос в ансамбле.
+4. ⏳ **Short constraints в симуляции** — 19/50 монет нельзя шортить на OKX demo. Сим должен это отражать.
 
-#### Meta-model (стэкинг) — 1-2 дня
-- Не предсказывает цену — предсказывает **когда базовые модели правы**
-- Вход: предсказания 20 моделей + их дисперсия + режим рынка
-- Выход: P(trade profitable) → торгуем только когда meta-model уверена
-- Отличие от min-conf: meta-model учится на паттернах ("когда LGB и CatBoost расходятся в тренде, прав CatBoost"), а min-conf просто считает std
-- **Ожидаемый эффект**: WR +3-5%, прямой путь к 65-67% WR
+#### Следующий приоритет:
+5. ⬜ **Meta-model как risk scaler** (НЕ stacking)
+   - Не "торгуем/не торгуем", а управляет **gross exposure** (0.3x…1.5x)
+   - LogReg/маленький GBDT на OOF predictions: mean_pred, std, |LGB-CB|, regime, dispersion, funding-stress
+   - Требует walk-forward OOF predictions
+   - **Ожидаемый эффект**: WR +3-5%, MaxDD↓
 
-#### Regime detector — 0.5 дня
-- HMM или кластеризация: определяет режим рынка (тренд / боковик / паника)
-- Разные модели сильны в разных режимах → в панике не торгуем, в тренде даём CatBoost больше веса
-- **Ожидаемый эффект**: WR +2-3%, снижение MaxDD
+6. ⬜ **Regime-dependent sizing + vol targeting**
+   - short_gross = base × f(regime): 1.0 neutral, 0.5 trend-up, 1.2 panic
+   - leverage_t = target_vol / realized_vol_portfolio (clipped)
+   - **Ожидаемый эффект**: MaxDD↓, WR↑ в bull market
 
-#### Temporal Fusion Transformer (TFT) — 3-5 дней на код, часы на обучение
-- Нейросеть для time series, видит последовательность 48-168 часов (не одну строку)
-- Может выучить паттерны типа "3 часа роста → откат → затишье → продолжение"
-- GBDT не умеет видеть порядок данных, TFT умеет → низкая корреляция с деревьями
-- Данные: те же самые, просто подаются как последовательности
-- Зависимости: pytorch, pytorch-forecasting, pytorch-lightning
-- **Ожидаемый эффект**: WR +1-3%, качественно другой сигнал
+#### Когда-нибудь потом:
+7. ⬜ **Liquidation / basis / funding premium** фичи — нужны данные (CoinGlass? Coinalyze?)
+8. ⬜ **On-chain market-wide** (exchange netflow BTC/ETH, stablecoin flows) — как regime filter
+9. ⬜ **TFT / Transformer** — последовательный сигнал, некоррелированный с GBDT (3-5 дней)
+10. ⬜ **Survivorship bias fix** — динамический universe по листингам/ликвидности
+11. ⬜ **News ablation (exp12)** — 4-way с полными данными. Низкий приоритет: news вредят LGB, CB уже с news.
 
-#### On-chain данные — 2-3 дня
-- Whale movements, exchange inflows/outflows, active addresses, NVT ratio
-- Данных нет у текущих моделей → гарантированно некоррелированный сигнал
-- Нужен API (Glassnode, CryptoQuant или free alternatives)
+#### Insights из ревью:
+- **Sharpe 6.61** может быть завышен survivorship bias + OKX short constraints
+- **News вредят LGB** из-за leaf-wise boosting overweighting noisy splits; ordered boosting CatBoost robust
+- **Gain-based feature selection** может выбрасывать стабилизаторы → перейти на permutation importance OOS
+- **WR 61→65%** — менять не модель, а слой принятия решений (meta risk scaler + regime short budget)
+- **Kelly criterion** — не в чистом виде (нестационарные данные), лучше fractional Kelly + clips
+- **Residual target** — использовать как отдельный эксперт или компонент meta-model, не как основной target
+- **Vol targeting** часто снижает DD и повышает WR больше, чем тонкая настройка DDStop
+
+### Статус данных
+- ✅ **exp11_ablation завершён** — v7_baseline DDStop 2.12 (+42% vs exp10). Подробности в секции 11.
+- ✅ **News data полностью скачан** — 950,488 статей, 67/67 месяцев ≥3000 шт.
+- ✅ **Binance derivatives data** — OI, taker, L/S, funding с Dec 2021 (81MB + 1.2MB).
 
 #### Другое
-- ⬜ Production retrain на train→2025-09 (после анализа exp11 результатов)
 - ⬜ Maker orders (экономия 33% на fees: 0.02% vs 0.03%)
-- ⬜ Adaptive confidence threshold (мягкий 0.70-0.75 вместо удалённого 0.85)
 - ⬜ Live trading с реальными $500 (после стабилизации)
 
 ---
@@ -335,7 +346,9 @@ results/archive/            — Старые эксперименты (exp02-exp
 | 8 | 9 Мар | Full sim grid (7 конфигов) | 365d 1x 12h no filter = Sharpe 6.61 | ✅ Документировано |
 | 9 | 9 Мар | XGBoost + news interactions | DDStop Sharpe 0.97 — слабее ансамбля, отложен | ⚠️ |
 | 10 | 9 Мар | A/B тесты: residual-target, hybrid-norm, null-importance | News фичи снижают DDStop всех LGB на 21-60%. Подробности ниже. | ✅ Задокументировано |
-| 11 | 9 Мар | Binance Futures derivatives data | Скачано: OI, taker, L/S, funding с Dec 2021 (data.binance.vision). 50 символов, 1.8M строк metrics + 294K funding. Новые фичи добавлены в pipeline. | ✅ Ожидает обучения |
+| 11 | 9 Мар | Binance Futures derivatives data | Скачано: OI, taker, L/S, funding с Dec 2021 (data.binance.vision). 50 символов, 1.8M строк metrics + 294K funding. Новые фичи добавлены в pipeline. | ✅ Данные есть |
+| 12 | 10 Мар | exp11_ablation — derivatives A/B | **v7_baseline DDStop 2.12 (+42% vs exp10)**, v6_res_hyb_null 1.64, CatBoost 1.54. Derivatives МАССИВНО помогают LGB. | ✅ Задокументировано |
+| 13 | 10 Мар | News data gap-fill | 950k статей, 67/67 месяцев ≥3000 шт. Готово для exp12. | ✅ Данные готовы |
 
 ### Подробные результаты exp10 — A/B тест news features (9 марта 2026)
 
@@ -377,6 +390,51 @@ results/archive/            — Старые эксперименты (exp02-exp
 **Подтверждение из exp07** (архив): LGB v6 с news тогда тоже дал DDStop avg 0.96, LGB v7 с news — 1.20. Оба ниже no-news baseline.
 
 **Провал v6_lambdarank**: `LightGBMError: label should be int type (met 0.947368) for ranking task`. Нужно квантизировать label в int.
+
+### Подробные результаты exp11_ablation — Binance Derivatives (10 марта 2026)
+
+**Цель**: проверить, как Binance derivatives фичи (OI, taker buy/sell, L/S ratios, funding rate) влияют на все модели.
+
+**Изменения**: +25 фичей (163→188 для v6/CB, 160→185 для v7, 186→211 для XGB).
+
+**Прогоны**: 11 конфигураций × 3 окна walk-forward × 5 seeds.
+
+| Run | Модель | Rank_IC | DDStop W1 | DDStop W2 | DDStop W3 | DDStop AVG | DDStop std | Comb DDStop | Ann Ret |
+|-----|--------|---------|-----------|-----------|-----------|------------|------------|-------------|--------|
+| **exp11/v7_baseline** | **LGB** | **0.0243** | **1.84** | **2.14** | **2.38** | **2.12** | **0.22** | **2.18** | **49%** |
+| exp11/v7_res_hyb | LGB | 0.0271 | 0.55 | 2.62 | 2.36 | 1.84 | 0.92 | 1.97 | 33% |
+| exp11/v7_res_hyb_null | LGB | 0.0267 | 0.54 | 2.44 | 2.52 | 1.83 | 0.92 | 2.06 | 30% |
+| exp11/v6_res_hyb_null | LGB | 0.0278 | 0.44 | 2.24 | 2.24 | 1.64 | 0.85 | 2.03 | 27% |
+| exp11/v6_res_hyb | LGB | 0.0280 | -0.09 | 2.33 | 2.40 | 1.55 | 1.16 | 2.10 | 30% |
+| exp11/catboost_baseline | CB | 0.0243 | 0.79 | 1.86 | 1.96 | 1.54 | 0.53 | 1.80 | 43% |
+| exp11/v6_residual | LGB | 0.0256 | 0.38 | 1.93 | 2.16 | 1.49 | 0.79 | 1.89 | 34% |
+| exp11/v6_hybrid | LGB | 0.0268 | 0.27 | 2.27 | 1.91 | 1.48 | 0.87 | 1.77 | 38% |
+| exp11/xgboost_res_hyb | XGB | 0.0270 | -0.40 | 2.15 | 2.03 | 1.26 | 1.17 | 1.84 | 29% |
+| exp11/v6_baseline | LGB | 0.0252 | -0.24 | 1.86 | 2.06 | 1.23 | 1.04 | 1.73 | 35% |
+| exp11/catboost_res_hyb | CB | 0.0286 | -0.23 | 2.16 | 1.63 | 1.19 | 1.02 | 1.52 | 35% |
+
+**Сравнение exp11 vs exp10 (DDStop Sharpe avg)**:
+- v7_baseline: 2.12 vs 1.49 = **+42%** 🚀
+- v7_res_hyb: 1.84 vs 0.97 = **+90%** 🚀
+- v6_baseline: 1.23 vs 0.78 = **+57%** 🚀
+- v6_res_hyb: 1.55 vs 1.03 = **+50%** 🚀
+- catboost_baseline: 1.54 vs 1.49 = **+3%** (минимальное улучшение)
+- catboost_res_hyb: 1.19 vs 1.23 = **−3%** (без изменений)
+
+**Сравнение exp11 vs PROD (DDStop Sharpe)**:
+- v7_baseline: 2.12 vs 1.88 = **+13%** — НОВЫЙ ЛУЧШИЙ РЕЗУЛЬТАТ
+- v6_res_hyb_null: 1.64 vs 1.81 = −9% (пока не бьёт PROD v6)
+- catboost_baseline: 1.54 vs 1.51 = +2% (стабилен)
+
+**Выводы exp11**:
+1. **v7_baseline — безоговорочный лидер**: DDStop 2.12 avg, 2.18 combined, std 0.22 (самый стабильный), 49% Ann Ret.
+2. **Derivatives МАССИВНО помогают LGB** (+42-90% DDStop), но **почти не влияют на CatBoost** (+3%). CatBoost уже использовал ordered boosting для noisy features.
+3. **v7_baseline бьёт PROD** (2.12 vs 1.88, +13%) — первый раз эксперимент превосходит production.
+4. **W1 (→2024-12) остаётся слабым** для всех вариантов. Маленький тест-сет + ранний период.
+5. **res_hyb варианты улучшают Combined DDStop** для v6 (2.10 vs 1.73), но добавляют variance.
+6. **XGBoost по-прежнему слабее** (1.26) — сложные interaction features не компенсируют.
+
+---
 
 **Выводы exp10**:
 1. **News features ВРЕДЯТ LightGBM** — DDStop Sharpe падает на 21-60%. Особенно сильно v6 (−57%).
