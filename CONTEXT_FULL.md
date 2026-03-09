@@ -485,6 +485,43 @@ results/archive/            — Старые эксперименты (exp02-exp
 
 - **`run_pipeline_v6.py`** (1265 строк) — базовый pipeline, все shared функции: `add_sentiment_features`, `add_multi_horizon_targets`, `evaluate_model`, walk-forward windows, constants
 - **`run_pipeline_xgboost.py`** (721 строка) — новая модель с news interaction features
-- **`run_fast_sim.py`** (636 строк) — симулятор, загрузка ансамбля, predict_ensemble
+- **`run_fast_sim.py`** (~1000 строк) — симулятор, загрузка ансамбля, predict_ensemble, meta-risk, vol-target
 - **`run_trading.py`** (2200+ строк) — live/paper trading bot, build_features, generate_signal
 - **`RESULTS.md`** (570 строк) — все результаты, таблицы, графики
+
+---
+
+## 14. Backlog: рекомендации из AI-ревью v2 (10 марта 2026)
+
+### Приоритет 1 — после exp12
+- [ ] **Фикс meta-risk scaler**: заменить `recent WR (10 шагов)` на EMA top-bottom spread (40-60 шагов) или Rank IC EMA — текущий WR(10) = 5 дней, чистый шум
+- [ ] **Vol-target "только вниз"**: `scale = min(1, target/vol)` — не увеличивать в спокой, только резать в стресс
+- [ ] **Stress cap по деривативам**: если btc_vol высока ИЛИ funding_surprise экстремален → gross ≤ 0.5-0.8x
+- [ ] **Short budget режимно**: в сильном bull уменьшать шорты (уже частично есть через regime_shorts)
+
+### Приоритет 2 — новые данные/фичи для следующего ретренинга
+- [ ] **Liquidation data** (Binance): long_liq, short_liq, liq_imbalance, zscore — сильный сигнал forced flows
+- [ ] **Basis / perp premium** (perp vs spot/index): zscore, mean reversion signal
+- [ ] **Market-wide stress** агрегаты: aggregate OI change, aggregate taker imbalance, funding dispersion
+- [ ] **Cross-exchange spread** (Binance vs OKX) по BTC/ETH как системный маркер
+- [ ] **On-chain** (только BTC/ETH): exchange flows + stablecoin flows (coin-level для 50 альтов не окупается)
+
+### Приоритет 3 — архитектура/ensemble
+- [ ] **Constrained linear stacking (Ridge)**: на OOF walk-forward predictions + disagreement + режим
+- [ ] **Dynamic weighting по режиму** (Mixture-of-Experts): trend → больше LGB, panic → больше CB + меньше gross
+- [ ] **Derivatives-only model** как отдельный эксперт в ансамбле (декорреляция)
+- [ ] **Recency weighting** при обучении: exp weights с half-life 90-180 дней
+- [ ] **Rolling training window** (последние 18-30 мес) вместо expanding (2017+)
+
+### Приоритет 4 — мониторинг/production
+- [ ] **Degradation monitor**: OOS Rank IC по неделям, z-score vs история, автоалерт
+- [ ] **Top-bottom spread** мониторинг (realized L/S return differential)
+- [ ] **Ensemble correlation tracking**: если модели начинают ошибаться синхронно → алерт
+- [ ] **Unified backtester**: один source of truth с OKX-ограничениями (blocked shorts), одинаковый cost model
+- [ ] **Production kill-switch**: max daily loss, max intraday DD, max leverage hard cap
+
+### Красные флаги из ревью (помнить)
+- Survivorship bias (50 монет из 2025 на данных 2021+) — остаётся
+- Short constraints (19/50 blocked) — симулятор должен это учитывать
+- Binance features → OKX execution: в стресс расхождения могут расти
+- Kelly criterion НЕ рекомендуется (нестационарный edge → переплечо)
