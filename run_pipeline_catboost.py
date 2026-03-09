@@ -228,9 +228,15 @@ def main():
                         help='Hybrid normalization: CS-rank + TS-zscore for spike features')
     parser.add_argument('--no-news', action='store_true',
                         help='Skip loading crypto news features (for clean A/B tests)')
+    parser.add_argument('--news-mode', type=str, default='all',
+                        choices=['all', 'market-only', 'coin-only', 'none'],
+                        help='News feature scope: all, market-only, coin-only, none')
     parser.add_argument('--no-derivatives', action='store_true',
                         help='Skip loading Binance derivatives features (for clean A/B tests)')
     args = parser.parse_args()
+
+    if args.no_news:
+        args.news_mode = 'none'
 
     global _task_type
     _task_type = 'GPU' if args.gpu else 'CPU'
@@ -267,7 +273,7 @@ def main():
         df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
-    df = add_sentiment_features(df, project_root, skip_news=args.no_news)
+    df = add_sentiment_features(df, project_root, news_mode=args.news_mode)
     if not args.no_derivatives:
         df = add_derivatives_features(df, project_root)
     else:

@@ -1074,6 +1074,9 @@ def main():
                         help='Use null-importance feature selection instead of gain-based')
     parser.add_argument('--no-news', action='store_true',
                         help='Skip loading crypto news features (for clean A/B tests)')
+    parser.add_argument('--news-mode', type=str, default='all',
+                        choices=['all', 'market-only', 'coin-only', 'none'],
+                        help='News feature scope (v7 has no news by default, for consistency)')
     parser.add_argument('--no-derivatives', action='store_true',
                         help='Skip loading Binance derivatives features (for clean A/B tests)')
     args = parser.parse_args()

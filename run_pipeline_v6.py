@@ -129,6 +129,7 @@ REGIME_COLS = {
     'political_news_volume_zscore',
     # Binary flags (should NOT be ranked)
     'has_news_data',
+    'news_coverage_ok', 'news_event',
 }
 
 # Cost model for perpetual swaps — v6 (12h rebalance)
@@ -367,15 +368,19 @@ def add_12h_features(df):
     return df
 
 
-def add_sentiment_features(df, project_root, skip_news=False):
+def add_sentiment_features(df, project_root, news_mode='all'):
     """
     Add sentiment/alternative data features:
     1. Fear & Greed Index (daily → hourly ffill) — market-level
     2. Funding rates from OKX (per-coin, where available)
     3. Synthetic positioning proxies (from OHLCV)
-    4. Crypto News Sentiment (skipped if skip_news=True)
+    4. Crypto News Sentiment (controlled by news_mode):
+       - 'all': market + coin-level news
+       - 'market-only': only market_news_* and political_* features
+       - 'coin-only': only per-coin news features
+       - 'none': skip all news features
     """
-    print("   📰 Adding sentiment features...")
+    print(f"   📰 Adding sentiment features... (news_mode={news_mode})")
     sent_dir = os.path.join(project_root, 'data', 'sentiment')
 
     n_feats_before = len([c for c in df.columns if c not in EXCLUDE_COLS])
@@ -517,11 +522,12 @@ def add_sentiment_features(df, project_root, skip_news=False):
             df[f'btc_beta_{w}h'] = cov / var
 
     # ---- 5. Crypto News Sentiment (from fetch_crypto_news.py) ----
-    if skip_news:
-        print("      ⏭️  Skipping news features (--no-news)")
+    #    Controlled by news_mode: 'all', 'market-only', 'coin-only', 'none'
+    if news_mode == 'none':
+        print("      ⏭️  Skipping news features (news_mode=none)")
     news_path = os.path.join(sent_dir, 'crypto_news.parquet')
-    if not skip_news and os.path.exists(news_path):
-        print("      Loading news sentiment features...")
+    if news_mode != 'none' and os.path.exists(news_path):
+        print(f"      Loading news features (mode={news_mode})...")
         news = pd.read_parquet(news_path)
         news['timestamp'] = pd.to_datetime(news['timestamp'], utc=True)
 
@@ -532,59 +538,68 @@ def add_sentiment_features(df, project_root, skip_news=False):
             'news_sentiment_momentum', 'news_volume_zscore',
         ]
         news_market_cols = ['market_news_count_24h', 'market_news_sentiment_24h']
-        # Political/macro features (also market-level, same for all coins)
         news_political_cols = [
             'political_news_count_24h', 'political_sentiment_24h',
             'political_sentiment_7d', 'political_sentiment_shock',
             'political_news_volume_zscore',
         ]
 
-        # Merge per-coin features
-        merge_cols = ['timestamp', 'symbol'] + [c for c in news_per_coin_cols if c in news.columns]
-        per_coin_news = news[merge_cols].drop_duplicates(['timestamp', 'symbol'])
-        df = df.merge(per_coin_news, on=['timestamp', 'symbol'], how='left')
+        # ── Merge per-coin features (modes: 'all', 'coin-only') ──
+        if news_mode in ('all', 'coin-only'):
+            merge_cols = ['timestamp', 'symbol'] + [c for c in news_per_coin_cols if c in news.columns]
+            per_coin_news = news[merge_cols].drop_duplicates(['timestamp', 'symbol'])
+            df = df.merge(per_coin_news, on=['timestamp', 'symbol'], how='left')
+            print(f"      + coin-level news: {len(news_per_coin_cols)} features")
 
-        # Merge market-level + political features (same for all coins at each timestamp)
-        all_market_cols = news_market_cols + news_political_cols
-        market_merge = ['timestamp'] + [c for c in all_market_cols if c in news.columns]
-        market_news = news[market_merge].drop_duplicates('timestamp')
-        df = df.merge(market_news, on='timestamp', how='left', suffixes=('', '_dup'))
-        # Drop any duplicated columns from merge
-        dup_cols = [c for c in df.columns if c.endswith('_dup')]
-        if dup_cols:
-            df.drop(columns=dup_cols, inplace=True)
+        # ── Merge market-level + political (modes: 'all', 'market-only') ──
+        if news_mode in ('all', 'market-only'):
+            all_market_cols = news_market_cols + news_political_cols
+            market_merge = ['timestamp'] + [c for c in all_market_cols if c in news.columns]
+            market_news = news[market_merge].drop_duplicates('timestamp')
+            df = df.merge(market_news, on='timestamp', how='left', suffixes=('', '_dup'))
+            dup_cols = [c for c in df.columns if c.endswith('_dup')]
+            if dup_cols:
+                df.drop(columns=dup_cols, inplace=True)
+            print(f"      + market-level news: {len(all_market_cols)} features")
 
-        # ── Smart NaN handling for news features ──────────────────
-        # Problem: fillna(0) makes "no data available" look like "no news
-        # happened", creating a date/regime leak when data has coverage gaps.
-        # Solution: add has_news_data flag, use NaN for missing periods,
-        # and let LightGBM handle NaN natively (use_missing=true by default).
-        
-        # has_news_data: 1 where news parquet has coverage, NaN otherwise.
-        # This lets the model distinguish "genuinely 0 news" from "no data".
+        # ── Two-flag system for NaN handling ──────────────────────
+        # Recommended by external AI review to prevent data-availability leak.
+        #
+        #   news_coverage_ok : 1 = news pipeline has data for this timestamp
+        #                      0 = coverage hole — all news cols are NaN
+        #   news_event       : 1 = actual news in 24h window
+        #                      0 = data available but genuinely no news
+        #                      NaN = no coverage
+        #
+        # LightGBM handles NaN natively (use_missing=true by default).
+
+        # Determine coverage from whichever columns were merged
+        coverage_col = None
         if 'news_count_24h' in df.columns:
-            # news_count_24h is NaN only where no data — after merge left join
-            # If it's 0, it means the parquet had data (the count was genuinely 0)
-            df['has_news_data'] = (~df['news_count_24h'].isna()).astype(float)
-            # Replace NaN→NaN, keep 0s as 0s (they are real zeros from covered periods)
-            # Do NOT fillna(0) — let LightGBM handle NaN natively
-            n_no_data = (df['has_news_data'] == 0).sum()
+            coverage_col = 'news_count_24h'
+        elif 'market_news_count_24h' in df.columns:
+            coverage_col = 'market_news_count_24h'
+
+        if coverage_col:
+            has_coverage = ~df[coverage_col].isna()
+            df['news_coverage_ok'] = has_coverage.astype(float)
+            df['news_event'] = np.where(has_coverage, (df[coverage_col] > 0).astype(float), np.nan)
+
+            n_covered = has_coverage.sum()
             n_total = len(df)
-            print(f"      ⚠️  News coverage: {n_total - n_no_data:,}/{n_total:,} rows "
-                  f"({(n_total - n_no_data)/n_total*100:.1f}%), "
-                  f"{n_no_data:,} rows with NaN (no data)")
-        
-        # Count features: use log1p for heavy-tailed distributions
+            n_events = int((df['news_event'] == 1).sum())
+            print(f"      📊 Coverage: {n_covered:,}/{n_total:,} rows ({n_covered/n_total*100:.1f}%)")
+            print(f"      📰 Events: {n_events:,}/{n_covered:,} covered rows "
+                  f"({n_events/max(n_covered,1)*100:.1f}%) have news")
+            print(f"      🕳️  Holes: {n_total - n_covered:,} rows = NaN (not 0!)")
+
+        # Count features: log1p for heavy-tailed distributions
         for col in ['news_count_1h', 'news_count_24h', 'news_count_7d',
                      'market_news_count_24h', 'political_news_count_24h']:
             if col in df.columns:
-                # log1p only where data exists (NaN stays NaN)
                 df[col] = np.log1p(df[col])
 
-        n_with_news = (df['news_count_24h'] > 0).sum() if 'news_count_24h' in df.columns else 0
-        print(f"      News: {n_with_news:,} rows with news "
-              f"({n_with_news / len(df) * 100:.1f}%)")
-    else:
+    elif news_mode != 'none':
         print(f"      ⚠️  No news data at {news_path} (run fetch_crypto_news.py first)")
 
     n_feats_after = len([c for c in df.columns if c not in EXCLUDE_COLS
@@ -1322,9 +1337,17 @@ def main():
                         help='Use null-importance feature selection instead of gain-based')
     parser.add_argument('--no-news', action='store_true',
                         help='Skip loading crypto news features (for clean A/B tests)')
+    parser.add_argument('--news-mode', type=str, default='all',
+                        choices=['all', 'market-only', 'coin-only', 'none'],
+                        help='News feature scope: all (market+coin), market-only, '
+                             'coin-only, none (same as --no-news)')
     parser.add_argument('--no-derivatives', action='store_true',
                         help='Skip loading Binance derivatives features (for clean A/B tests)')
     args = parser.parse_args()
+    
+    # --no-news is syntactic sugar for --news-mode none
+    if args.no_news:
+        args.news_mode = 'none'
 
     project_root = os.path.dirname(os.path.abspath(__file__))
     data_dir = args.data or os.path.join(project_root, 'data', 'features')
@@ -1358,7 +1381,7 @@ def main():
         df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
-    df = add_sentiment_features(df, project_root, skip_news=args.no_news)
+    df = add_sentiment_features(df, project_root, news_mode=args.news_mode)
     if not args.no_derivatives:
         df = add_derivatives_features(df, project_root)
     else:

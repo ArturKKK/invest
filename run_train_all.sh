@@ -105,18 +105,25 @@ run_step "v7_res_hyb_null" \
     --results "${EXP_DIR}/v7_res_hyb_null"
 
 # ============================================================
-# ФАЗА 1c: Чистая аблация news (frozen feature set ± news)
-#   Сравниваем ОДИНАКОВЫЙ пайплайн с/без новостей
+# ФАЗА 1c: 4-way News Ablation (recommended by external AI review)
+#   base (no news) → +market-only → +coin-only → +all
+#   Frozen pipeline: v6 res_hyb, only news scope changes
 # ============================================================
-echo -e "${YELLOW}═══ ФАЗА 1c: News ablation (frozen features ± news) ═══${NC}"
+echo -e "${YELLOW}═══ ФАЗА 1c: 4-way News Ablation ═══${NC}"
 
 run_step "v6_res_hyb_no_news" \
-    python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --no-news \
+    python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --news-mode none \
     --results "${EXP_DIR}/v6_res_hyb_no_news"
 
-run_step "v7_res_hyb_no_news" \
-    python run_pipeline_v7.py --skip-hpo --residual-target --hybrid-norm --no-news \
-    --results "${EXP_DIR}/v7_res_hyb_no_news"
+run_step "v6_res_hyb_market_news" \
+    python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --news-mode market-only \
+    --results "${EXP_DIR}/v6_res_hyb_market_news"
+
+run_step "v6_res_hyb_coin_news" \
+    python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --news-mode coin-only \
+    --results "${EXP_DIR}/v6_res_hyb_coin_news"
+
+# NOTE: v6_res_hyb (Phase 1) already runs with --news-mode all (default)
 
 # ============================================================
 # ФАЗА 1d: Derivatives ablation (± derivatives)
