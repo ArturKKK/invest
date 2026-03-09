@@ -37,6 +37,32 @@ from run_trading import (
 COST_SIDE = 0.0003 + 0.0001          # taker 3bps + slippage 1bp
 FUNDING_PER_8H = 0.0001              # ~1bp per 8h funding cost for leveraged positions
 
+
+def compute_hac_sharpe(returns, rebal_h):
+    """Newey-West HAC-adjusted Sharpe ratio.
+
+    Standard Sharpe assumes IID returns, which overstates significance
+    when consecutive returns are autocorrelated (e.g. overlapping hold
+    periods).  HAC variance accounts for this via Bartlett kernel.
+    """
+    a = np.array(returns)
+    n = len(a)
+    if n < 10:
+        return np.nan
+    mean_r = np.mean(a)
+    # Bandwidth: Newey-West rule of thumb = int(n^(1/3)), min 2
+    max_lag = max(int(n ** (1 / 3)), 2)
+    demeaned = a - mean_r
+    gamma_0 = np.mean(demeaned ** 2)
+    hac_var = gamma_0
+    for k in range(1, max_lag + 1):
+        bartlett_weight = 1.0 - k / (max_lag + 1)
+        gamma_k = np.mean(demeaned[k:] * demeaned[:-k])
+        hac_var += 2.0 * bartlett_weight * gamma_k
+    hac_var = max(hac_var, 1e-20)  # floor to prevent sqrt of negative
+    periods_per_year = 365 * 24 / rebal_h
+    return mean_r / np.sqrt(hac_var) * np.sqrt(periods_per_year)
+
 # ── Macro event calendar (FOMC, CPI, major crypto events) ─────────
 # These are UTC dates of high-impact events where we reduce/skip positions
 # to avoid tail risk.  Updated periodically.
@@ -314,8 +340,11 @@ def main():
 
     held_L: dict[str, float] = {}     # symbol → entry_price
     held_S: dict[str, float] = {}
+    prev_alloc_L: dict[str, float] = {}   # symbol → dollar allocation (prev step)
+    prev_alloc_S: dict[str, float] = {}
     results: list[dict] = []
     cum_cost = 0.0
+    cum_dollar_turnover = 0.0
     tot_trades = 0
 
     # Build step schedule for adaptive rebalance
@@ -443,6 +472,7 @@ def main():
                                 eq=round(equity, 2), dd=round(equity/peak-1, 4),
                                 nL=0, nS=0, turn=0, skipped=True))
             held_L.clear(); held_S.clear()
+            prev_alloc_L.clear(); prev_alloc_S.clear()
             continue
 
         # ── Min confidence filter will be applied after conf_dict is built ──
@@ -462,6 +492,7 @@ def main():
                                     eq=round(equity, 2), dd=round(equity/peak-1, 4),
                                     nL=0, nS=0, turn=0, skipped=True))
                 held_L.clear(); held_S.clear()
+                prev_alloc_L.clear(); prev_alloc_S.clear()
                 continue
 
         def compute_weights(symbols, is_long=True):
@@ -502,7 +533,7 @@ def main():
         weight_L = compute_weights(new_L, is_long=True)
         weight_S = compute_weights(new_S, is_long=False)
 
-        # ── compute changes (costs only on traded positions) ──────
+        # ── compute changes ───────────────────────────────────────
         open_L  = new_L - set(held_L)
         close_L = set(held_L) - new_L
         open_S  = new_S - set(held_S)
@@ -514,10 +545,22 @@ def main():
         total_alloc = equity * kelly * step_leverage
         half_alloc = total_alloc / 2  # half for longs, half for shorts
 
-        # Costs: estimate average position size for cost calc
-        n_active = max(len(new_L) + len(new_S), 1)
-        usd_per_avg = total_alloc / n_active
-        step_cost = (len(open_L) + len(close_L) + len(open_S) + len(close_S)) * usd_per_avg * COST_SIDE
+        # ── Dollar-turnover cost model ────────────────────────────
+        # Compute target dollar allocation for each symbol
+        new_alloc_L = {s: half_alloc * weight_L.get(s, 0) for s in new_L}
+        new_alloc_S = {s: half_alloc * weight_S.get(s, 0) for s in new_S}
+
+        # Dollar turnover = sum |new_alloc − prev_alloc| per symbol
+        dollar_turnover = 0.0
+        all_L = set(new_alloc_L) | set(prev_alloc_L)
+        for s in all_L:
+            dollar_turnover += abs(new_alloc_L.get(s, 0) - prev_alloc_L.get(s, 0))
+        all_S = set(new_alloc_S) | set(prev_alloc_S)
+        for s in all_S:
+            dollar_turnover += abs(new_alloc_S.get(s, 0) - prev_alloc_S.get(s, 0))
+
+        step_cost = dollar_turnover * COST_SIDE
+        cum_dollar_turnover += dollar_turnover
 
         # Funding cost for leveraged positions (proportional to hold time)
         if leverage > 1:
@@ -556,10 +599,12 @@ def main():
                                     eq=round(equity,2), dd=round(dd,4),
                                     nL=0, nS=0, turn=0, stopped=True))
                 held_L.clear(); held_S.clear()
+                prev_alloc_L.clear(); prev_alloc_S.clear()
                 continue
         if dd < dd_stop:
             stopped = True
             held_L.clear(); held_S.clear()
+            prev_alloc_L.clear(); prev_alloc_S.clear()
             continue
 
         turn = len(open_L) + len(close_L) + len(open_S) + len(close_S)
@@ -571,6 +616,8 @@ def main():
         # Update held for next step mtm
         held_L = {s: px1.get(s, 0) for s in new_L}
         held_S = {s: px1.get(s, 0) for s in new_S}
+        prev_alloc_L = new_alloc_L
+        prev_alloc_S = new_alloc_S
 
         if si % 5 == 0 or si == len(step_schedule) - 2:
             print(f"   {si:>4d}/{len(step_schedule)-1} | ${equity:>8,.2f} | "
@@ -602,12 +649,16 @@ def main():
         print(f"   Return:     {tot_ret:+.1%}  (ann. ~{ann_ret:+.0%})")
         print(f"   Max DD:     {max_dd:.1%}")
         print(f"   Sharpe:     {sh:+.2f}")
+        sh_hac = compute_hac_sharpe(pnls, rebal_h)
+        print(f"   Sharpe HAC: {sh_hac:+.2f}  (Newey-West adjusted)")
         print(f"   Calmar:     {calmar:.2f}")
         print(f"   Win Rate:   {wr:.0%}  ({len(w)}W / {len(l)}L)")
         if w: print(f"   Avg Win:    ${np.mean(w):+.2f}")
         if l: print(f"   Avg Loss:   ${np.mean(l):+.2f}")
         if l: print(f"   PF:         {sum(w)/(abs(sum(l))+1e-10):.2f}")
         print(f"   Trades:     {tot_trades}")
+        turnover_rate = cum_dollar_turnover / (args.capital + 1e-10)
+        print(f"   Turnover:   ${cum_dollar_turnover:,.0f}  ({turnover_rate:.1f}x capital)")
         print(f"   Costs:      ${cum_cost:,.2f}  ({cum_cost/args.capital*100:.1f}%)")
         if skip_count > 0:
             print(f"   Skipped:    {skip_count} steps (no edge)")

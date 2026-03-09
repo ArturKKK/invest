@@ -56,13 +56,14 @@ HORIZON = 12       # <<< v7: predict 12h returns, aligned with rebalance interva
 N_SEEDS = 5
 SEEDS = [42, 123, 456, 789, 2024]
 BLEND_24H = 0.25   # v7: blend 25% of 24h target for stability
+PURGE_DAYS = 8     # gap between train_end and val_start to prevent target leakage
 
 # Rolling walk-forward windows (RESEARCH mode — has held-out test set)
 WALK_FORWARD_WINDOWS = [
     {
         'name': 'W1 (→2024-12)',
         'train_end': '2023-06-30',
-        'val_start': '2023-07-02',
+        'val_start': '2023-07-08',
         'val_end': '2024-06-29',
         'test_start': '2024-07-01',
         'test_end': '2024-12-31',
@@ -70,7 +71,7 @@ WALK_FORWARD_WINDOWS = [
     {
         'name': 'W2 (→2025-03)',
         'train_end': '2024-01-01',
-        'val_start': '2024-01-03',
+        'val_start': '2024-01-09',
         'val_end': '2024-12-30',
         'test_start': '2025-01-01',
         'test_end': '2025-12-31',
@@ -78,7 +79,7 @@ WALK_FORWARD_WINDOWS = [
     {
         'name': 'W3 (→latest)',
         'train_end': '2024-06-29',
-        'val_start': '2024-07-01',
+        'val_start': '2024-07-07',
         'val_end': '2024-12-30',
         'test_start': '2025-01-01',
         'test_end': '2026-12-31',
@@ -89,7 +90,7 @@ WALK_FORWARD_WINDOWS = [
 PRODUCTION_WINDOW = {
     'name': 'PROD (max data)',
     'train_end': '2025-09-01',
-    'val_start': '2025-09-03',
+    'val_start': '2025-09-09',
     'val_end': '2026-03-01',
     'test_start': '2026-03-01',
     'test_end': '2026-12-31',
@@ -947,7 +948,7 @@ def main():
         if args.train_end:
             prod_win['train_end'] = args.train_end
             te = pd.Timestamp(args.train_end)
-            prod_win['val_start'] = (te + pd.Timedelta(days=2)).strftime('%Y-%m-%d')
+            prod_win['val_start'] = (te + pd.Timedelta(days=PURGE_DAYS)).strftime('%Y-%m-%d')
         if args.val_end:
             prod_win['val_end'] = args.val_end
             prod_win['test_start'] = args.val_end

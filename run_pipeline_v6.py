@@ -55,13 +55,15 @@ warnings.filterwarnings('ignore')
 HORIZON = 12       # <<< v6: predict 12h returns, aligned with rebalance interval
 N_SEEDS = 5
 SEEDS = [42, 123, 456, 789, 2024]
+PURGE_DAYS = 8     # gap between train_end and val_start to prevent target leakage
+                   # (12h target overlap + 168h rolling features = ~7d; round up to 8)
 
 # Rolling walk-forward windows (RESEARCH mode — has held-out test set)
 WALK_FORWARD_WINDOWS = [
     {
         'name': 'W1 (→2024-12)',
         'train_end': '2023-06-30',
-        'val_start': '2023-07-02',
+        'val_start': '2023-07-08',
         'val_end': '2024-06-29',
         'test_start': '2024-07-01',
         'test_end': '2024-12-31',
@@ -69,7 +71,7 @@ WALK_FORWARD_WINDOWS = [
     {
         'name': 'W2 (→2025-03)',
         'train_end': '2024-01-01',
-        'val_start': '2024-01-03',
+        'val_start': '2024-01-09',
         'val_end': '2024-12-30',
         'test_start': '2025-01-01',
         'test_end': '2025-12-31',
@@ -77,7 +79,7 @@ WALK_FORWARD_WINDOWS = [
     {
         'name': 'W3 (→latest)',
         'train_end': '2024-06-29',
-        'val_start': '2024-07-01',
+        'val_start': '2024-07-07',
         'val_end': '2024-12-30',
         'test_start': '2025-01-01',
         'test_end': '2026-12-31',
@@ -90,7 +92,7 @@ WALK_FORWARD_WINDOWS = [
 PRODUCTION_WINDOW = {
     'name': 'PROD (max data)',
     'train_end': '2025-09-01',
-    'val_start': '2025-09-03',
+    'val_start': '2025-09-09',
     'val_end': '2026-03-01',
     'test_start': '2026-03-01',   # may have 0 test rows — that's OK
     'test_end': '2026-12-31',
@@ -956,9 +958,9 @@ def main():
         prod_win = deepcopy(PRODUCTION_WINDOW)
         if args.train_end:
             prod_win['train_end'] = args.train_end
-            # auto-set val_start 2 days after train_end
+            # auto-set val_start with purge gap after train_end
             te = pd.Timestamp(args.train_end)
-            prod_win['val_start'] = (te + pd.Timedelta(days=2)).strftime('%Y-%m-%d')
+            prod_win['val_start'] = (te + pd.Timedelta(days=PURGE_DAYS)).strftime('%Y-%m-%d')
         if args.val_end:
             prod_win['val_end'] = args.val_end
             prod_win['test_start'] = args.val_end

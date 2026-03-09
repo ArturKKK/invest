@@ -45,6 +45,7 @@ from run_pipeline_v6 import (
     evaluate_model, vol_target_returns, drawdown_stop_returns,
     compute_costs_per_period,
     EXCLUDE_COLS, REGIME_COLS, WALK_FORWARD_WINDOWS, PRODUCTION_WINDOW, HORIZON, SEEDS, COST_MODEL,
+    PURGE_DAYS,
 )
 
 N_SEEDS = 5
@@ -287,7 +288,7 @@ def main():
         if args.train_end:
             prod_win['train_end'] = args.train_end
             te = pd.Timestamp(args.train_end)
-            prod_win['val_start'] = (te + pd.Timedelta(days=2)).strftime('%Y-%m-%d')
+            prod_win['val_start'] = (te + pd.Timedelta(days=PURGE_DAYS)).strftime('%Y-%m-%d')
         if args.val_end:
             prod_win['val_end'] = args.val_end
             prod_win['test_start'] = args.val_end
