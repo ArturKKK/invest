@@ -540,7 +540,7 @@
             renderSignals();
 
             // ── Equity Chart ──
-            allEquityData = (d.equity_history || []).map(e => ({ x: e.time, y: e.equity }));
+            allEquityData = (d.equity_history || []).map(e => ({ x: e.ts || e.timestamp || e.time, y: e.equity }));
             equityChart.data.datasets[0].data = allEquityData;
             equityChart.update('none');
 
