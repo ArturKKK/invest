@@ -502,10 +502,12 @@ def fetch_cryptocompare_news(days=730, resume_from_ts=None, api_key=None, worker
     Rate limits (free key): 100k/month (~50 req/min = ~3000/hr)
     """
     now_ts = int(datetime.now(timezone.utc).timestamp())
-    cutoff_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
     
     # Start from resume point or now
     start_ts = resume_from_ts or now_ts
+    
+    # Cutoff relative to start_ts (not now!) — critical for gap-filling old periods
+    cutoff_ts = start_ts - int(timedelta(days=days).total_seconds())
     
     print(f"📡 Fetching CryptoCompare news (target: {days} days back, {workers} workers)...")
     print(f"   Start: {datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime('%Y-%m-%d')}")
