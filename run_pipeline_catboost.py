@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_pipeline_v6 import (
     add_multi_horizon_targets, add_cross_asset_features,
     add_advanced_regime_features, add_12h_features, add_sentiment_features,
-    cross_sectional_rank, create_rank_target,
+    cross_sectional_rank, create_rank_target, add_residual_targets,
     evaluate_model, vol_target_returns, drawdown_stop_returns,
     compute_costs_per_period,
     EXCLUDE_COLS, REGIME_COLS, WALK_FORWARD_WINDOWS, PRODUCTION_WINDOW, HORIZON, SEEDS, COST_MODEL,
@@ -221,6 +221,10 @@ def main():
     parser.add_argument('--seeds', type=int, default=N_SEEDS)
     parser.add_argument('--gpu', action='store_true',
                         help='Use GPU for CatBoost training (requires CUDA)')
+    parser.add_argument('--residual-target', action='store_true',
+                        help='Use beta-residual returns (remove BTC factor) for target')
+    parser.add_argument('--hybrid-norm', action='store_true',
+                        help='Hybrid normalization: CS-rank + TS-zscore for spike features')
     args = parser.parse_args()
 
     global _task_type
@@ -254,6 +258,8 @@ def main():
 
     df = add_multi_horizon_targets(df)
     df = add_cross_asset_features(df)
+    if args.residual_target:
+        df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_sentiment_features(df, project_root)
@@ -273,8 +279,8 @@ def main():
     df[feat_cols] = df[feat_cols].fillna(0)
 
     # Cross-sectional rank normalization
-    df = cross_sectional_rank(df, feat_cols)
-    df = create_rank_target(df, HORIZON)
+    df = cross_sectional_rank(df, feat_cols, hybrid=args.hybrid_norm)
+    df = create_rank_target(df, HORIZON, use_excess=args.residual_target)
 
     print(f"   Final shape: {df.shape}")
     print(f"   Date range: {df['timestamp'].min()} → {df['timestamp'].max()}")
