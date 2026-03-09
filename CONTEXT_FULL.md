@@ -334,8 +334,58 @@ results/archive/            — Старые эксперименты (exp02-exp
 | 7 | 8 Мар | News A/B тест | LGB без news + CB с news = лучший | ✅ Применено |
 | 8 | 9 Мар | Full sim grid (7 конфигов) | 365d 1x 12h no filter = Sharpe 6.61 | ✅ Документировано |
 | 9 | 9 Мар | XGBoost + news interactions | DDStop Sharpe 0.97 — слабее ансамбля, отложен | ⚠️ |
-| 10 | 9 Мар | A/B тесты: residual-target, hybrid-norm, null-importance | CatBoost baseline лучший DDStop 1.49 (comb 1.62); v7 baseline DDStop 1.49 (comb 1.61). Residual/hybrid улучшают IC но ухудшают DDStop. News фичи снижают DDStop всех LGB на 30-47%. | ✅ Задокументировано |
+| 10 | 9 Мар | A/B тесты: residual-target, hybrid-norm, null-importance | News фичи снижают DDStop всех LGB на 21-60%. Подробности ниже. | ✅ Задокументировано |
 | 11 | 9 Мар | Binance Futures derivatives data | Скачано: OI, taker, L/S, funding с Dec 2021 (data.binance.vision). 50 символов, 1.8M строк metrics + 294K funding. Новые фичи добавлены в pipeline. | ✅ Ожидает обучения |
+
+### Подробные результаты exp10 — A/B тест news features (9 марта 2026)
+
+**Цель**: проверить, помогают ли news features разным моделям/подходам.
+
+**Прогоны**: 12 конфигураций (1 упал — v6_lambdarank). 3 окна walk-forward, 5 seeds.
+
+**Ключевые метрики** (DDStop Sharpe по окнам, Combined DDStop Sharpe):
+
+| Run | Модель | Rank_IC | Rank_ICIR | DDStop W1 | DDStop W2 | DDStop W3 | DDStop AVG | Comb DDStop |
+|-----|--------|---------|-----------|-----------|-----------|-----------|------------|-------------|
+| **PROD v7 no-news** | **LGB** | **0.0289** | **0.4058** | **2.05** | **1.86** | **1.73** | **1.88** | **1.79** |
+| **PROD v6 no-news** | **LGB** | **0.0279** | **0.4267** | — | — | **1.81** | **1.81*** | **1.81** |
+| **PROD CatBoost w/news** | **CB** | **0.0258** | **0.3690** | **0.98** | **1.57** | **1.98** | **1.51** | — |
+| exp10/v7_baseline | LGB | 0.0246 | 0.3920 | 1.68 | 1.05 | 1.75 | 1.49 | 1.61 |
+| exp10/catboost_baseline | CB | 0.0249 | 0.3814 | 1.02 | 1.33 | 2.11 | 1.49 | 1.62 |
+| exp10/v7_res_hyb_null | LGB | 0.0267 | 0.3946 | 0.91 | 1.04 | 1.34 | 1.10 | 1.12 |
+| exp10/catboost_res_hyb | CB | 0.0283 | 0.3875 | 0.49 | 1.89 | 1.31 | 1.23 | 1.28 |
+| exp10/v6_hybrid | LGB | 0.0275 | 0.3761 | 0.36 | 1.49 | 1.42 | 1.09 | 1.27 |
+| exp10/v6_res_hyb | LGB | 0.0278 | 0.3861 | 0.59 | 1.40 | 1.11 | 1.03 | 1.16 |
+| exp10/v7_res_hyb | LGB | 0.0266 | 0.3914 | 0.71 | 1.15 | 1.05 | 0.97 | 1.10 |
+| exp10/xgboost_res_hyb | XGB | 0.0270 | 0.3823 | 0.49 | 1.19 | 1.23 | 0.97 | 1.09 |
+| exp10/v6_res_hyb_null | LGB | 0.0276 | 0.3872 | 0.18 | 1.24 | 1.20 | 0.87 | 1.07 |
+| exp10/v6_baseline | LGB | 0.0251 | 0.3777 | -0.19 | 1.06 | 1.48 | 0.78 | 1.05 |
+| exp10/v6_residual | LGB | 0.0255 | 0.3925 | -0.10 | 1.31 | 0.98 | 0.73 | 0.95 |
+| exp10/v6_lambdarank | LGB | — | — | — | — | — | — | FAILED |
+
+*\* PROD v6 обучен только на W3*
+
+**Сравнение с baseline (DDStop Sharpe avg, % деградации)**:
+- exp10/v6_baseline (с news) vs PROD v6 (без news): 0.78 vs 1.81 = **−57%**
+- exp10/v6_hybrid: 1.09 vs 1.81 = **−40%**
+- exp10/v6_res_hyb: 1.03 vs 1.81 = **−43%**
+- exp10/v6_residual: 0.73 vs 1.81 = **−60%**
+- exp10/v7_baseline (с news) vs PROD v7 (без news): 1.49 vs 1.88 = **−21%**
+- exp10/v7_res_hyb: 0.97 vs 1.88 = **−48%**
+- exp10/catboost_baseline (с news) vs PROD CB (с news): 1.49 vs 1.51 = **−2%** (стабилен)
+
+**Подтверждение из exp07** (архив): LGB v6 с news тогда тоже дал DDStop avg 0.96, LGB v7 с news — 1.20. Оба ниже no-news baseline.
+
+**Провал v6_lambdarank**: `LightGBMError: label should be int type (met 0.947368) for ranking task`. Нужно квантизировать label в int.
+
+**Выводы exp10**:
+1. **News features ВРЕДЯТ LightGBM** — DDStop Sharpe падает на 21-60%. Особенно сильно v6 (−57%).
+2. **CatBoost устойчив к news** — деградация всего 2%.
+3. **Residual-target и hybrid-norm улучшают Rank_IC** (+0.002-0.003), но **ухудшают DDStop** — модель лучше предсказывает ранг, но хуже зарабатывает.
+4. **Null-importance фильтрация не помогает** — результат хуже или на уровне baseline.
+5. **Лучшая конфигурация — текущая продакшн**: LGB v6+v7 без news + CatBoost с news.
+6. **XGBoost с news interactions** — DDStop 0.97, не оправдывает усложнение.
+7. **W1 (→2024-12) — самое слабое окно** для почти всех exp10 прогонов. Гипотеза: news features вносят шум в более раннем периоде.
 
 ---
 
