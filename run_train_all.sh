@@ -105,6 +105,33 @@ run_step "v7_res_hyb_null" \
     --results "${EXP_DIR}/v7_res_hyb_null"
 
 # ============================================================
+# ФАЗА 1c: Чистая аблация news (frozen feature set ± news)
+#   Сравниваем ОДИНАКОВЫЙ пайплайн с/без новостей
+# ============================================================
+echo -e "${YELLOW}═══ ФАЗА 1c: News ablation (frozen features ± news) ═══${NC}"
+
+run_step "v6_res_hyb_no_news" \
+    python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --no-news \
+    --results "${EXP_DIR}/v6_res_hyb_no_news"
+
+run_step "v7_res_hyb_no_news" \
+    python run_pipeline_v7.py --skip-hpo --residual-target --hybrid-norm --no-news \
+    --results "${EXP_DIR}/v7_res_hyb_no_news"
+
+# ============================================================
+# ФАЗА 1d: Derivatives ablation (± derivatives)
+# ============================================================
+echo -e "${YELLOW}═══ ФАЗА 1d: Derivatives ablation (± derivatives) ═══${NC}"
+
+run_step "v6_res_hyb_no_deriv" \
+    python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --no-derivatives \
+    --results "${EXP_DIR}/v6_res_hyb_no_deriv"
+
+run_step "v6_res_hyb_no_news_no_deriv" \
+    python run_pipeline_v6.py --skip-hpo --residual-target --hybrid-norm --no-news --no-derivatives \
+    --results "${EXP_DIR}/v6_res_hyb_no_news_no_deriv"
+
+# ============================================================
 # ФАЗА 2: CatBoost
 # ============================================================
 echo -e "${YELLOW}═══ ФАЗА 2: CatBoost (skip-hpo) ═══${NC}"
@@ -117,6 +144,10 @@ run_step "cb_res_hyb" \
     python run_pipeline_catboost.py --skip-hpo --gpu --residual-target --hybrid-norm \
     --results "${EXP_DIR}/catboost_res_hyb"
 
+run_step "cb_res_hyb_no_news" \
+    python run_pipeline_catboost.py --skip-hpo --gpu --residual-target --hybrid-norm --no-news \
+    --results "${EXP_DIR}/catboost_res_hyb_no_news"
+
 # ============================================================
 # ФАЗА 3: XGBoost
 # ============================================================
@@ -125,6 +156,10 @@ echo -e "${YELLOW}═══ ФАЗА 3: XGBoost (skip-hpo) ═══${NC}"
 run_step "xgb_res_hyb" \
     python run_pipeline_xgboost.py --skip-hpo --gpu --residual-target --hybrid-norm \
     --results "${EXP_DIR}/xgboost_res_hyb"
+
+run_step "xgb_res_hyb_no_news" \
+    python run_pipeline_xgboost.py --skip-hpo --gpu --residual-target --hybrid-norm --no-news \
+    --results "${EXP_DIR}/xgboost_res_hyb_no_news"
 
 # ============================================================
 # ФАЗА 4: HPO (раскомментировать лучшую комбо)

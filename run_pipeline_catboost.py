@@ -226,6 +226,10 @@ def main():
                         help='Use beta-residual returns (remove BTC factor) for target')
     parser.add_argument('--hybrid-norm', action='store_true',
                         help='Hybrid normalization: CS-rank + TS-zscore for spike features')
+    parser.add_argument('--no-news', action='store_true',
+                        help='Skip loading crypto news features (for clean A/B tests)')
+    parser.add_argument('--no-derivatives', action='store_true',
+                        help='Skip loading Binance derivatives features (for clean A/B tests)')
     args = parser.parse_args()
 
     global _task_type
@@ -263,8 +267,11 @@ def main():
         df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
-    df = add_sentiment_features(df, project_root)
-    df = add_derivatives_features(df, project_root)
+    df = add_sentiment_features(df, project_root, skip_news=args.no_news)
+    if not args.no_derivatives:
+        df = add_derivatives_features(df, project_root)
+    else:
+        print("   ⏭️  Skipping derivatives features (--no-derivatives)")
 
     # Clean infinities
     for col in df.select_dtypes(include=[np.number]).columns:

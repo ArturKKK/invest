@@ -1072,6 +1072,10 @@ def main():
                         help='Use LambdaRank (LGBMRanker) instead of LGBMRegressor')
     parser.add_argument('--null-importance', action='store_true',
                         help='Use null-importance feature selection instead of gain-based')
+    parser.add_argument('--no-news', action='store_true',
+                        help='Skip loading crypto news features (for clean A/B tests)')
+    parser.add_argument('--no-derivatives', action='store_true',
+                        help='Skip loading Binance derivatives features (for clean A/B tests)')
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -1107,7 +1111,10 @@ def main():
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_sentiment_features(df, project_root)
-    df = add_derivatives_features(df, project_root)
+    if not args.no_derivatives:
+        df = add_derivatives_features(df, project_root)
+    else:
+        print("   ⏭️  Skipping derivatives features (--no-derivatives)")
 
     # Clean infinities
     for col in df.select_dtypes(include=[np.number]).columns:

@@ -365,12 +365,13 @@ def add_12h_features(df):
     return df
 
 
-def add_sentiment_features(df, project_root):
+def add_sentiment_features(df, project_root, skip_news=False):
     """
     Add sentiment/alternative data features:
     1. Fear & Greed Index (daily → hourly ffill) — market-level
     2. Funding rates from OKX (per-coin, where available)
     3. Synthetic positioning proxies (from OHLCV)
+    4. Crypto News Sentiment (skipped if skip_news=True)
     """
     print("   📰 Adding sentiment features...")
     sent_dir = os.path.join(project_root, 'data', 'sentiment')
@@ -514,8 +515,10 @@ def add_sentiment_features(df, project_root):
             df[f'btc_beta_{w}h'] = cov / var
 
     # ---- 5. Crypto News Sentiment (from fetch_crypto_news.py) ----
+    if skip_news:
+        print("      ⏭️  Skipping news features (--no-news)")
     news_path = os.path.join(sent_dir, 'crypto_news.parquet')
-    if os.path.exists(news_path):
+    if not skip_news and os.path.exists(news_path):
         print("      Loading news sentiment features...")
         news = pd.read_parquet(news_path)
         news['timestamp'] = pd.to_datetime(news['timestamp'], utc=True)
@@ -1293,6 +1296,10 @@ def main():
                         help='Use LambdaRank (LGBMRanker) instead of LGBMRegressor')
     parser.add_argument('--null-importance', action='store_true',
                         help='Use null-importance feature selection instead of gain-based')
+    parser.add_argument('--no-news', action='store_true',
+                        help='Skip loading crypto news features (for clean A/B tests)')
+    parser.add_argument('--no-derivatives', action='store_true',
+                        help='Skip loading Binance derivatives features (for clean A/B tests)')
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -1327,8 +1334,11 @@ def main():
         df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
-    df = add_sentiment_features(df, project_root)
-    df = add_derivatives_features(df, project_root)
+    df = add_sentiment_features(df, project_root, skip_news=args.no_news)
+    if not args.no_derivatives:
+        df = add_derivatives_features(df, project_root)
+    else:
+        print("   ⏭️  Skipping derivatives features (--no-derivatives)")
 
     # Clean infinities
     for col in df.select_dtypes(include=[np.number]).columns:
