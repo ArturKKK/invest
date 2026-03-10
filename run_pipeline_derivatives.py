@@ -72,6 +72,17 @@ DERIV_FEATURES = [
     'global_ls_ratio', 'global_long_pct', 'ls_divergence',
     # Funding (2)
     'funding_rate_binance', 'funding_surprise',
+    # Market-wide aggregates (4) — NEW
+    'agg_oi_change_12h', 'agg_taker_imbalance',
+    'funding_dispersion', 'agg_oi_total_change_12h',
+    # Basis / Premium (6) — NEW
+    'basis_pct', 'basis_zscore_7d', 'basis_change_12h', 'basis_change_24h',
+    'basis_cs_rank', 'basis_funding_divergence',
+    # Liquidations (9) — NEW
+    'liq_long_usd', 'liq_short_usd', 'liq_total_usd',
+    'liq_imbalance', 'liq_cascade_12h', 'liq_cascade_24h',
+    'liq_imbalance_12h', 'liq_total_zscore', 'liq_ret_interaction',
+    'agg_liq_zscore',
     # Context — market (4)
     'btc_ret_12h', 'btc_vol_24h',
     'regime_composite', 'breadth_pct_positive',

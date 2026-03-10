@@ -780,6 +780,144 @@ def add_derivatives_features(df, project_root):
         n_added += 1
         print(f"      Funding surprise: computed from OKX funding data")
 
+    # ---- 7. Market-wide aggregates (from existing data, no new API) ----
+    mkt_feats = 0
+    if has_metrics and 'oi_change_12h' in df.columns:
+        # Aggregate OI change across all coins → market-level OI momentum
+        df['agg_oi_change_12h'] = df.groupby('timestamp')['oi_change_12h'].transform('mean')
+        df['agg_oi_change_12h'] = df['agg_oi_change_12h'].fillna(0)
+        mkt_feats += 1
+
+    if 'taker_imbalance' in df.columns:
+        # Market-wide taker skew: are buyers dominating across all coins?
+        df['agg_taker_imbalance'] = df.groupby('timestamp')['taker_imbalance'].transform('mean')
+        df['agg_taker_imbalance'] = df['agg_taker_imbalance'].fillna(0)
+        mkt_feats += 1
+
+    if 'funding_rate_binance' in df.columns:
+        # Funding dispersion: high std = divergent views across coins
+        df['funding_dispersion'] = df.groupby('timestamp')['funding_rate_binance'].transform('std')
+        df['funding_dispersion'] = df['funding_dispersion'].fillna(0)
+        mkt_feats += 1
+
+    if 'oi_value_usd' in df.columns:
+        # Total market OI (sum across all coins) — systemic leverage gauge
+        ts_total_oi = df.groupby('timestamp')['oi_value_usd'].transform('sum')
+        # Express as pct change over 12h (market-level OI momentum)
+        # Need to avoid per-symbol shift, so compute on unique timestamps
+        ts_oi_map = df.groupby('timestamp')['oi_value_usd'].sum()
+        ts_oi_change = ts_oi_map.pct_change(12).rename('agg_oi_total_change_12h')
+        df = df.merge(ts_oi_change, left_on='timestamp', right_index=True, how='left')
+        df['agg_oi_total_change_12h'] = df['agg_oi_total_change_12h'].fillna(0)
+        mkt_feats += 1
+
+    if mkt_feats > 0:
+        n_added += mkt_feats
+        print(f"      Market-wide aggregates: {mkt_feats} features")
+
+    # ---- 8. Premium Index / Basis features ----
+    premium_path = os.path.join(sent_dir, 'binance_premium_index.parquet')
+    if os.path.exists(premium_path):
+        prem = pd.read_parquet(premium_path)
+        prem['timestamp'] = pd.to_datetime(prem['timestamp'], utc=True)
+        prem = prem.drop_duplicates(['timestamp', 'symbol'], keep='last')
+        df = df.merge(prem[['timestamp', 'symbol', 'premium_index']],
+                      on=['timestamp', 'symbol'], how='left')
+
+        if 'premium_index' in df.columns:
+            # basis_pct = premium index (already = markPrice/indexPrice - 1 ≈ perp premium)
+            df['basis_pct'] = df['premium_index']
+
+            # Per-symbol rolling features
+            for sym in df['symbol'].unique():
+                mask = df['symbol'] == sym
+                basis = df.loc[mask, 'basis_pct']
+                roll_mean = basis.rolling(168, min_periods=24).mean()
+                roll_std = basis.rolling(168, min_periods=24).std() + 1e-10
+                df.loc[mask, 'basis_zscore_7d'] = (basis - roll_mean) / roll_std
+                df.loc[mask, 'basis_change_12h'] = basis.diff(12)
+                df.loc[mask, 'basis_change_24h'] = basis.diff(24)
+
+            # Cross-sectional rank (which coins have extreme premium)
+            df['basis_cs_rank'] = df.groupby('timestamp')['basis_pct'].transform(
+                lambda x: x.rank(pct=True) - 0.5)
+
+            # Basis × funding divergence: basis rising but funding flat → arbitrage signal
+            if 'funding_rate_binance' in df.columns:
+                df['basis_funding_divergence'] = df['basis_pct'] - df['funding_rate_binance'] * 3
+                # *3 because funding is 8h, basis is continuous → rough annualization match
+
+            basis_cols = [c for c in df.columns if c.startswith('basis_')]
+            for col in basis_cols:
+                df[col] = df[col].fillna(0)
+            n_added += len(basis_cols)
+            n_with = (df['basis_pct'] != 0).sum()
+            print(f"      Basis/Premium: {n_with:,} rows ({n_with/len(df)*100:.1f}%), {len(basis_cols)} features")
+            df = df.drop(columns=['premium_index'], errors='ignore')
+    else:
+        print(f"      ⚠️  No premium index data (run download_binance_futures.py)")
+
+    # ---- 9. Liquidation features ----
+    liq_path = os.path.join(sent_dir, 'binance_liquidations.parquet')
+    if os.path.exists(liq_path):
+        liq = pd.read_parquet(liq_path)
+        liq['timestamp'] = pd.to_datetime(liq['timestamp'], utc=True)
+        liq = liq.drop_duplicates(['timestamp', 'symbol'], keep='last')
+        df = df.merge(liq[['timestamp', 'symbol', 'liq_long_usd', 'liq_short_usd']],
+                      on=['timestamp', 'symbol'], how='left')
+        df['liq_long_usd'] = df['liq_long_usd'].fillna(0)
+        df['liq_short_usd'] = df['liq_short_usd'].fillna(0)
+
+        # Total liquidation volume
+        df['liq_total_usd'] = df['liq_long_usd'] + df['liq_short_usd']
+
+        # Imbalance: positive = more longs liquidated (bearish forced selling)
+        df['liq_imbalance'] = np.where(
+            df['liq_total_usd'] > 0,
+            (df['liq_long_usd'] - df['liq_short_usd']) / (df['liq_total_usd'] + 1e-10),
+            0
+        )
+
+        # Per-symbol rolling features
+        for sym in df['symbol'].unique():
+            mask = df['symbol'] == sym
+            total = df.loc[mask, 'liq_total_usd']
+            imb = df.loc[mask, 'liq_imbalance']
+
+            # Rolling cascade: total liquidations over 12h/24h
+            df.loc[mask, 'liq_cascade_12h'] = total.rolling(12, min_periods=1).sum()
+            df.loc[mask, 'liq_cascade_24h'] = total.rolling(24, min_periods=1).sum()
+
+            # Rolling imbalance
+            df.loc[mask, 'liq_imbalance_12h'] = imb.rolling(12, min_periods=3).mean()
+
+            # Z-score of total liquidation volume (unusual liquidation spike)
+            roll_mean = total.rolling(168, min_periods=24).mean()
+            roll_std = total.rolling(168, min_periods=24).std() + 1e-10
+            df.loc[mask, 'liq_total_zscore'] = (total - roll_mean) / roll_std
+
+        # Liquidation × return interaction (forced selling during drops)
+        if 'ret_1h' in df.columns:
+            df['liq_ret_interaction'] = df['liq_imbalance'] * df['ret_1h']
+
+        # Market-wide total liquidations
+        ts_liq_total = df.groupby('timestamp')['liq_total_usd'].transform('sum')
+        ts_liq_map = df.groupby('timestamp')['liq_total_usd'].sum()
+        ts_liq_mean = ts_liq_map.rolling(168, min_periods=24).mean()
+        ts_liq_std = ts_liq_map.rolling(168, min_periods=24).std() + 1e-10
+        ts_liq_zscore = ((ts_liq_map - ts_liq_mean) / ts_liq_std).rename('agg_liq_zscore')
+        df = df.merge(ts_liq_zscore, left_on='timestamp', right_index=True, how='left')
+        df['agg_liq_zscore'] = df['agg_liq_zscore'].fillna(0)
+
+        liq_cols = [c for c in df.columns if c.startswith('liq_') or c == 'agg_liq_zscore']
+        for col in liq_cols:
+            df[col] = df[col].fillna(0)
+        n_added += len(liq_cols)
+        n_with = (df['liq_total_usd'] > 0).sum()
+        print(f"      Liquidations: {n_with:,} rows ({n_with/len(df)*100:.1f}%), {len(liq_cols)} features")
+    else:
+        print(f"      ⚠️  No liquidation data (run download_binance_futures.py)")
+
     print(f"   ✅ Derivatives features: +{n_added} features")
     return df
 
@@ -806,6 +944,15 @@ TSZSCORE_COLS = {
     'top_ls_change_12h', 'top_ls_change_24h', 'top_ls_zscore',
     'ls_divergence',
     'funding_rate_binance',
+    # Market-wide aggregates
+    'agg_oi_change_12h', 'agg_taker_imbalance', 'funding_dispersion',
+    'agg_oi_total_change_12h',
+    # Basis / premium features
+    'basis_pct', 'basis_zscore_7d', 'basis_change_12h', 'basis_change_24h',
+    'basis_funding_divergence',
+    # Liquidation features
+    'liq_imbalance', 'liq_total_zscore', 'liq_cascade_12h', 'liq_cascade_24h',
+    'liq_imbalance_12h', 'liq_ret_interaction', 'agg_liq_zscore',
 }
 
 

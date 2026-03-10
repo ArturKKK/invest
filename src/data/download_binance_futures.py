@@ -58,6 +58,8 @@ FAPI_BASE = "https://fapi.binance.com"
 
 OUTPUT_FILE = 'binance_futures_metrics.parquet'
 FUNDING_FILE = 'binance_funding_rates.parquet'
+PREMIUM_FILE = 'binance_premium_index.parquet'
+LIQUIDATION_FILE = 'binance_liquidations.parquet'
 
 # Earliest date on data.binance.vision for metrics
 VISION_START = datetime(2021, 12, 1, tzinfo=timezone.utc)
@@ -303,6 +305,205 @@ def download_funding_rates(symbols: list, start_date: datetime) -> pd.DataFrame:
     return result
 
 
+# ── Part C: Binance Premium Index (basis = perp - spot) ───────
+
+def download_premium_index(symbols: list, start_date: datetime) -> pd.DataFrame:
+    """Download premium index klines from fapi/v1/premiumIndexKlines.
+
+    Returns 1h candles with markPrice, indexPrice → basis_pct computed.
+    Premium index = (markPrice - indexPrice) / indexPrice ≈ perp premium.
+    Free, no API key needed. Limit 1500 candles/request (~62 days).
+    """
+    print(f"\n📊 Downloading Premium Index klines ({len(symbols)} symbols)...")
+    start_ms = int(start_date.timestamp() * 1000)
+
+    all_dfs = []
+    for i, sym in enumerate(symbols):
+        url = f"{FAPI_BASE}/fapi/v1/premiumIndexKlines"
+        records = []
+        current_start = start_ms
+
+        while True:
+            try:
+                resp = requests.get(url, params={
+                    'pair': sym.replace('USDT', ''),  # pair format
+                    'contractType': 'PERPETUAL',
+                    'interval': '1h',
+                    'startTime': current_start,
+                    'limit': 1500,
+                }, timeout=15, verify=False)
+
+                # Fall back to symbol-based endpoint if pair fails
+                if resp.status_code != 200:
+                    resp = requests.get(url, params={
+                        'symbol': sym,
+                        'interval': '1h',
+                        'startTime': current_start,
+                        'limit': 1500,
+                    }, timeout=15, verify=False)
+
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                if not data:
+                    break
+                records.extend(data)
+                last_ts = int(data[-1][0])
+                if last_ts <= current_start or len(data) < 2:
+                    break
+                current_start = last_ts + 1
+                time.sleep(0.15)
+            except Exception:
+                break
+
+        if records:
+            # Kline format: [openTime, open, high, low, close, ?, closeTime, ...]
+            # For premium index klines: values are the premium index itself
+            df = pd.DataFrame(records)
+            df['timestamp'] = pd.to_datetime(df[0].astype(int), unit='ms', utc=True)
+            df['symbol'] = to_our_symbol(sym)
+            # Premium index open/high/low/close — use close as representative
+            df['premium_index'] = pd.to_numeric(df[4], errors='coerce')
+            df = df[['timestamp', 'symbol', 'premium_index']].drop_duplicates(
+                ['timestamp', 'symbol'])
+            all_dfs.append(df)
+
+        sys.stdout.write(f"\r   [{i+1}/{len(symbols)}] {sym}: {len(records)} klines   ")
+        sys.stdout.flush()
+        time.sleep(0.05)
+
+    print()
+    if not all_dfs:
+        print("   ❌ No premium index data")
+        return pd.DataFrame()
+
+    result = pd.concat(all_dfs, ignore_index=True).sort_values(['symbol', 'timestamp'])
+    result = result.drop_duplicates(['timestamp', 'symbol'], keep='last')
+    print(f"   ✅ {len(result):,} rows, {result['symbol'].nunique()} symbols")
+    print(f"   Range: {result['timestamp'].min()} → {result['timestamp'].max()}")
+    return result
+
+
+# ── Part D: Binance Liquidation snapshots ─────────────────────
+
+def download_liquidation_snapshot(symbols: list, start_date: datetime) -> pd.DataFrame:
+    """Download liquidation data from Binance data.binance.vision.
+
+    Binance provides liquidation snapshot CSVs at data.binance.vision:
+      /data/futures/um/daily/liquidationSnapshot/{SYMBOL}/{SYMBOL}-liquidationSnapshot-{date}.zip
+    Each zip has rows: time, symbol, side, price, qty, ...
+    We aggregate to 1h: long_liq_usd, short_liq_usd per symbol.
+    """
+    print(f"\n📊 Downloading liquidation snapshots ({len(symbols)} symbols)...")
+    LIQ_BASE = "https://data.binance.vision/data/futures/um/daily/liquidationSnapshot"
+
+    end_date = datetime.now(timezone.utc) - timedelta(days=1)
+    all_dates = []
+    d = max(start_date, VISION_START)
+    while d <= end_date:
+        all_dates.append(d)
+        d += timedelta(days=1)
+
+    # Check existing data to skip already-downloaded dates
+    existing = get_existing_dates(LIQUIDATION_FILE)
+
+    all_dfs = []
+    errors = 0
+
+    for sym_idx, sym in enumerate(symbols):
+        sym_our = to_our_symbol(sym)
+        existing_dates = existing.get(sym_our, set())
+        dates_to_fetch = [d for d in all_dates if d.strftime('%Y-%m-%d') not in existing_dates]
+
+        if not dates_to_fetch:
+            sys.stdout.write(f"\r   [{sym_idx+1}/{len(symbols)}] {sym}: all cached")
+            sys.stdout.flush()
+            continue
+
+        sym_dfs = []
+
+        def _fetch_liq(date):
+            date_str = date.strftime('%Y-%m-%d')
+            url = f"{LIQ_BASE}/{sym}/{sym}-liquidationSnapshot-{date_str}.zip"
+            for attempt in range(3):
+                try:
+                    resp = requests.get(url, timeout=20, verify=False)
+                    if resp.status_code == 404:
+                        return None
+                    if resp.status_code == 200:
+                        zf = zipfile.ZipFile(io.BytesIO(resp.content))
+                        csv_name = zf.namelist()[0]
+                        liq_df = pd.read_csv(io.BytesIO(zf.read(csv_name)))
+                        return liq_df
+                    if resp.status_code == 429:
+                        time.sleep(5)
+                except Exception:
+                    time.sleep(2 ** attempt)
+            return None
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_fetch_liq, d): d for d in dates_to_fetch}
+            for future in as_completed(futures):
+                try:
+                    raw = future.result()
+                    if raw is not None and len(raw) > 0:
+                        # Parse liquidation CSV
+                        # Columns vary but typically: time, symbol, side, order_type,
+                        # time_in_force, original_quantity, price, average_price,
+                        # order_status, last_fill_quantity
+                        raw['timestamp'] = pd.to_datetime(
+                            raw.iloc[:, 0], unit='ms', utc=True, errors='coerce')
+                        raw['side'] = raw.iloc[:, 2].astype(str).str.upper()
+
+                        # Calculate USD value
+                        qty_col = raw.columns[3] if len(raw.columns) > 3 else None
+                        price_col = raw.columns[5] if len(raw.columns) > 5 else raw.columns[4]
+                        if qty_col and price_col:
+                            raw['usd_value'] = (
+                                pd.to_numeric(raw[qty_col], errors='coerce') *
+                                pd.to_numeric(raw[price_col], errors='coerce')
+                            )
+                        else:
+                            raw['usd_value'] = 0
+
+                        raw['is_long_liq'] = raw['side'].isin(['SELL', 'S'])  # forced sell = long liquidated
+                        raw = raw.set_index('timestamp')
+
+                        # Aggregate to 1h
+                        hourly_long = raw[raw['is_long_liq']].resample('1h')['usd_value'].sum()
+                        hourly_short = raw[~raw['is_long_liq']].resample('1h')['usd_value'].sum()
+
+                        hourly = pd.DataFrame({
+                            'liq_long_usd': hourly_long,
+                            'liq_short_usd': hourly_short,
+                        }).fillna(0)
+                        hourly['symbol'] = sym_our
+                        hourly = hourly.reset_index()
+                        sym_dfs.append(hourly)
+                except Exception:
+                    errors += 1
+
+        if sym_dfs:
+            all_dfs.append(pd.concat(sym_dfs, ignore_index=True))
+
+        n_h = sum(len(d) for d in sym_dfs) if sym_dfs else 0
+        sys.stdout.write(
+            f"\r   [{sym_idx+1}/{len(symbols)}] {sym}: {len(dates_to_fetch)} days → "
+            f"{n_h} hourly rows ({len(all_dates)-len(dates_to_fetch)} cached)   "
+        )
+        sys.stdout.flush()
+
+    print(f"\n   Download complete. Errors: {errors}")
+
+    if not all_dfs:
+        return pd.DataFrame()
+
+    result = pd.concat(all_dfs, ignore_index=True)
+    result = result.sort_values(['symbol', 'timestamp']).reset_index(drop=True)
+    print(f"   ✅ {len(result):,} rows, {result['symbol'].nunique()} symbols")
+    return result
+
+
 # ── incremental save ──────────────────────────────────────────
 
 def save_incremental(new_df: pd.DataFrame, filename: str):
@@ -355,6 +556,10 @@ def main():
                         help="Skip funding rate download")
     parser.add_argument('--skip-metrics', action='store_true',
                         help="Skip OI/LS/taker metrics download")
+    parser.add_argument('--skip-premium', action='store_true',
+                        help="Skip premium index (basis) download")
+    parser.add_argument('--skip-liquidations', action='store_true',
+                        help="Skip liquidation snapshot download")
     parser.add_argument('--workers', type=int, default=8,
                         help="Parallel download threads per symbol (default: 8)")
     args = parser.parse_args()
@@ -370,6 +575,8 @@ def main():
     print(f"  {len(symbols)} symbols")
     print(f"  Metrics: {start_date:%Y-%m-%d} → {end_date:%Y-%m-%d} ({(end_date-start_date).days} days)")
     print(f"  Funding: {'skip' if args.skip_funding else f'{start_date:%Y-%m-%d} → now'}")
+    print(f"  Premium: {'skip' if args.skip_premium else f'{start_date:%Y-%m-%d} → now'}")
+    print(f"  Liquidations: {'skip' if args.skip_liquidations else f'{start_date:%Y-%m-%d} → now'}")
     print("=" * 70)
 
     # ── 1. Metrics (OI, L/S, taker) from data.binance.vision ──
@@ -399,6 +606,27 @@ def main():
         funding = download_funding_rates(symbols, funding_start)
         if len(funding) > 0:
             save_incremental(funding, FUNDING_FILE)
+
+    # ── 3. Premium index (basis) from API ─────────────────────
+    if not args.skip_premium:
+        premium_start = start_date
+        premium_path = os.path.join(DATA_DIR, PREMIUM_FILE)
+        if os.path.exists(premium_path):
+            existing_premium = pd.read_parquet(premium_path)
+            last_ts = pd.to_datetime(existing_premium['timestamp']).max()
+            if pd.notna(last_ts):
+                premium_start = last_ts.to_pydatetime().replace(tzinfo=timezone.utc)
+                print(f"\n   Premium: resuming from {premium_start:%Y-%m-%d %H:%M}")
+
+        premium = download_premium_index(symbols, premium_start)
+        if len(premium) > 0:
+            save_incremental(premium, PREMIUM_FILE)
+
+    # ── 4. Liquidation snapshots from data.binance.vision ─────
+    if not args.skip_liquidations:
+        liquidations = download_liquidation_snapshot(symbols, start_date)
+        if len(liquidations) > 0:
+            save_incremental(liquidations, LIQUIDATION_FILE)
 
     # ── Summary ───────────────────────────────────────────────
     print(f"\n{'='*70}")
