@@ -1319,9 +1319,8 @@ def drawdown_stop_returns(net_rets, max_dd_threshold=-0.25, recovery_threshold=-
             shadow_dd = shadow_equity / peak - 1
             if shadow_dd > recovery_threshold:
                 is_stopped = False
-                # Resume: apply this period's return
-                equity *= (1 + net_rets[i])
-                stopped_rets[i] = net_rets[i]
+                # Resume from NEXT bar (i+1), not this one — avoids lookahead
+                # This bar we're still flat (positions not yet reopened)
             # else: equity stays flat (positions closed)
         else:
             equity *= (1 + net_rets[i])
