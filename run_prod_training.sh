@@ -11,8 +11,9 @@
 #    2. LGB v6 (стабильный, DDStop 1.61) 
 #    3. CatBoost with news (DDStop 1.76)
 #    4. CatBoost no news (DDStop 1.64 — может быть лучше)
-#    5. XGBoost (DDStop 1.76 в exp12)
-#    6. Derivatives-only mini-model (Rank_IC 0.025, standalone слабый)
+#    5. Derivatives-only mini-model (risk gate, Rank_IC 0.025)
+#
+#  XGBoost убран из ансамбля — дублирует LGB/CB, не даёт доп. alpha.
 #
 #  Запуск на кластере:
 #    git pull && bash run_prod_training.sh 2>&1 | tee prod_training.log
@@ -80,18 +81,9 @@ run_step "cb_no_news" \
     --train-end "$TRAIN_END" --val-end "$VAL_END" \
     --results results/production/catboost_no_news
 
-# ─── Phase 3: XGBoost ─────────────────────────────────────────
+# ─── Phase 3: Derivatives-only (risk gate model) ──────────────
 echo ""
-echo -e "${YELLOW}═══ Phase 3: XGBoost ═══${NC}"
-
-run_step "xgb" \
-    python run_pipeline_xgboost.py --production --skip-hpo --gpu \
-    --train-end "$TRAIN_END" --val-end "$VAL_END" \
-    --results results/production/xgboost
-
-# ─── Phase 4: Derivatives-only ─────────────────────────────────
-echo ""
-echo -e "${YELLOW}═══ Phase 4: Derivatives-Only ═══${NC}"
+echo -e "${YELLOW}═══ Phase 3: Derivatives-Only ═══${NC}"
 
 run_step "deriv_only" \
     python run_pipeline_derivatives.py --production --skip-hpo \
@@ -106,11 +98,11 @@ echo "  Logs: ${LOGS}/"
 echo "============================================================"
 echo ""
 echo "  Models trained:"
-echo "    results/production/lgb_v7_no_news/"
-echo "    results/production/lgb_v6_no_news/"
-echo "    results/production/catboost_with_news/"
-echo "    results/production/catboost_no_news/"
-echo "    results/production/xgboost/"
-echo "    results/production/deriv_only/"
+echo "    results/production/lgb_v7_no_news/    (ensemble member)"
+echo "    results/production/lgb_v6_no_news/    (ensemble member)"
+echo "    results/production/catboost_with_news/ (ensemble member)"
+echo "    results/production/catboost_no_news/   (ensemble member)"
+echo "    results/production/deriv_only/         (risk gate)"
 echo ""
+echo "  Architecture: mean(v6, v7, CB) + deriv_only risk gate"
 echo "  Next: скачать models → прогнать инференс → залить в прод"

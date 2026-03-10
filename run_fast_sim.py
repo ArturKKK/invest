@@ -126,7 +126,7 @@ def main():
     ap.add_argument("--min-edge", type=float, default=0.0,
                     help="Manual min edge threshold (overrides --edge-pct)")
     ap.add_argument("--ensemble", action="store_true",
-                    help="Ensemble v6+v7 models (average scores from both)")
+                    help="Ensemble v6+v7+CB models (avg scores) + deriv risk gate")
     ap.add_argument("--edge-boost", action="store_true",
                     help="Edge-proportional sizing: high-edge positions get more weight")
     ap.add_argument("--no-conf", action="store_true",
@@ -156,6 +156,11 @@ def main():
     ap.add_argument("--meta-risk", action="store_true",
                     help="Meta-model risk scaler: adjust gross exposure (0.3x-1.5x) based on "
                          "model agreement, regime, recent performance, score spread.")
+    ap.add_argument("--deriv-gate", action="store_true", default=False,
+                    help="Use derivatives-only model as risk gate (scale positions 0.3x-1.0x "
+                         "based on deriv model disagreement). Auto-enabled if deriv models found.")
+    ap.add_argument("--no-deriv-gate", action="store_true",
+                    help="Force disable deriv risk gate even if models exist.")
     ap.add_argument("--data", type=str, default=None,
                     help="Path to pre-built features parquet (offline mode). "
                          "If set, skips live fetch + feature engineering.")
@@ -194,8 +199,10 @@ def main():
     evtfilt_str = "evtfilt" if args.event_filter else ""
     voltgt_str = f"voltgt{args.vol_target_ann:.0%}" if args.vol_target_ann > 0 else ""
     metarisk_str = "meta-risk" if args.meta_risk else ""
+    derivgate_str = "deriv-gate" if (not args.no_deriv_gate) else ""
     mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, adapt_str,
-                               dynlev_str, evtfilt_str, voltgt_str, metarisk_str] if s]
+                               dynlev_str, evtfilt_str, voltgt_str, metarisk_str,
+                               derivgate_str] if s]
     mode_str = '+'.join(mode_parts) if mode_parts else 'baseline'
     print("=" * 70)
     print(f"  FAST SIMULATION")
@@ -261,6 +268,8 @@ def main():
     # ── 3  models ─────────────────────────────────────────────────
     print("📡 Models …")
     model_groups = []   # list of (models, feature_names) tuples
+    deriv_models = None  # (models, feature_names) — for risk gate, NOT ensemble
+    use_deriv_gate = False
 
     if args.ensemble:
         # Load LGB v6, v7 and CatBoost models (prefer *_prod if available)
@@ -297,59 +306,38 @@ def main():
                     for c in [c for c in mf_g if c not in df.columns]:
                         df[c] = 0.0
                     model_groups.append((ms, mf_g))
-                    print(f"   results_catboost: {len(ms)} CB models, {len(mf_g)} feats")
+                    print(f"   catboost: {len(ms)} CB models, {len(mf_g)} feats")
             except ImportError:
                 print("   ⚠️  catboost not installed, skipping CatBoost models")
-        # XGBoost + News Interactions ensemble member
-        xgb_dir = None
-        for _xd in ["results/production/xgboost", "results_xgboost_prod", "results_xgboost"]:
-            _p = os.path.join(root, _xd)
-            if os.path.isdir(_p):
-                xgb_dir = _p; break
-        if not xgb_dir:
-            xgb_dir = os.path.join(root, "results/production/xgboost")
-        if os.path.isdir(xgb_dir):
-            try:
-                from run_trading import load_xgboost_models
-                ms = load_xgboost_models(xgb_dir)
-                if ms:
-                    fn_path = os.path.join(xgb_dir, 'feature_names.json')
-                    if os.path.exists(fn_path):
-                        with open(fn_path) as _f:
-                            mf_g = json.load(_f)
-                    else:
-                        mf_g = ms[0].get_booster().feature_names
-                    for c in [c for c in mf_g if c not in df.columns]:
-                        df[c] = 0.0
-                    model_groups.append((ms, mf_g))
-                    print(f"   results_xgboost: {len(ms)} XGB models, {len(mf_g)} feats")
-            except ImportError:
-                print("   ⚠️  xgboost not installed, skipping XGBoost models")
-        # Derivatives-Only mini-model ensemble member
+
+        # ── Derivatives-Only model → RISK GATE (not ensemble member) ──
         deriv_dir = None
         for _dd in ["results/production/deriv_only", "results_deriv"]:
             _p = os.path.join(root, _dd)
             if os.path.isdir(_p) and any(f.endswith('.txt') for f in os.listdir(_p)):
                 deriv_dir = _p; break
-        if deriv_dir:
-            # deriv models use 'deriv_model_seed_*.txt' naming
+        use_deriv_gate = (args.deriv_gate or deriv_dir is not None) and not args.no_deriv_gate
+        if deriv_dir and use_deriv_gate:
             import lightgbm as _lgb
             from pathlib import Path as _Path
             _deriv_files = sorted(_Path(deriv_dir).glob('deriv_model_seed_*.txt'))
             if not _deriv_files:
                 _deriv_files = sorted(_Path(deriv_dir).glob('lgb_model_seed_*.txt'))
-            ms = [_lgb.Booster(model_file=str(f)) for f in _deriv_files]
-            if ms:
+            _d_ms = [_lgb.Booster(model_file=str(f)) for f in _deriv_files]
+            if _d_ms:
                 fn_path = os.path.join(deriv_dir, 'feature_names.json')
                 if os.path.exists(fn_path):
                     with open(fn_path) as _f:
-                        mf_g = json.load(_f)
+                        _d_feats = json.load(_f)
                 else:
-                    mf_g = ms[0].feature_name()
-                for c in [c for c in mf_g if c not in df.columns]:
+                    _d_feats = _d_ms[0].feature_name()
+                for c in [c for c in _d_feats if c not in df.columns]:
                     df[c] = 0.0
-                model_groups.append((ms, mf_g))
-                print(f"   deriv_only: {len(ms)} LGB models, {len(mf_g)} feats")
+                deriv_models = (_d_ms, _d_feats)
+                print(f"   deriv_only (risk gate): {len(_d_ms)} LGB models, {len(_d_feats)} feats")
+        elif deriv_dir and not use_deriv_gate:
+            print(f"   deriv_only: found but --no-deriv-gate, skipping")
+
         if not model_groups:
             print("❌ no models for ensemble"); return
     else:
@@ -370,6 +358,18 @@ def main():
             df[c] = 0.0
         model_groups.append((models, mf))
         print(f"   {len(models)} models, {len(mf)} feats")
+
+    # Architecture summary
+    n_ensemble = len(model_groups)
+    n_models_total = sum(len(ms) for ms, _ in model_groups)
+    arch_parts = [f"{n_ensemble} groups ({n_models_total} models)"]
+    if deriv_models is not None and use_deriv_gate:
+        arch_parts.append(f"deriv gate ({len(deriv_models[0])} models)")
+    print(f"   \U0001f3d7\ufe0f  Architecture: {' + '.join(arch_parts)}")
+
+    # ── Deriv risk gate constants ─────────────────────────────
+    DERIV_GATE_MIN = 0.3   # minimum scale (never fully zero out)
+    DERIV_GATE_MAX = 1.0   # at full agreement → no scaling
 
     def predict_ensemble(snap_df):
         """Average predictions across all model groups. Returns (scores, confidence)."""
@@ -392,6 +392,56 @@ def main():
         else:
             confidence = np.ones_like(mean_scores) * 0.5
         return mean_scores, confidence
+
+    def predict_deriv_gate(snap_df, ensemble_scores):
+        """Compute per-symbol risk scale (0.3–1.0) from derivatives-only model.
+
+        Logic: deriv model predicts cross-sectional rank (like main models).
+        If deriv model AGREES with ensemble direction → scale=1.0 (full position).
+        If deriv model DISAGREES → scale down to 0.3 (reduce position).
+        Agreement measured by rank correlation per position.
+
+        Returns: dict {symbol: scale_factor}
+        """
+        if deriv_models is None:
+            return {}  # no deriv model → no gating
+
+        d_ms, d_feats = deriv_models
+        X_d = snap_df[d_feats].values
+        d_preds = np.mean([m.predict(X_d) for m in d_ms], axis=0)
+
+        syms = snap_df['symbol'].values
+        scale_dict = {}
+
+        # Compute ranks (higher = more bullish)
+        ens_rank = np.argsort(np.argsort(ensemble_scores)).astype(float)
+        drv_rank = np.argsort(np.argsort(d_preds)).astype(float)
+        n = len(ens_rank)
+        if n < 5:
+            return {s: 1.0 for s in syms}
+
+        # Normalize ranks to [0, 1]
+        ens_rank /= (n - 1)
+        drv_rank /= (n - 1)
+
+        for i, sym in enumerate(syms):
+            # How different is this symbol's rank in ensemble vs deriv?
+            # 0 = perfect agreement, 1 = complete disagreement
+            rank_diff = abs(ens_rank[i] - drv_rank[i])
+
+            # Focus on extremes: only penalize when ensemble says strong long/short
+            # but deriv says the opposite
+            ens_extreme = abs(ens_rank[i] - 0.5) * 2  # 0=middle, 1=extreme
+
+            # Disagreement matters more for extreme positions
+            effective_disagree = rank_diff * ens_extreme
+
+            # Map: 0 disagree → scale=1.0, 0.7+ disagree → scale=0.3
+            scale = DERIV_GATE_MAX - effective_disagree * (DERIV_GATE_MAX - DERIV_GATE_MIN) / 0.7
+            scale = float(np.clip(scale, DERIV_GATE_MIN, DERIV_GATE_MAX))
+            scale_dict[sym] = scale
+
+        return scale_dict
 
     # ── 4  timestamps (rebal_h apart) ─────────────────────────────
     all_ts = sorted(df["timestamp"].unique())
@@ -555,6 +605,8 @@ def main():
     meta_risk_count = 0
     vol_scale_sum = 0.0               # for reporting avg vol scale
     vol_scale_count = 0
+    deriv_gate_sum = 0.0              # for reporting avg deriv gate scale
+    deriv_gate_count = 0
 
     held_L: dict[str, float] = {}     # symbol → entry_price
     held_S: dict[str, float] = {}
@@ -791,6 +843,32 @@ def main():
         weight_L = compute_weights(new_L, is_long=True)
         weight_S = compute_weights(new_S, is_long=False)
 
+        # ── Deriv risk gate: scale per-symbol weights by deriv agreement ──
+        deriv_gross_scale = 1.0  # default: no scaling
+        if deriv_models is not None and use_deriv_gate:
+            deriv_scale = predict_deriv_gate(snap0, scores)
+            if deriv_scale:
+                # Apply per-symbol scaling and re-normalize
+                for s in weight_L:
+                    weight_L[s] *= deriv_scale.get(s, 1.0)
+                wl_sum = sum(weight_L.values())
+                if wl_sum > 0:
+                    weight_L = {s: v / wl_sum for s, v in weight_L.items()}
+
+                for s in weight_S:
+                    weight_S[s] *= deriv_scale.get(s, 1.0)
+                ws_sum = sum(weight_S.values())
+                if ws_sum > 0:
+                    weight_S = {s: v / ws_sum for s, v in weight_S.items()}
+
+                # Also scale total allocation by average gate value
+                # (if deriv model is broadly cautious → reduce gross exposure)
+                all_selected = list(new_L | new_S)
+                avg_gate = np.mean([deriv_scale.get(s, 1.0) for s in all_selected])
+                deriv_gross_scale = float(np.clip(avg_gate, DERIV_GATE_MIN, DERIV_GATE_MAX))
+                deriv_gate_sum += deriv_gross_scale
+                deriv_gate_count += 1
+
         # ── Regime short scaling: reduce shorts in bull regime ────
         regime_scale = 1.0
         if args.regime_shorts > 0 and regime_col:
@@ -838,6 +916,10 @@ def main():
             total_alloc *= risk_scale
             meta_risk_sum += risk_scale
             meta_risk_count += 1
+
+        # ── Deriv gate gross scaling: reduce exposure when deriv model is cautious ──
+        if deriv_models is not None and use_deriv_gate and deriv_gross_scale < 1.0:
+            total_alloc *= deriv_gross_scale
 
         half_alloc = total_alloc / 2  # half for longs, half for shorts
         short_alloc = half_alloc * regime_scale  # reduced in bull regime
@@ -969,6 +1051,9 @@ def main():
         if meta_risk_count > 0:
             avg_mr = meta_risk_sum / meta_risk_count
             print(f"   Meta-risk:  avg scale {avg_mr:.2f}x ({META_RISK_MIN:.1f}–{META_RISK_MAX:.1f})")
+        if deriv_gate_count > 0:
+            avg_dg = deriv_gate_sum / deriv_gate_count
+            print(f"   Deriv gate: avg scale {avg_dg:.2f}x ({DERIV_GATE_MIN:.1f}–{DERIV_GATE_MAX:.1f})")
         if leverage > 1:
             print(f"   Leverage:   {lev_str}")
             liq_dd = -1.0 / leverage  # approximate liquidation DD
