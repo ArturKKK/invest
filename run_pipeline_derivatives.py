@@ -262,7 +262,7 @@ def main():
         eval_df_copy['pred'] = ensemble_pred
 
         metrics, ls_rets, ls_vol, ls_dd, ts_vals = evaluate_model(
-            eval_df_copy, 'pred', cost_model=COST_MODEL)
+            eval_df_copy, 'pred', 'target_rank', HORIZON)
 
         print(f"\n   📊 Results:")
         for k, v in metrics.items():

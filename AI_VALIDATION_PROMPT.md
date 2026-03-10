@@ -1,0 +1,161 @@
+# Валидация результатов ML-торговой системы — проверка на ошибки
+
+Ты эксперт по quantitative finance, ML backtesting и статистическим ловушкам. Мне нужна **жёсткая проверка**: где мы могли ошибиться, есть ли в результатах red flags, можем ли мы доверять нашим метрикам.
+
+---
+
+## Контекст
+
+Мы строим ML long-short стратегию на 50 криптовалютах. Ребалансировка каждые 12 часов, top-5 long + bottom-5 short. Текущий ансамбль: 15 моделей (LightGBM v6 ×5 seeds + LightGBM v7 ×5 seeds + CatBoost ×5 seeds).
+
+Мы провели масштабный эксперимент (exp12) — 20 вариантов моделей через 3-window walk-forward validation. Ниже полные результаты. **Проверь на ошибки и bias.**
+
+---
+
+## Методология
+
+### Walk-Forward Windows
+
+| Window | Train end | Purge (8d) | Val start | Val end | Test start | Test end |
+|--------|-----------|------------|-----------|---------|------------|----------|
+| W1 | 2023-06-30 | → 2023-07-08 | 2023-07-08 | 2024-06-30 | 2024-07-01 | 2024-12-31 |
+| W2 | 2024-01-01 | → 2024-01-09 | 2024-01-09 | 2024-12-31 | 2025-01-01 | 2025-03-31 |
+| W3 | 2024-06-30 | → 2024-07-08 | 2024-07-08 | 2025-06-30 | 2025-01-01 | 2026+ |
+
+- Purge gap: 8 дней между train/val/test
+- Данные: hourly OHLCV с 2017 (2.5M строк, 50 символов, Binance)
+- Target: `target_rank` = cross-sectional percentile rank (0-1) of forward 12h return per timestamp
+
+### Cost Model
+```
+taker_fee = 0.04%
+slippage = 0.02%
+round_trip = (0.04 + 0.02) × 2 = 0.12%
+turnover = 50% per rebalance (assumption)
+funding = 0.01% per 8h
+```
+
+### DDStop (key metric)
+DDStop Sharpe — Sharpe ratio with circuit breaker:
+- Position paused at DD < -20%
+- Resumed at DD > -8%
+- Annualized Sharpe of the resulting equity curve
+
+---
+
+## Полные результаты exp12 (20 вариантов)
+
+### Рейтинг по Avg DDStop Sharpe
+
+| # | Variant | DDStop Sh | ±std | W1 | W2 | W3 | DDStop MaxDD% | AnnRet% | Rank_IC | ICIR |
+|--:|---------|----------:|-----:|----:|----:|----:|------:|--------:|--------:|-----:|
+| 1 | v7_baseline | 2.12 | 0.22 | 1.84 | 2.14 | 2.38 | -38.3 | 49.0 | 0.0243 | 0.234 |
+| 2 | v7_res_hyb | 1.84 | 0.92 | 0.55 | 2.62 | 2.36 | -38.3 | 32.7 | 0.0271 | 0.231 |
+| 3 | v7_res_hyb_null | 1.83 | 0.92 | 0.54 | 2.44 | 2.52 | -35.6 | 30.1 | 0.0267 | 0.221 |
+| 4 | catboost_baseline | 1.76 | 0.45 | 1.18 | 1.81 | 2.29 | -46.3 | 48.1 | 0.0243 | 0.240 |
+| 5 | xgboost_res_hyb | 1.76 | 0.73 | 0.72 | 2.34 | 2.21 | -36.8 | 39.6 | 0.0277 | 0.225 |
+| 6 | v6_res_hyb | 1.67 | 1.09 | 0.14 | 2.55 | 2.32 | -39.6 | 37.0 | 0.0280 | 0.229 |
+| 7 | v6_residual | 1.67 | 0.91 | 0.39 | 2.21 | 2.41 | -37.6 | 39.3 | 0.0248 | 0.235 |
+| 8 | v6_res_hyb_no_news | 1.66 | 1.15 | 0.04 | 2.45 | 2.50 | -34.3 | 32.6 | 0.0283 | 0.230 |
+| 9 | cb_res_hyb_no_news | 1.64 | 0.82 | 0.52 | 2.45 | 1.95 | -38.1 | 33.3 | 0.0288 | 0.238 |
+| 10 | v6_hybrid | 1.63 | 0.57 | 0.83 | 1.97 | 2.10 | -41.0 | 40.3 | 0.0273 | 0.227 |
+| 11 | v6_baseline | 1.61 | 0.38 | 1.07 | 1.90 | 1.87 | -41.9 | 41.4 | 0.0248 | 0.228 |
+| 12 | v6_res_hyb_coin | 1.57 | 0.90 | 0.31 | 2.06 | 2.34 | -38.8 | 36.6 | 0.0282 | 0.233 |
+| 13 | v6_res_hyb_market | 1.53 | 1.09 | -0.01 | 2.23 | 2.38 | -41.1 | 34.3 | 0.0278 | 0.233 |
+| 14 | xgb_res_hyb_no_news | 1.41 | 1.49 | -0.69 | 2.66 | 2.25 | -42.0 | 34.2 | 0.0280 | 0.222 |
+| 15 | v6_res_hyb_null | 1.39 | 1.32 | -0.48 | 2.34 | 2.31 | -49.6 | 34.4 | 0.0280 | 0.223 |
+| 16 | catboost_res_hyb | 1.32 | 0.64 | 0.44 | 1.94 | 1.57 | -48.7 | 40.4 | 0.0284 | 0.242 |
+| 17 | v6_no_deriv | 1.09 | 0.47 | 0.44 | 1.53 | 1.31 | -52.8 | 39.2 | 0.0273 | 0.235 |
+| 18 | v6_no_news_no_deriv | 1.03 | 0.37 | 0.51 | 1.28 | 1.31 | -54.4 | 38.4 | 0.0281 | 0.239 |
+| 19 | v7_lambdarank | -0.89 | 0.22 | -1.14 | -0.60 | -0.92 | -31.2 | -41.9 | -0.0152 | 0.026 |
+| 20 | v6_lambdarank | -0.98 | 0.19 | -1.24 | -0.89 | -0.81 | -39.6 | -43.2 | -0.0130 | 0.020 |
+
+### Наши выводы (проверь)
+
+1. **v7_baseline — лидер** (DDStop 2.12, std=0.22 — самый стабильный, 49% ann ret)
+2. **LambdaRank — катастрофа** (отрицательный Sharpe во всех окнах). LambdaRank objective + наш rank target = не работает.
+3. **Derivatives features — главный фактор**: с ними DDStop 1.67, без них 1.09 (−0.58)
+4. **News бесполезны для LGB** (1.67 vs 1.66), **вредят CatBoost** (1.32 vs 1.64)
+5. **Residual/Hybrid target добавляет variance** без стабильного улучшения
+6. **Null-importance фильтрация бесполезна**
+
+---
+
+## Дополнительные результаты: offline backtest (run_fast_sim.py)
+
+Прогнали ансамбль (v6+v7+CB, edge-boost) через независимый быстрый бэктест (НЕ walk-forward):
+
+| Период | Lev | Return | MaxDD | Sharpe HAC | WR |
+|--------|-----|--------|-------|------------|-----|
+| 60 дней (Янв-Мар 2026) | 1x | +14.4% | -12.5% | +2.80 | 61% |
+| 60 дней | 3x | +35.8% | -35.8% | +4.12 | 58% |
+| 180 дней (Сен 2025–Мар 2026) | 1x | +3.6% | -23.1% | -1.41 | 52% |
+| 180 дней | 2x | -4.0% | -43.7% | -2.98 | 54% |
+| 365 дней | 1x | +34.4% | -23.1% | +0.56 | 61% |
+
+**Проблема**: 6-месячный бэктест показывает Sharpe -1.41, при том что 60-дневный даёт +2.80. Весь профит в последних 2 месяцах.
+
+При этом live demo (OKX testnet, работает 2 месяца) даёт: Sharpe 6.61, Return +21.3%, WR 61%.
+
+---
+
+## Ключевые детали реализации
+
+### Нормализация фичей
+- Большинство фичей: **cross-sectional rank** (0-1) per timestamp per coin
+- Vol/OI/funding features: **time-series zscore** (rolling 168h, winsorized ±3σ)
+- Regime features (binary/composite): без нормализации
+
+### Ансамбль
+```
+final_score = mean([mean(v6_seeds), mean(v7_seeds), mean(cb_seeds)])
+confidence = 1 / (1 + std(all_15_normalized_predictions))
+position_weight = edge_boost × confidence
+edge_boost = 1 + min(|edge| / P75_edge, 3.0)
+```
+
+### Top Feature Importance
+- **LGB**: fng_ma30 > fng_momentum > fng_ma7 > vol_12h_cs_rank > close_ma720_ratio
+- **CatBoost**: close_ma336_ratio > vol_12h_cs_rank > close_ma720_ratio > breadth_pct_positive > gk_vol_24h
+
+### Данные с потенциальными проблемами
+- **50 символов фиксированы** (список из 2025, используется на данных 2017+) → survivorship bias
+- **19/50 символов** заблокированы для шорта на OKX → live не может шортить эти монеты, а бэктест может
+- **News покрытие**: 87% строк покрыты, 49% из покрытых имеют новости, остальные = NaN (не 0)
+- **Derivatives data**: только с Dec 2021 (Binance), покрытие ~70% строк для OI, ~64% для taker
+
+---
+
+## Вопросы для проверки
+
+### 1. Валидность DDStop Sharpe
+DDStop Sharpe 2.12 — это реалистично для 12h crypto L/S на 50 монетах? Или это подозрительно высоко?
+
+### 2. Методология walk-forward
+3 окна, 8-дневный purge, expanding window. Достаточно ли 3 окон? Purge 8 дней для 12h таргета — хватает? Есть ли утечка?
+
+### 3. Survivorship bias
+50 монет из 2025 на данных 2017+. Насколько это критично? Может ли это объяснить +49% ann return?
+
+### 4. Расхождение метрик
+- Walk-forward DDStop Sharpe 2.12 vs offline backtest Sharpe HAC 0.56 (365d)
+- Live demo Sharpe 6.61 vs offline 2.80 (60d)
+Откуда расхождение? Это нормально или red flag?
+
+### 5. Паттерн "W1 слабый, W2-W3 сильные"
+Во всех вариантах W1 (тест 2024-07 → 2024-12) значительно слабее W2 и W3. Это model decay? Или что-то не так с данными?
+
+### 6. News вредят
+News ВРЕДЯТ CatBoost (1.32 vs 1.64) — при том что CatBoost specifically designed для categorical/noisy features. Это нормально?
+
+### 7. LambdaRank полностью сломан
+DDStop -0.89 / -0.98 с отрицательным Rank_IC. Это баг или LambdaRank принципиально не подходит?
+
+### 8. Cost model
+0.04% taker + 0.02% slip + 50% turnover + 0.01%/8h funding — реалистично? Или мы занижаем costs?
+
+### 9. Что мы точно делаем неправильно?
+Какие классические ошибки quant backtesting ты видишь? Look-ahead bias? Information leakage? Overfitting to in-sample?
+
+### 10. Можем ли доверять результатам достаточно, чтобы торговать на реальные деньги?
+У нас $500 для старта. При текущих результатах — стоит ли? Какие guardrails нужны?
