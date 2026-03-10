@@ -1,4 +1,4 @@
-# Результаты проекта invest — 9 марта 2026
+# Результаты проекта invest — 10 марта 2026
 
 ## Текущее состояние
 
@@ -566,6 +566,63 @@ HPO Best Rank ICIR: **0.7766** (trial 1 — CatBoost быстро находит
 - **Вывод**: min-conf 0.85 удаляет 40% сделок и теряет 43% Sharpe на полном году.
   На 60d попало удачное окно. **НЕ ИСПОЛЬЗОВАТЬ в production.**
 - **Возможно**: мягкий порог 0.70-0.75 будет полезен — нужно проверить.
+
+---
+
+## Meta-model stacking (10 марта 2026)
+
+### Архитектура
+- **Level-1** поверх L0 OOS предсказаний (v6 + v7 + CatBoost из exp12_full)
+- Meta-train = W1 test (2024-07 → 2024-12), Meta-test = W3 (2025-01 → 2026-03)
+- 4 варианта: LGB (33 feat), LGB-MINIMAL (21 feat), Ridge (3 feat), Ridge-ALL (33 feat)
+- Shared inference: `src/models/meta_model.py` (run_trading.py + run_fast_sim.py)
+
+### Исправления в run_meta_stack.py
+- 12 багфиксов: dedup before merge, NaN ffill, RidgeCV TSCV, explicit features, LGB capacity
+- 4 tier-1: LGB TimeSeriesSplit 3-fold CV для best_round, target winsorization (0.005), expanding window, save-model default
+- 2 бага найдены внешним AI-review: (1) raw preds до z-score нормализации в run_trading.py, (2) --meta-model без --ensemble тихо fallback на simple mean
+
+### run_meta_stack.py результаты (OOS, meta-test 2025-01 → 2026-03)
+
+| Модель | IC | Rank IC | LS Sharpe | VT Sharpe | DDStop Sharpe | MaxDD |
+|--------|-----|---------|-----------|-----------|---------------|-------|
+| Simple Mean | 0.0182 | 0.0223 | +2.70 | **+2.97** | +3.15 | -83.6% |
+| v6 only | 0.0179 | 0.0228 | +2.70 | +2.90 | +2.96 | -82.8% |
+| v7 only | 0.0184 | 0.0221 | +2.54 | +2.78 | +2.88 | -84.0% |
+| CB only | 0.0177 | 0.0214 | +2.92 | **+3.19** | **+3.50** | -80.9% |
+| Ridge-3 | 0.0183 | 0.0223 | +2.70 | +2.96 | +3.09 | -83.1% |
+| Ridge-ALL | 0.0203 | 0.0284 | +2.75 | +3.00 | +3.20 | -84.9% |
+| **LGB-META** | **0.0277** | **0.0353** | +2.34 | +2.47 | +2.72 | -88.2% |
+| **LGB-MINIMAL** | 0.0202 | 0.0284 | +2.76 | +2.97 | +3.14 | -81.5% |
+
+> LGB-META имеет лучший IC/RankIC, но хуже Sharpe — overfitting контекстных фичей.
+> LGB-MINIMAL ≈ Simple Mean по Sharpe, но улучшает IC. CB only — лучший по DDStop.
+
+### fast_sim backtesting (ensemble mode)
+
+| Режим | 30d Sharpe | 30d Return | 180d Sharpe | 180d Return | 180d MaxDD | 180d Calmar |
+|-------|-----------|------------|-------------|-------------|------------|-------------|
+| Ensemble (v6+v7+CB), без мета | 1.83 | +3.2% | 0.67 | +9.7% | -16.3% | 1.21 |
+| **Ensemble + meta lgb_minimal** | **3.73** | **+6.2%** | **1.49** | **+22.7%** | **-13.8%** | **3.33** |
+| Δ | **+104%** | +94% | **+122%** | +134% | +15% лучше | +175% |
+
+> Мета-модель даёт **+122% Sharpe** на ансамбле за 180 дней.
+
+### fast_sim: ensemble+meta vs single model
+
+| Режим | 14d Sharpe | 180d Sharpe | 180d Return |
+|-------|-----------|-------------|-------------|
+| **Single v7 + deriv-gate** | **+3.10** | **+2.02** | **+36.8%** |
+| Ensemble + meta lgb_minimal | +3.73 (30d) | +1.49 | +22.7% |
+
+> **Single model + deriv-gate пока лучше ансамбля + мета** на длинном горизонте.
+> Мета начнёт выигрывать при добавлении разнообразных L0 (новые фичи/данные, 4-й тип модели).
+
+### Выводы
+1. Инфраструктура мета-модели полностью готова (train → save → inference в production/sim)
+2. На текущих 3 L0 моделях мета даёт +122% Sharpe на ансамбле, но ансамбль сам проигрывает single model
+3. **В production оставляем single v7 + deriv-gate** (Sharpe 2.02 > 1.49)
+4. После добавления новых данных (OI, basis, liquidations) → переобучить L0 → мета должна показать lift
 
 ---
 
