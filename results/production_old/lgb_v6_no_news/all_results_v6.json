@@ -1,0 +1,71 @@
+{
+  "per_window": [
+    {
+      "IC": 0.0151,
+      "Rank_IC": 0.0279,
+      "ICIR": 0.2519,
+      "Rank_ICIR": 0.4267,
+      "LS_Sharpe_raw": 2.48,
+      "LS_Sharpe_net": 1.12,
+      "LS_Ann_Return_net_%": 43.0,
+      "LS_MaxDD_net_%": -97.3,
+      "LS_Total_net_%": 15100.1,
+      "LS_VolTarget_Sharpe": 1.77,
+      "LS_VolTarget_MaxDD_%": -97.9,
+      "LS_VolTarget_Total_%": 14762736.2,
+      "LS_DDStop_Sharpe": 1.81,
+      "LS_DDStop_MaxDD_%": -44.2,
+      "LS_DDStop_Total_%": 2876.3,
+      "LO5_Sharpe": -0.77,
+      "LO10_Sharpe": -0.88,
+      "N_periods": 10299,
+      "Cost_per_period_bps": 3.5,
+      "window": "W3 (\u2192latest)"
+    }
+  ],
+  "average": {
+    "IC": 0.0151,
+    "Rank_IC": 0.0279,
+    "ICIR": 0.2519,
+    "Rank_ICIR": 0.4267,
+    "LS_Sharpe_raw": 2.48,
+    "LS_Sharpe_net": 1.12,
+    "LS_Ann_Return_net_%": 43.0,
+    "LS_MaxDD_net_%": -97.3,
+    "LS_Total_net_%": 15100.1,
+    "LS_VolTarget_Sharpe": 1.77,
+    "LS_VolTarget_MaxDD_%": -97.9,
+    "LS_VolTarget_Total_%": 14762736.2,
+    "LS_DDStop_Sharpe": 1.81,
+    "LS_DDStop_MaxDD_%": -44.2,
+    "LS_DDStop_Total_%": 2876.3,
+    "LO5_Sharpe": -0.77,
+    "LO10_Sharpe": -0.88,
+    "N_periods": 10299,
+    "Cost_per_period_bps": 3.5
+  },
+  "combined": {
+    "LS_Net_Sharpe": 1.12,
+    "LS_Net_MaxDD_%": -97.3,
+    "LS_Net_Total_%": 15100.1,
+    "LS_VolTarget_Sharpe": 1.77,
+    "LS_VolTarget_MaxDD_%": -97.9,
+    "LS_DDStop_Sharpe": 1.81,
+    "LS_DDStop_MaxDD_%": -44.2
+  },
+  "cost_model": {
+    "taker_fee": 0.0003,
+    "slippage": 0.0001,
+    "funding_per_8h": 5e-05,
+    "turnover_pct": 0.35
+  },
+  "meta": {
+    "timestamp": "2026-03-07T19:19:25.770399",
+    "horizon": 12,
+    "n_features": 153,
+    "n_selected": 121,
+    "n_seeds": 5,
+    "n_windows": 1,
+    "hpo_trials": 0
+  }
+}

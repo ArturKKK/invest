@@ -19,7 +19,7 @@ Usage:
   python run_fast_sim.py --days 30 --capital 500          # more days
   python run_fast_sim.py --days 30 --rebal 8 --npos 3    # custom params
   python run_fast_sim.py --leverage 3 --edge-pct 75       # 3x leverage, P75 edge filter
-  python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --edge-boost  # recommended
+  python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --deriv-gate  # recommended
 """
 
 import os, sys, json, argparse, warnings
@@ -309,6 +309,8 @@ def main():
                     print(f"   catboost: {len(ms)} CB models, {len(mf_g)} feats")
             except ImportError:
                 print("   ⚠️  catboost not installed, skipping CatBoost models")
+
+        # XGBoost убран из ансамбля — дублирует LGB/CB, не даёт доп. alpha
 
         # ── Derivatives-Only model → RISK GATE (not ensemble member) ──
         deriv_dir = None

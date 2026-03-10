@@ -748,11 +748,12 @@ def add_derivatives_features(df, project_root):
     funding_path = os.path.join(sent_dir, 'binance_funding_rates.parquet')
     if os.path.exists(funding_path):
         bfr = pd.read_parquet(funding_path)
-        bfr['timestamp'] = pd.to_datetime(bfr['timestamp'], utc=True)
+        bfr['timestamp'] = pd.to_datetime(bfr['timestamp'], utc=True).astype('datetime64[ns, UTC]')
         bfr = bfr.drop_duplicates(['timestamp', 'symbol'], keep='last')
         # Funding is 8h; merge on nearest preceding funding
         # First, add to df via merge_asof per symbol
         bfr = bfr.sort_values('timestamp')
+        df['timestamp'] = df['timestamp'].astype('datetime64[ns, UTC]')
         df = df.sort_values('timestamp')
         bfr_merged = pd.merge_asof(
             df[['timestamp', 'symbol']].reset_index(),

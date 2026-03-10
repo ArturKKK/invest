@@ -550,6 +550,45 @@ def build_features(df):
         df[col] = df[col].replace([np.inf, -np.inf], np.nan)
     df = df.fillna(0)
 
+    # ── Derivatives features (Binance Futures: OI, taker, L/S, funding) ──
+    # Critical: models trained with these features expect them in live inference.
+    # Without this block, 21 features are zeros → model predictions are garbage.
+    try:
+        from run_pipeline_v6 import add_derivatives_features as _add_deriv
+        root = os.path.dirname(os.path.abspath(__file__))
+        df = _add_deriv(df, root)
+    except Exception as e:
+        print(f"   ⚠️  Derivatives features failed: {e}")
+        # Fill expected columns with neutral defaults so model doesn't crash
+        for col in ['oi_value_usd', 'oi_change_4h', 'oi_change_12h', 'oi_change_24h',
+                     'oi_zscore_7d', 'oi_change_12h_cs', 'oi_ret_interaction_12h',
+                     'taker_cvd_12h', 'taker_cvd_24h',
+                     'top_ls_ratio', 'top_long_pct', 'top_ls_change_12h',
+                     'top_ls_change_24h', 'top_ls_zscore',
+                     'global_ls_ratio', 'global_long_pct', 'ls_divergence',
+                     'funding_rate_binance', 'funding_surprise']:
+            if col not in df.columns:
+                df[col] = 0.0
+
+    # ── News coverage flags (expected by CatBoost) ──
+    if 'news_coverage_ok' not in df.columns:
+        coverage_col = None
+        if 'news_count_24h' in df.columns:
+            coverage_col = 'news_count_24h'
+        elif 'market_news_count_24h' in df.columns:
+            coverage_col = 'market_news_count_24h'
+        if coverage_col:
+            has_coverage = ~df[coverage_col].isna() & (df[coverage_col] != 0)
+            df['news_coverage_ok'] = has_coverage.astype(float)
+            df['news_event'] = np.where(has_coverage, (df[coverage_col] > 0).astype(float), np.nan)
+        else:
+            df['news_coverage_ok'] = 0.0
+            df['news_event'] = np.nan
+
+    # Replace inf/nan in new columns
+    for col in df.select_dtypes(include=[np.number]).columns:
+        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+
     # v6: 12h-specific features
     df = add_12h_features(df)
 
