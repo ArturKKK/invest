@@ -444,7 +444,10 @@ def main():
     print(f"  AGGREGATE RESULTS ({len(all_window_metrics)} windows)")
     print(f"{'='*70}")
 
-    if len(all_window_metrics) > 1:
+    if len(all_window_metrics) == 0:
+        avg_metrics = {}
+        print("   ⚠️  Production mode — no test windows, skipping metrics.")
+    elif len(all_window_metrics) > 1:
         metric_keys = [k for k in all_window_metrics[0].keys()
                        if k != 'window' and isinstance(all_window_metrics[0][k], (int, float))]
 
@@ -477,6 +480,30 @@ def main():
     # ========================================
     # 4. COMBINED EQUITY CURVE
     # ========================================
+    if len(combined_ls_rets) == 0:
+        print("   ⚠️  No test returns — skipping equity curve & combined stats.")
+        all_results = {
+            'per_window': all_window_metrics,
+            'average': avg_metrics,
+            'combined': {},
+            'cost_model': COST_MODEL,
+            'meta': {
+                'timestamp': datetime.now().isoformat(),
+                'model_type': 'CatBoost',
+                'horizon': HORIZON,
+                'n_features': len(feat_cols),
+                'n_selected': len(selected_feats) if 'selected_feats' in dir() else 0,
+                'n_seeds': args.seeds,
+                'n_windows': len(windows),
+                'hpo_trials': args.hpo_trials if not args.skip_hpo else 0,
+                'production_mode': True,
+            },
+        }
+        with open(os.path.join(results_dir, 'all_results_catboost.json'), 'w') as f:
+            json.dump(all_results, f, indent=2, default=str)
+        print(f"\n✅ Production models saved to {results_dir}/")
+        return
+
     combined_ls = np.array(combined_ls_rets)
     periods_per_year = (24 // HORIZON) * 365
 
