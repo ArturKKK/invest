@@ -78,7 +78,7 @@ DERIV_FEATURES = [
     # Basis / Premium (6) — NEW
     'basis_pct', 'basis_zscore_7d', 'basis_change_12h', 'basis_change_24h',
     'basis_cs_rank', 'basis_funding_divergence',
-    # Liquidations (9) — NEW
+    # Liquidations (10) — NEW
     'liq_long_usd', 'liq_short_usd', 'liq_total_usd',
     'liq_imbalance', 'liq_cascade_12h', 'liq_cascade_24h',
     'liq_imbalance_12h', 'liq_total_zscore', 'liq_ret_interaction',

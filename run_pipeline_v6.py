@@ -801,10 +801,8 @@ def add_derivatives_features(df, project_root):
         mkt_feats += 1
 
     if 'oi_value_usd' in df.columns:
-        # Total market OI (sum across all coins) — systemic leverage gauge
-        ts_total_oi = df.groupby('timestamp')['oi_value_usd'].transform('sum')
-        # Express as pct change over 12h (market-level OI momentum)
-        # Need to avoid per-symbol shift, so compute on unique timestamps
+        # Total market OI pct change over 12h (market-level OI momentum)
+        # Compute on unique timestamps to avoid per-symbol shift
         ts_oi_map = df.groupby('timestamp')['oi_value_usd'].sum()
         ts_oi_change = ts_oi_map.pct_change(12).rename('agg_oi_total_change_12h')
         df = df.merge(ts_oi_change, left_on='timestamp', right_index=True, how='left')
@@ -950,7 +948,8 @@ TSZSCORE_COLS = {
     # Basis / premium features
     'basis_pct', 'basis_zscore_7d', 'basis_change_12h', 'basis_change_24h',
     'basis_funding_divergence',
-    # Liquidation features
+    # Liquidation features (raw USD volumes need TS-zscore to avoid market-cap proxy)
+    'liq_long_usd', 'liq_short_usd', 'liq_total_usd',
     'liq_imbalance', 'liq_total_zscore', 'liq_cascade_12h', 'liq_cascade_24h',
     'liq_imbalance_12h', 'liq_ret_interaction', 'agg_liq_zscore',
 }

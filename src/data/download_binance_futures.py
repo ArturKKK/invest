@@ -456,8 +456,10 @@ def download_liquidation_snapshot(symbols: list, start_date: datetime) -> pd.Dat
                         raw['side'] = raw.iloc[:, 2].astype(str).str.upper()
 
                         # Calculate USD value
-                        qty_col = raw.columns[3] if len(raw.columns) > 3 else None
-                        price_col = raw.columns[5] if len(raw.columns) > 5 else raw.columns[4]
+                        # CSV columns: time(0), symbol(1), side(2), order_type(3),
+                        # time_in_force(4), original_quantity(5), price(6), average_price(7), ...
+                        qty_col = raw.columns[5] if len(raw.columns) > 5 else None
+                        price_col = raw.columns[6] if len(raw.columns) > 6 else raw.columns[5]
                         if qty_col and price_col:
                             raw['usd_value'] = (
                                 pd.to_numeric(raw[qty_col], errors='coerce') *
