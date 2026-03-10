@@ -180,23 +180,53 @@ def fetch_ohlcv(symbols, hours=800):
         print(f"❌ pip install ccxt")
         sys.exit(1)
 
+    proxy = os.environ.get('ALL_PROXY') or os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')
     exchange = ccxt.binance({
         'enableRateLimit': True,
         'options': {'defaultType': 'spot'},
     })
     exchange.session.verify = False
+    if proxy:
+        exchange.socks_proxy = proxy
 
     all_dfs = []
-    limit = min(hours + 10, 1000)
     failed = []
 
     for i, sym in enumerate(symbols):
         try:
-            ohlcv = exchange.fetch_ohlcv(sym, '1h', limit=limit)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
-            df['symbol'] = sym
-            all_dfs.append(df)
+            needed = hours + 10
+            chunks = []
+            since = None  # will fetch most recent first, then paginate backwards
+            while needed > 0:
+                batch = min(needed, 1000)
+                if since is None:
+                    # First request: get the most recent candles
+                    ohlcv = exchange.fetch_ohlcv(sym, '1h', limit=batch)
+                else:
+                    ohlcv = exchange.fetch_ohlcv(sym, '1h', since=since, limit=batch)
+                if not ohlcv:
+                    break
+                chunks.append(ohlcv)
+                needed -= len(ohlcv)
+                if len(ohlcv) < batch:
+                    break  # no more data available
+                # Next request: go further back
+                earliest_ts = ohlcv[0][0]
+                since = earliest_ts - batch * 3600 * 1000  # ms
+            # Combine chunks (may overlap), deduplicate
+            all_candles = []
+            seen_ts = set()
+            for chunk in chunks:
+                for c in chunk:
+                    if c[0] not in seen_ts:
+                        all_candles.append(c)
+                        seen_ts.add(c[0])
+            all_candles.sort(key=lambda x: x[0])
+            if all_candles:
+                df = pd.DataFrame(all_candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+                df['symbol'] = sym
+                all_dfs.append(df)
         except Exception as e:
             failed.append(sym)
 
