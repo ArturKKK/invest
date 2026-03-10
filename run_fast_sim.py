@@ -28,6 +28,11 @@ from datetime import datetime, timezone
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from src.models.meta_model import MetaModelInference, build_meta_features_live
+except ImportError:
+    MetaModelInference = None
 from run_trading import (
     SYMBOLS, EXCLUDE_COLS, DEFAULT_RISK, HORIZON,
     fetch_ohlcv, build_features, cross_sectional_rank, load_lgb_models,
@@ -161,6 +166,18 @@ def main():
                          "based on deriv model disagreement). Auto-enabled if deriv models found.")
     ap.add_argument("--no-deriv-gate", action="store_true",
                     help="Force disable deriv risk gate even if models exist.")
+    ap.add_argument("--no-ddstop", action="store_true",
+                    help="Disable drawdown stop completely (for diagnostic runs).")
+    ap.add_argument("--meta-model", type=str, default=None, nargs='?', const='auto',
+                    help="Use meta-model stacking instead of simple mean. "
+                         "Pass path to meta_model.pkl or 'auto' to find in results/meta_stack/")
+    ap.add_argument("--meta-variant", type=str, default="lgb_minimal",
+                    choices=["lgb", "lgb_minimal", "ridge"],
+                    help="Meta-model variant: lgb (full 33 feat), lgb_minimal (20 feat), ridge")
+    ap.add_argument("--start-date", type=str, default=None,
+                    help="Force sim to start from this date (YYYY-MM-DD). Trims earlier data.")
+    ap.add_argument("--end-date", type=str, default=None,
+                    help="Force sim to end at this date (YYYY-MM-DD). Trims later data.")
     ap.add_argument("--data", type=str, default=None,
                     help="Path to pre-built features parquet (offline mode). "
                          "If set, skips live fetch + feature engineering.")
@@ -180,8 +197,8 @@ def main():
     n_pos   = args.npos  or risk["n_long"]
     kelly   = args.kelly or risk["kelly_frac"]
     vol_tgt = risk["vol_target"]
-    dd_stop = risk["dd_stop"]
-    dd_resume = risk["dd_resume"]
+    dd_stop = risk["dd_stop"] if not args.no_ddstop else -9.99
+    dd_resume = risk["dd_resume"] if not args.no_ddstop else -9.99
     vol_lb  = risk.get("vol_lookback", 50)
     rebal_h = args.rebal
     leverage = args.leverage
@@ -266,11 +283,24 @@ def main():
               and df[c].dtype in ("float64","float32","int64","int32")]
         df = cross_sectional_rank(df, fc)
 
+        # Save snapshot for reproducible offline runs
+        snap_path = os.path.join(root, "trading_logs", "frozen_features.parquet")
+        raw.to_parquet(os.path.join(root, "trading_logs", "frozen_raw.parquet"), index=False)
+        print(f"   💾 Raw OHLCV saved: trading_logs/frozen_raw.parquet ({raw.shape})")
+        print(f"      Date range: {raw['timestamp'].min()} → {raw['timestamp'].max()}")
+        print(f"      Per-symbol candles: {raw.groupby('symbol').size().describe()[['min','max']].to_dict()}")
+
     # ── 3  models ─────────────────────────────────────────────────
     print("📡 Models …")
     model_groups = []   # list of (models, feature_names) tuples
+    model_group_labels = []  # parallel list: 'v6', 'v7', 'cb' — for meta-model mapping
     deriv_models = None  # (models, feature_names) — for risk gate, NOT ensemble
     use_deriv_gate = False
+
+    # Auto-enable ensemble when meta-model is requested (meta needs v6+v7+cb)
+    if getattr(args, 'meta_model', None) and not args.ensemble:
+        args.ensemble = True
+        print("   ℹ️  --meta-model requires ensemble → auto-enabling --ensemble")
 
     if args.ensemble:
         # Load LGB v6, v7 — one directory per model type (first match wins)
@@ -297,6 +327,7 @@ def main():
                         df[c] = 0.0
                         n_missing += 1
                     model_groups.append((ms, mf_g))
+                    model_group_labels.append(mtype)  # 'v6' or 'v7'
                     loaded_types.add(mtype)
                     label = "PROD" if "_prod" in p or "production" in p else "research"
                     warn = f" ⚠️ {n_missing} features zero-filled" if n_missing > 3 else ""
@@ -323,6 +354,7 @@ def main():
                     for c in [c for c in mf_g if c not in df.columns]:
                         df[c] = 0.0
                     model_groups.append((ms, mf_g))
+                    model_group_labels.append('cb')
                     warn = f" ⚠️ {n_missing} features zero-filled" if n_missing > 3 else ""
                     print(f"   catboost: {len(ms)} CB models, {len(mf_g)} feats{warn}")
             except ImportError:
@@ -377,6 +409,7 @@ def main():
         for c in [c for c in mf if c not in df.columns]:
             df[c] = 0.0
         model_groups.append((models, mf))
+        model_group_labels.append('single')
         print(f"   {len(models)} models, {len(mf)} feats")
 
     # Architecture summary
@@ -385,6 +418,26 @@ def main():
     arch_parts = [f"{n_ensemble} groups ({n_models_total} models)"]
     if deriv_models is not None and use_deriv_gate:
         arch_parts.append(f"deriv gate ({len(deriv_models[0])} models)")
+
+    # ── Meta-model loading ────────────────────────────────────
+    _meta_model_inf = None
+    _meta_group_idx = {}  # maps 'v6','v7','cb' → index in model_groups
+    if getattr(args, 'meta_model', None) and MetaModelInference is not None:
+        _meta_model_inf = MetaModelInference.load(
+            args.meta_model, variant=args.meta_variant, root=root
+        )
+        if _meta_model_inf is not None:
+            # Build label→index mapping for correct v6/v7/cb identification
+            for _i, _lbl in enumerate(model_group_labels):
+                _meta_group_idx[_lbl] = _i
+            if all(k in _meta_group_idx for k in ('v6', 'v7', 'cb')):
+                arch_parts.append(f"meta-{args.meta_variant}")
+                mode_str = mode_str.rstrip('+') + f"+meta-{args.meta_variant}"
+            else:
+                missing = [k for k in ('v6', 'v7', 'cb') if k not in _meta_group_idx]
+                print(f"   ⚠️  Meta-model needs v6+v7+cb but missing: {missing} → disabled")
+                _meta_model_inf = None
+
     print(f"   \U0001f3d7\ufe0f  Architecture: {' + '.join(arch_parts)}")
 
     # ── Deriv risk gate constants ─────────────────────────────
@@ -392,17 +445,20 @@ def main():
     DERIV_GATE_MAX = 1.0   # at full agreement → no scaling
 
     def predict_ensemble(snap_df):
-        """Average predictions across all model groups. Returns (scores, confidence)."""
+        """Predict using L0 models, optionally refined by meta-model stacking."""
+        # Step 1: Get per-group L0 predictions (always needed)
         all_scores = []
-        all_individual = []  # individual model predictions
+        all_individual = []
+        per_group_scores = []  # [v6_mean, v7_mean, cb_mean]
         for ms, mf_g in model_groups:
             X = snap_df[mf_g].values
             preds = [m.predict(X) for m in ms]
             all_individual.extend(preds)
             scores = np.mean(preds, axis=0)
             all_scores.append(scores)
-        mean_scores = np.mean(all_scores, axis=0)
-        # Confidence = model agreement. Normalize each model's preds before computing std
+            per_group_scores.append(scores)
+
+        # Confidence = model agreement (always computed for other modules)
         if len(all_individual) > 1:
             normed = []
             for p in all_individual:
@@ -410,7 +466,20 @@ def main():
             model_std = np.std(normed, axis=0)
             confidence = 1.0 / (1.0 + model_std)
         else:
-            confidence = np.ones_like(mean_scores) * 0.5
+            confidence = np.ones(len(snap_df)) * 0.5
+
+        # Step 2: Meta-model stacking (if enabled and v6+v7+cb all present)
+        if _meta_model_inf is not None and all(k in _meta_group_idx for k in ('v6', 'v7', 'cb')):
+            meta_scores = _meta_model_inf.predict(
+                snap_df,
+                pred_v6=per_group_scores[_meta_group_idx['v6']],
+                pred_v7=per_group_scores[_meta_group_idx['v7']],
+                pred_cb=per_group_scores[_meta_group_idx['cb']],
+            )
+            return meta_scores, confidence
+
+        # Fallback: simple mean (original behavior)
+        mean_scores = np.mean(all_scores, axis=0)
         return mean_scores, confidence
 
     def predict_deriv_gate(snap_df, ensemble_scores):
@@ -467,6 +536,17 @@ def main():
     all_ts = sorted(df["timestamp"].unique())
     sim_start = max(0, len(all_ts) - sim_h)
     steps = all_ts[sim_start::rebal_h]      # every rebal_h hours
+
+    # Apply --start-date / --end-date filters
+    if args.start_date:
+        sd = pd.Timestamp(args.start_date, tz='UTC')
+        steps = [t for t in steps if t >= sd]
+    if args.end_date:
+        ed = pd.Timestamp(args.end_date, tz='UTC')
+        steps = [t for t in steps if t <= ed]
+    if len(steps) < 5:
+        print(f"❌ Only {len(steps)} steps after date filters — too few"); return
+
     print(f"   {steps[0]} → {steps[-1]}  ({len(steps)} steps, {rebal_h}h apart)")
 
     # ── 4b  calibrate edge threshold ──────────────────────────────

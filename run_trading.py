@@ -56,6 +56,11 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+try:
+    from src.models.meta_model import MetaModelInference
+except ImportError:
+    MetaModelInference = None
+
 warnings.filterwarnings('ignore')
 
 # Load .env file if exists
@@ -820,11 +825,15 @@ def generate_lgb_signal(df, models, feat_cols):
     return latest[['symbol', 'pred_lgb']].copy(), np.array(all_preds)
 
 
-def generate_signal(df, feat_cols, root):
+def generate_signal(df, feat_cols, root, meta_model=None):
     """
     Generate ensemble signal.
     Champion: LGB v6 (5 seeds) + LGB v7 (5 seeds) + CatBoost (5 seeds) = 15 models.
     Falls back to LGB v5 or feature-based signal.
+
+    Args:
+        meta_model: Optional MetaModelInference — if provided, replaces simple mean
+                    with meta-model stacking (requires v6 + v7 + CB all loaded).
     """
     signals = {}
 
@@ -961,10 +970,40 @@ def generate_signal(df, feat_cols, root):
         result = result.merge(other, on='symbol', how='inner')
 
     pred_cols = [c for c in result.columns if c.startswith('pred_')]
+
+    # Save raw predictions BEFORE normalization — meta-model was trained on raw L0 outputs
+    raw_pred_v6 = result['pred_lgb_v6'].values.copy() if 'pred_lgb_v6' in result.columns else None
+    raw_pred_v7 = result['pred_lgb_v7'].values.copy() if 'pred_lgb_v7' in result.columns else None
+    raw_pred_cb = result['pred_cb'].values.copy() if 'pred_cb' in result.columns else None
+
     for col in pred_cols:
         result[col] = (result[col] - result[col].mean()) / (result[col].std() + 1e-10)
 
     result['score'] = sum(result[c] for c in pred_cols) / len(pred_cols)
+
+    # ── Meta-model stacking: replace simple mean with learned combination ──
+    if (meta_model is not None
+            and raw_pred_v6 is not None
+            and raw_pred_v7 is not None
+            and raw_pred_cb is not None):
+        try:
+            latest_snap = df.groupby('symbol').last().reset_index()
+            # Align snap to result symbols in same order
+            snap_aligned = latest_snap[latest_snap['symbol'].isin(result['symbol'])]
+            snap_aligned = snap_aligned.set_index('symbol').loc[result['symbol'].values].reset_index()
+
+            meta_scores = meta_model.predict(
+                snap_aligned,
+                pred_v6=raw_pred_v6,
+                pred_v7=raw_pred_v7,
+                pred_cb=raw_pred_cb,
+            )
+            result['score'] = meta_scores
+            # Normalize score for downstream compatibility
+            result['score'] = (result['score'] - result['score'].mean()) / (result['score'].std() + 1e-10)
+            print(f"   🧠 Meta-model applied: {meta_model}")
+        except Exception as e:
+            print(f"   ⚠️  Meta-model failed, using simple mean: {e}")
 
     # ── Confidence: model agreement (low std → high confidence) ──
     if all_raw_preds:
@@ -2019,6 +2058,11 @@ def main():
     parser.add_argument('--vol-target', type=float, default=None)
     parser.add_argument('--kelly', type=float, default=None)
     parser.add_argument('--config', type=str, default=None, help='Path to risk config JSON')
+    parser.add_argument('--meta-model', type=str, default=None, nargs='?', const='auto',
+                        help="Use meta-model stacking. Pass path to pkl or 'auto'.")
+    parser.add_argument('--meta-variant', type=str, default='lgb_minimal',
+                        choices=['lgb', 'lgb_minimal', 'ridge', 'ridge_all'],
+                        help='Meta-model variant (default: lgb_minimal)')
     args = parser.parse_args()
 
     root = os.path.dirname(os.path.abspath(__file__))
@@ -2194,7 +2238,11 @@ def main():
 
         # 4. Generate signal
         print(f"\n📡 Generating signal...")
-        signals = generate_signal(df, feat_cols, root)
+        # Load meta-model if requested
+        _meta = None
+        if getattr(args, 'meta_model', None) and MetaModelInference is not None:
+            _meta = MetaModelInference.load(args.meta_model, variant=args.meta_variant, root=root)
+        signals = generate_signal(df, feat_cols, root, meta_model=_meta)
         if signals is None or len(signals) == 0:
             print("   ❌ No signals")
             return
