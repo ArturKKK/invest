@@ -2078,6 +2078,10 @@ def main():
     tracker = TradeTracker(os.path.join(log_dir, 'trades.csv'))
     tracker.print_stats()
 
+    # Sync _prev_realized_pnl so bot restart doesn't spike equity
+    if '_prev_realized_pnl' not in state:
+        state['_prev_realized_pnl'] = tracker.get_stats().get('total_pnl', 0)
+
     def run_cycle():
         now = datetime.now(timezone.utc)
         print(f"\n{'─' * 70}")
