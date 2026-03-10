@@ -59,6 +59,7 @@ PURGE_DAYS = 8     # gap between train_end and val_start to prevent target leaka
                    # (12h target overlap + 168h rolling features = ~7d; round up to 8)
 
 # Rolling walk-forward windows (RESEARCH mode — has held-out test set)
+# Non-overlapping test periods for independent OOS evaluation
 WALK_FORWARD_WINDOWS = [
     {
         'name': 'W1 (→2024-12)',
@@ -69,19 +70,19 @@ WALK_FORWARD_WINDOWS = [
         'test_end': '2024-12-31',
     },
     {
-        'name': 'W2 (→2025-03)',
+        'name': 'W2 (→2025-06)',
         'train_end': '2024-01-01',
         'val_start': '2024-01-09',
         'val_end': '2024-12-30',
         'test_start': '2025-01-01',
-        'test_end': '2025-12-31',
+        'test_end': '2025-06-30',
     },
     {
         'name': 'W3 (→latest)',
         'train_end': '2024-06-29',
         'val_start': '2024-07-07',
-        'val_end': '2024-12-30',
-        'test_start': '2025-01-01',
+        'val_end': '2025-06-29',
+        'test_start': '2025-07-01',
         'test_end': '2026-12-31',
     },
 ]
@@ -1299,30 +1300,38 @@ def drawdown_stop_returns(net_rets, max_dd_threshold=-0.25, recovery_threshold=-
     """
     Circuit breaker: stop trading when drawdown exceeds threshold.
     Resume when drawdown recovers above recovery_threshold.
+
+    When stopped: equity is FLAT (positions closed). We track a separate
+    'shadow_equity' from net_rets to know when the market has recovered
+    enough to resume, but our actual trading equity stays flat.
     """
     n = len(net_rets)
     stopped_rets = np.zeros(n)
-    equity = 1.0
+    equity = 1.0          # actual trading equity (flat when stopped)
+    shadow_equity = 1.0   # tracks what would happen if we kept trading
     peak = 1.0
     is_stopped = False
 
     for i in range(n):
         if is_stopped:
-            # Still track equity to know when to resume
-            equity *= (1 + net_rets[i])
-            dd = equity / peak - 1
-            if dd > recovery_threshold:
+            # Track shadow equity to decide when to resume
+            shadow_equity *= (1 + net_rets[i])
+            shadow_dd = shadow_equity / peak - 1
+            if shadow_dd > recovery_threshold:
                 is_stopped = False
+                # Resume: apply this period's return
+                equity *= (1 + net_rets[i])
                 stopped_rets[i] = net_rets[i]
-            # else: sit out (return 0)
+            # else: equity stays flat (positions closed)
         else:
             equity *= (1 + net_rets[i])
+            shadow_equity *= (1 + net_rets[i])
             if equity > peak:
                 peak = equity
             dd = equity / peak - 1
             if dd < max_dd_threshold:
                 is_stopped = True
-                stopped_rets[i] = 0  # Already too late for this period, but stop next
+                stopped_rets[i] = 0  # stop next period
             else:
                 stopped_rets[i] = net_rets[i]
 

@@ -237,3 +237,81 @@ Turnover 50% — это грубое допущение из pipeline оценк
 
 ### 13. Приоритеты перед деплоем
 Из твоих замечаний, что КРИТИЧНО исправить перед реальными деньгами, а что можно итерировать после?
+
+---
+
+## Что мы уже исправили по твоим замечаниям
+
+### Fix 1: DDStop теперь "flat equity"
+```python
+def drawdown_stop_returns(net_rets, max_dd_threshold=-0.25, recovery_threshold=-0.10):
+    # Когда stopped: equity FLAT (позиции закрыты).
+    # Отдельный shadow_equity отслеживает рынок для решения о resume.
+    for i in range(n):
+        if is_stopped:
+            shadow_equity *= (1 + net_rets[i])  # только shadow двигается
+            shadow_dd = shadow_equity / peak - 1
+            if shadow_dd > recovery_threshold:
+                is_stopped = False
+                equity *= (1 + net_rets[i])     # resume
+            # else: equity stays flat
+        else:
+            equity *= (1 + net_rets[i])
+            shadow_equity *= (1 + net_rets[i])  # синхронизированы
+            ...
+```
+
+### Fix 2: W2/W3 тесты больше не пересекаются
+```
+W1: test 2024-07-01 → 2024-12-31  (H2 2024)
+W2: test 2025-01-01 → 2025-06-30  (H1 2025)
+W3: test 2025-07-01 → 2026-12-31  (H2 2025+)
+```
+Теперь 3 полностью независимых OOS теста. W3 val расширен до 2025-06-29 чтобы покрыть больше данных.
+
+---
+
+## Новый вопрос: какие фичи добавить?
+
+Win rate нашей стратегии ~61% на коротком горизонте, но 52% на 6 месяцах. Модель теряет edge при смене режима. Мы хотим добавить фичи которые помогут моделям лучше видеть market microstructure и regime shifts.
+
+### Текущий набор фичей (~160 для v6, ~165 для v7):
+
+| Категория | Кол-во | Примеры |
+|-----------|--------|---------|
+| Price/OHLCV | ~24 | ret_1h..168h, close_ma6..720_ratio, candle ratios |
+| Volume | ~25 | vol_ma ratios, vol_mom, vwap_dev, obv, vol_surge |
+| Momentum/Trend | ~25 | RSI, MACD, ADX, stoch, CCI, reversal scores, mom_zscore |
+| Volatility | ~30 | GK vol, ret_std/skew/kurt, BB bands, ATR |
+| Cross-Asset | ~14 | btc_ret, eth_ret, btc_beta, market_dispersion |
+| Regime | ~12 | btc_regime, ma_above, breadth, regime_composite |
+| Fear & Greed | ~6 | fng_value, fng_ma7/30, fng_momentum |
+| Funding (OKX) | ~6 | funding_rate, market_avg_funding, L/S ratio |
+| News/Sentiment | ~15 | news_count, news_sentiment, political_news (v6 only) |
+| Derivatives | ~24 | OI changes, taker flow, top/global L/S, funding_binance |
+| Time | ~1 | is_asian_session |
+
+### Данные которые у нас ЕСТЬ и можем использовать:
+- Binance 1h OHLCV (50 монет, 8 лет)
+- Binance Futures: OI, taker buy/sell volume, top/global L/S (с Dec 2021)
+- Binance + OKX funding rates
+- Fear & Greed Index (daily)
+- Crypto news с sentiment (87% покрытие)
+
+### Данные которых у нас НЕТ (но можем попробовать достать):
+- On-chain data (whale transactions, exchange inflows/outflows)
+- Liquidation data
+- Orderbook depth / bid-ask spread
+- Cross-exchange arbitrage / basis / premium
+- Social media sentiment (Twitter, Reddit volume)
+- Options data (implied vol, put/call ratio)
+- Macro market data (DXY, S&P500, bonds)
+
+### Вопросы:
+1. **Какие фичи ты бы добавил в первую очередь** из тех данных что у нас УЖЕ есть? Может мы не используем какие-то очевидные комбинации/взаимодействия?
+
+2. **Какие новые данные дадут наибольший marginal edge** для 12h crypto L/S? Что реалистично достать и стоит усилий?
+
+3. **Что БЕСПОЛЕЗНО** и не стоит тратить время? (чтобы мы не гнались за shiny objects)
+
+4. У нас модель теряет edge в **боковике / mean-reverting режиме**. Есть ли фичи которые помогают именно в таких режимах?
