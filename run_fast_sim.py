@@ -235,8 +235,9 @@ def main():
         df = add_cross_asset_features(df)
         df = add_advanced_regime_features(df)
         df = add_12h_features(df)
-        df = add_sentiment_features(df, root, news_mode='none')  # no news for LGB
+        df = add_sentiment_features(df, root, news_mode='none')  # no news data in offline
         df = add_derivatives_features(df, root)
+        print("   ⚠️  news_mode='none': CatBoost news features will be zeros (trained with news)")
 
         # Clean infinities
         for col in df.select_dtypes(include=[np.number]).columns:
@@ -597,6 +598,7 @@ def main():
     # ── 6  simulate ───────────────────────────────────────────────
     print(f"\n{'─'*70}")
     equity   = args.capital
+    shadow_equity = args.capital      # tracks market while DDStop is active
     peak     = args.capital
     stopped  = False
     ret_buf: list[float] = []
@@ -951,6 +953,31 @@ def main():
         cum_cost += step_cost
         tot_trades += len(open_L) + len(close_L) + len(open_S) + len(close_S)
 
+        # ── dd breaker (checked BEFORE PnL to avoid phantom trades) ─
+        if stopped:
+            # Equity stays flat while stopped; track shadow to decide resume
+            shadow_pnl = 0.0
+            for sym in new_L:
+                p0 = px0.get(sym, 0); p1 = px1.get(sym, p0)
+                w = weight_L.get(sym, 1.0 / max(len(new_L), 1))
+                if p0 > 0: shadow_pnl += half_alloc * w * (p1 - p0) / p0
+            for sym in new_S:
+                p0 = px0.get(sym, 0); p1 = px1.get(sym, p0)
+                w = weight_S.get(sym, 1.0 / max(len(new_S), 1))
+                if p0 > 0: shadow_pnl += short_alloc * w * (-(p1 - p0) / p0)
+            # Update shadow equity to track market recovery
+            shadow_equity += shadow_pnl - step_cost
+            shadow_dd = shadow_equity / peak - 1
+            if shadow_dd > dd_resume:
+                stopped = False
+                # Resume from NEXT step — this step we're still flat
+            results.append(dict(step=si, ts=str(ts0), pnl=0,
+                                eq=round(equity, 2), dd=round(equity / peak - 1, 4),
+                                nL=0, nS=0, turn=0, stopped=True))
+            held_L.clear(); held_S.clear()
+            prev_alloc_L.clear(); prev_alloc_S.clear()
+            continue
+
         # ── PnL from ts0→ts1 for NEW portfolio ───────────────────
         fwd_pnl = 0.0
         for sym in new_L:
@@ -963,6 +990,7 @@ def main():
             if p0 > 0: fwd_pnl += short_alloc * w * (-(p1 - p0) / p0)
 
         equity += fwd_pnl - step_cost
+        shadow_equity = equity  # keep shadow in sync while trading
         peak = max(peak, equity)
         dd = equity / peak - 1
 
@@ -972,16 +1000,6 @@ def main():
                 ret_buf.append((fwd_pnl - step_cost) / prev_eq)
                 ret_buf = ret_buf[-200:]
 
-        # ── dd breaker ────────────────────────────────────────────
-        if stopped:
-            if dd > dd_resume: stopped = False
-            else:
-                results.append(dict(step=si, ts=str(ts0), pnl=0,
-                                    eq=round(equity,2), dd=round(dd,4),
-                                    nL=0, nS=0, turn=0, stopped=True))
-                held_L.clear(); held_S.clear()
-                prev_alloc_L.clear(); prev_alloc_S.clear()
-                continue
         if dd < dd_stop:
             stopped = True
             held_L.clear(); held_S.clear()

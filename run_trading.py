@@ -124,6 +124,7 @@ EXCLUDE_COLS = {
 }
 
 # Columns NOT to rank-normalize (market-level or binary)
+# Must match REGIME_COLS in run_pipeline_v6.py to avoid train/live distribution shift
 UNRANKED_COLS = {
     'btc_regime_24', 'btc_regime_72', 'btc_regime_168',
     'regime_btc_above_ma336', 'regime_btc_above_ma720',
@@ -131,11 +132,22 @@ UNRANKED_COLS = {
     'regime_btc_dd_720', 'regime_low_vol',
     'regime_breadth_bullish', 'breadth_pct_positive',
     'regime_composite',
+    # Sentiment columns (NOT ranked cross-sectionally)
     'fng_value', 'fng_extreme_fear', 'fng_extreme_greed',
     'fng_ma7', 'fng_ma30', 'fng_momentum',
     'market_avg_funding', 'market_funding_skew',
     # v6: binary features
     'is_asian_session',
+    # News sentiment (market-level, should NOT be ranked cross-sectionally)
+    'market_news_count_24h', 'market_news_sentiment_24h',
+    'news_sentiment_24h', 'news_sentiment_7d', 'news_sentiment_momentum',
+    # Political/macro news (market-level, same for all coins)
+    'political_news_count_24h', 'political_sentiment_24h',
+    'political_sentiment_7d', 'political_sentiment_shock',
+    'political_news_volume_zscore',
+    # Binary flags (should NOT be ranked)
+    'has_news_data',
+    'news_coverage_ok', 'news_event',
 }
 
 # Default risk config — matches champion backtest (Sharpe 8.04)
