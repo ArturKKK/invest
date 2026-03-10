@@ -273,19 +273,34 @@ def main():
     use_deriv_gate = False
 
     if args.ensemble:
-        # Load LGB v6, v7 and CatBoost models (prefer *_prod if available)
-        for d in ["results/production/lgb_v6_no_news", "results/production/lgb_v7_no_news",
-                  "results_v6_prod", "results_v6", "results_v7_prod", "results_v7"]:
+        # Load LGB v6, v7 — one directory per model type (first match wins)
+        # Prevents duplicate loading if both production/ and results_v6/ exist
+        loaded_types = set()  # track 'v6', 'v7' to prevent duplicates
+        lgb_candidates = [
+            ("v6", "results/production/lgb_v6_no_news"),
+            ("v6", "results_v6_prod"),
+            ("v6", "results_v6"),
+            ("v7", "results/production/lgb_v7_no_news"),
+            ("v7", "results_v7_prod"),
+            ("v7", "results_v7"),
+        ]
+        for mtype, d in lgb_candidates:
+            if mtype in loaded_types:
+                continue
             p = os.path.join(root, d)
             if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
                 ms = load_lgb_models(p)
                 if ms:
                     mf_g = ms[0].feature_name()
+                    n_missing = 0
                     for c in [c for c in mf_g if c not in df.columns]:
                         df[c] = 0.0
+                        n_missing += 1
                     model_groups.append((ms, mf_g))
-                    label = "PROD" if "_prod" in p else "research"
-                    print(f"   {os.path.basename(p)}: {len(ms)} LGB models, {len(mf_g)} feats [{label}]")
+                    loaded_types.add(mtype)
+                    label = "PROD" if "_prod" in p or "production" in p else "research"
+                    warn = f" ⚠️ {n_missing} features zero-filled" if n_missing > 3 else ""
+                    print(f"   {os.path.basename(p)}: {len(ms)} LGB models, {len(mf_g)} feats [{label}]{warn}")
         # CatBoost ensemble member
         cb_dir = None
         for _cb in ["results/production/catboost_with_news", "results_catboost_prod", "results_catboost"]:
@@ -304,10 +319,12 @@ def main():
                             mf_g = json.load(_f)
                     else:
                         mf_g = ms[0].feature_names_
+                    n_missing = sum(1 for c in mf_g if c not in df.columns)
                     for c in [c for c in mf_g if c not in df.columns]:
                         df[c] = 0.0
                     model_groups.append((ms, mf_g))
-                    print(f"   catboost: {len(ms)} CB models, {len(mf_g)} feats")
+                    warn = f" ⚠️ {n_missing} features zero-filled" if n_missing > 3 else ""
+                    print(f"   catboost: {len(ms)} CB models, {len(mf_g)} feats{warn}")
             except ImportError:
                 print("   ⚠️  catboost not installed, skipping CatBoost models")
 
@@ -459,7 +476,9 @@ def main():
         label = f"P{args.edge_pct}" if args.edge_pct > 0 else "P75 (for boost/adaptive)"
         print(f"\n📐 Calibrating edge distribution ({label}) ...")
         edge_samples = []
-        cal_steps = steps[-min(30, len(steps)):]  # last 30 steps (avoid warmup)
+        # Calibrate on FIRST 30 steps (warmup) to avoid lookahead bias
+        # (was: last 30 steps = future data the sim will trade on)
+        cal_steps = steps[:min(30, len(steps))]
         for ts in cal_steps:
             snap = df[df["timestamp"] == ts]
             if len(snap) < 20:

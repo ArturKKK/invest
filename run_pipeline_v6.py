@@ -772,7 +772,9 @@ def add_derivatives_features(df, project_root):
         for sym in df['symbol'].unique():
             mask = df['symbol'] == sym
             fr = df.loc[mask, 'funding_rate']
-            expected = fr.rolling(21 * 3, min_periods=3).mean()  # ~7 days of 8h periods
+            # funding_rate is forward-filled from 8h to hourly,
+            # so 21 unique values ≈ 7 days. On hourly index: 21*8 = 168 rows.
+            expected = fr.rolling(168, min_periods=21).mean()  # 7 days on hourly data
             df.loc[mask, 'funding_surprise'] = fr - expected
         df['funding_surprise'] = df['funding_surprise'].fillna(0)
         n_added += 1

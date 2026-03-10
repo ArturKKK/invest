@@ -461,19 +461,25 @@ def build_features(df):
         fund = fund.sort_values('timestamp')
         if 'fundingRate' in fund.columns:
             fund = fund.rename(columns={'fundingRate': 'funding_rate'})
-        df = df.merge(fund[['timestamp', 'symbol', 'funding_rate']],
-                      on=['timestamp', 'symbol'], how='left')
+        # Match training: merge on 8h floor (funding is 8h, data is hourly)
+        fund['ts_8h'] = fund['timestamp'].dt.floor('8h')
+        df['ts_8h'] = df['timestamp'].dt.floor('8h')
+        fund_melt = fund[['ts_8h', 'symbol', 'funding_rate']].drop_duplicates(['ts_8h', 'symbol'])
+        df = df.merge(fund_melt, on=['ts_8h', 'symbol'], how='left')
+        df.drop(columns=['ts_8h'], inplace=True)
         df['funding_rate'] = df['funding_rate'].fillna(0)
         # Market-level funding stats (used by CatBoost)
         mf = df.groupby('timestamp')['funding_rate'].agg(['mean', 'std']).reset_index()
         mf.columns = ['timestamp', 'market_avg_funding', 'market_funding_std']
         df = df.merge(mf, on='timestamp', how='left')
         df['funding_vs_market'] = df['funding_rate'] - df['market_avg_funding'].fillna(0)
-        df.drop(columns=['market_avg_funding'], inplace=True, errors='ignore')
+        df['market_funding_skew'] = df['market_avg_funding'].fillna(0) / (df['market_funding_std'].fillna(0) + 1e-8)
+        # Keep market_avg_funding — models use it as a feature
         print(f"   ✅ Funding rates merged")
     else:
         print(f"   ⚠️  No funding data at {fund_path}")
-        for c in ['funding_rate', 'market_funding_std', 'funding_vs_market']:
+        for c in ['funding_rate', 'market_avg_funding', 'market_funding_std',
+                   'market_funding_skew', 'funding_vs_market']:
             df[c] = 0.0
 
     # Long/Short ratio (used by CatBoost)
@@ -2078,7 +2084,37 @@ def main():
         print(f"  🕐 {now.strftime('%Y-%m-%d %H:%M UTC')}")
         print(f"{'─' * 70}")
 
-        # ── SIM: settle previous positions ──
+        # ── Settle previous positions (ALL modes) ──
+        def _update_equity(pnl, settled, mode_label=''):
+            """Update equity/DD/vol state — shared by sim, paper, and live."""
+            state['equity'] = state.get('equity', args.capital) + pnl
+            state['peak'] = max(state.get('peak', args.capital), state['equity'])
+            state['total_pnl'] = state.get('total_pnl', 0) + pnl
+            state['n_cycles'] = state.get('n_cycles', 0) + 1
+            state['cycle_pnls'] = state.get('cycle_pnls', []) + [pnl]
+            state['equity_history'] = state.get('equity_history', []) + [{
+                'timestamp': now.isoformat(),
+                'equity': round(state['equity'], 2),
+                'pnl': pnl,
+                'dd': round(state['equity'] / state['peak'] - 1, 4),
+            }]
+            # Track recent returns for vol scaling (critical — was missing in paper/live)
+            if state['equity'] > 0:
+                ret = pnl / (state['equity'] - pnl) if (state['equity'] - pnl) > 0 else 0
+                state['recent_rets'] = (state.get('recent_rets', []) + [ret])[-200:]
+
+            dd_pct = state['equity'] / state['peak'] - 1
+            print(f"\n      💰 {mode_label}Cycle PnL: ${pnl:+.2f}  |  "
+                  f"Equity: ${state['equity']:,.2f}  |  "
+                  f"DD: {dd_pct:.1%}")
+
+            if tg and tg.enabled:
+                tg.alert_cycle_pnl(pnl, state['equity'], dd_pct, settled)
+                if dd_pct < -0.15:
+                    tg.alert_dd_warning(dd_pct, state['equity'])
+                if dd_pct < risk_cfg.get('dd_stop', -0.20):
+                    tg.alert_dd_stop(dd_pct, state['equity'])
+
         if args.mode == 'sim' and state.get('sim_positions'):
             print(f"\n📤 Settling previous positions...")
             prices = fetch_current_prices(SYMBOLS)
@@ -2090,38 +2126,18 @@ def main():
                       f"${s.get('entry_price',0):>10.4f} → ${s.get('exit_price',0):>10.4f} "
                       f"  ret={s.get('net_return_%',0):+.2f}%  pnl=${s.get('pnl',0):+.2f}")
 
-            state['equity'] += pnl
-            state['peak'] = max(state['peak'], state['equity'])
-            state['total_pnl'] = state.get('total_pnl', 0) + pnl
-            state['n_cycles'] = state.get('n_cycles', 0) + 1
-            state['cycle_pnls'] = state.get('cycle_pnls', []) + [pnl]
-            state['equity_history'] = state.get('equity_history', []) + [{
-                'timestamp': now.isoformat(),
-                'equity': round(state['equity'], 2),
-                'pnl': pnl,
-                'dd': round(state['equity'] / state['peak'] - 1, 4),
-            }]
-
-            # Track recent returns for vol scaling
-            if state['equity'] > 0:
-                ret = pnl / (state['equity'] - pnl) if (state['equity'] - pnl) > 0 else 0
-                state['recent_rets'] = (state.get('recent_rets', []) + [ret])[-200:]
-
-            dd_pct = state['equity'] / state['peak'] - 1
-            print(f"\n      💰 Cycle PnL: ${pnl:+.2f}  |  "
-                  f"Equity: ${state['equity']:,.2f}  |  "
-                  f"DD: {dd_pct:.1%}")
-
-            # ── Telegram: PnL alert ──
-            if tg and tg.enabled:
-                tg.alert_cycle_pnl(pnl, state['equity'], dd_pct, settled)
-                # DD warnings
-                if dd_pct < -0.15:
-                    tg.alert_dd_warning(dd_pct, state['equity'])
-                if dd_pct < risk_cfg.get('dd_stop', -0.20):
-                    tg.alert_dd_stop(dd_pct, state['equity'])
-
+            _update_equity(pnl, settled, mode_label='[SIM] ')
             state['sim_positions'] = []
+
+        elif args.mode in ('paper', 'live') and tracker is not None:
+            # Use TradeTracker realized PnL for equity tracking
+            stats = tracker.get_stats()
+            total_realized = stats.get('total_pnl', 0)
+            prev_realized = state.get('_prev_realized_pnl', 0)
+            cycle_pnl = total_realized - prev_realized
+            state['_prev_realized_pnl'] = total_realized
+            if state.get('n_cycles', 0) > 0 or cycle_pnl != 0:
+                _update_equity(cycle_pnl, [], mode_label=f'[{args.mode.upper()}] ')
 
         # 1. Fetch data
         print(f"\n📊 Fetching data ({len(SYMBOLS)} symbols, {args.hours}h)...")
