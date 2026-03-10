@@ -244,10 +244,15 @@ def main():
         # Enrich with features computed at runtime (same as pipeline)
         from run_pipeline_v6 import (
             add_multi_horizon_targets, add_cross_asset_features,
-            add_advanced_regime_features, add_12h_features,
+            add_advanced_regime_features,
             add_derivatives_features, add_sentiment_features,
         )
-        print("   Enriching features (cross-asset, regime, 12h, sentiment, derivatives)...")
+        # Use run_trading.add_12h_features (v7 superset: v6 features + 9 v7-specific)
+        # run_pipeline_v6.add_12h_features lacks: range_position_12h, vwpc_12h,
+        # hh/ll_count_12h, trend_strength_12h, vol_crush_ratio, direction_quality_12h,
+        # funding_cs_rank, cum_funding_24h/72h — which makes v7 models get zeros.
+        from run_trading import add_12h_features
+        print("   Enriching features (cross-asset, regime, 12h+v7, sentiment, derivatives)...")
         df = add_multi_horizon_targets(df)
         df = add_cross_asset_features(df)
         df = add_advanced_regime_features(df)
@@ -362,34 +367,6 @@ def main():
 
         # XGBoost убран из ансамбля — дублирует LGB/CB, не даёт доп. alpha
 
-        # ── Derivatives-Only model → RISK GATE (not ensemble member) ──
-        deriv_dir = None
-        for _dd in ["results/production/deriv_only", "results_deriv"]:
-            _p = os.path.join(root, _dd)
-            if os.path.isdir(_p) and any(f.endswith('.txt') for f in os.listdir(_p)):
-                deriv_dir = _p; break
-        use_deriv_gate = (args.deriv_gate or deriv_dir is not None) and not args.no_deriv_gate
-        if deriv_dir and use_deriv_gate:
-            import lightgbm as _lgb
-            from pathlib import Path as _Path
-            _deriv_files = sorted(_Path(deriv_dir).glob('deriv_model_seed_*.txt'))
-            if not _deriv_files:
-                _deriv_files = sorted(_Path(deriv_dir).glob('lgb_model_seed_*.txt'))
-            _d_ms = [_lgb.Booster(model_file=str(f)) for f in _deriv_files]
-            if _d_ms:
-                fn_path = os.path.join(deriv_dir, 'feature_names.json')
-                if os.path.exists(fn_path):
-                    with open(fn_path) as _f:
-                        _d_feats = json.load(_f)
-                else:
-                    _d_feats = _d_ms[0].feature_name()
-                for c in [c for c in _d_feats if c not in df.columns]:
-                    df[c] = 0.0
-                deriv_models = (_d_ms, _d_feats)
-                print(f"   deriv_only (risk gate): {len(_d_ms)} LGB models, {len(_d_feats)} feats")
-        elif deriv_dir and not use_deriv_gate:
-            print(f"   deriv_only: found but --no-deriv-gate, skipping")
-
         if not model_groups:
             print("❌ no models for ensemble"); return
     else:
@@ -411,6 +388,34 @@ def main():
         model_groups.append((models, mf))
         model_group_labels.append('single')
         print(f"   {len(models)} models, {len(mf)} feats")
+
+    # ── Derivatives-Only model → RISK GATE (works in both single & ensemble) ──
+    deriv_dir = None
+    for _dd in ["results/production/deriv_only", "results_deriv"]:
+        _p = os.path.join(root, _dd)
+        if os.path.isdir(_p) and any(f.endswith('.txt') for f in os.listdir(_p)):
+            deriv_dir = _p; break
+    use_deriv_gate = (args.deriv_gate or deriv_dir is not None) and not args.no_deriv_gate
+    if deriv_dir and use_deriv_gate:
+        import lightgbm as _lgb
+        from pathlib import Path as _Path
+        _deriv_files = sorted(_Path(deriv_dir).glob('deriv_model_seed_*.txt'))
+        if not _deriv_files:
+            _deriv_files = sorted(_Path(deriv_dir).glob('lgb_model_seed_*.txt'))
+        _d_ms = [_lgb.Booster(model_file=str(f)) for f in _deriv_files]
+        if _d_ms:
+            fn_path = os.path.join(deriv_dir, 'feature_names.json')
+            if os.path.exists(fn_path):
+                with open(fn_path) as _f:
+                    _d_feats = json.load(_f)
+            else:
+                _d_feats = _d_ms[0].feature_name()
+            for c in [c for c in _d_feats if c not in df.columns]:
+                df[c] = 0.0
+            deriv_models = (_d_ms, _d_feats)
+            print(f"   deriv_only (risk gate): {len(_d_ms)} LGB models, {len(_d_feats)} feats")
+    elif deriv_dir and not use_deriv_gate:
+        print(f"   deriv_only: found but --no-deriv-gate, skipping")
 
     # Architecture summary
     n_ensemble = len(model_groups)
@@ -947,29 +952,21 @@ def main():
         weight_S = compute_weights(new_S, is_long=False)
 
         # ── Deriv risk gate: scale per-symbol weights by deriv agreement ──
-        deriv_gross_scale = 1.0  # default: no scaling
+        # NO per-side renormalisation: if deriv disagrees on some longs,
+        # the long side naturally gets less capital (sum(weight_L) < 1.0).
+        # Each side is scaled independently → no separate gross scaling needed.
         if deriv_models is not None and use_deriv_gate:
             deriv_scale = predict_deriv_gate(snap0, scores)
             if deriv_scale:
-                # Apply per-symbol scaling and re-normalize
                 for s in weight_L:
                     weight_L[s] *= deriv_scale.get(s, 1.0)
-                wl_sum = sum(weight_L.values())
-                if wl_sum > 0:
-                    weight_L = {s: v / wl_sum for s, v in weight_L.items()}
-
                 for s in weight_S:
                     weight_S[s] *= deriv_scale.get(s, 1.0)
-                ws_sum = sum(weight_S.values())
-                if ws_sum > 0:
-                    weight_S = {s: v / ws_sum for s, v in weight_S.items()}
 
-                # Also scale total allocation by average gate value
-                # (if deriv model is broadly cautious → reduce gross exposure)
+                # Track avg gate for logging
                 all_selected = list(new_L | new_S)
                 avg_gate = np.mean([deriv_scale.get(s, 1.0) for s in all_selected])
-                deriv_gross_scale = float(np.clip(avg_gate, DERIV_GATE_MIN, DERIV_GATE_MAX))
-                deriv_gate_sum += deriv_gross_scale
+                deriv_gate_sum += float(np.clip(avg_gate, DERIV_GATE_MIN, DERIV_GATE_MAX))
                 deriv_gate_count += 1
 
         # ── Regime short scaling: reduce shorts in bull regime ────
@@ -1019,10 +1016,6 @@ def main():
             total_alloc *= risk_scale
             meta_risk_sum += risk_scale
             meta_risk_count += 1
-
-        # ── Deriv gate gross scaling: reduce exposure when deriv model is cautious ──
-        if deriv_models is not None and use_deriv_gate and deriv_gross_scale < 1.0:
-            total_alloc *= deriv_gross_scale
 
         half_alloc = total_alloc / 2  # half for longs, half for shorts
         short_alloc = half_alloc * regime_scale  # reduced in bull regime
