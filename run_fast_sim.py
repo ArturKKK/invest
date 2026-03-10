@@ -332,7 +332,13 @@ def main():
             if os.path.isdir(_p) and any(f.endswith('.txt') for f in os.listdir(_p)):
                 deriv_dir = _p; break
         if deriv_dir:
-            ms = load_lgb_models(deriv_dir)
+            # deriv models use 'deriv_model_seed_*.txt' naming
+            import lightgbm as _lgb
+            from pathlib import Path as _Path
+            _deriv_files = sorted(_Path(deriv_dir).glob('deriv_model_seed_*.txt'))
+            if not _deriv_files:
+                _deriv_files = sorted(_Path(deriv_dir).glob('lgb_model_seed_*.txt'))
+            ms = [_lgb.Booster(model_file=str(f)) for f in _deriv_files]
             if ms:
                 fn_path = os.path.join(deriv_dir, 'feature_names.json')
                 if os.path.exists(fn_path):
