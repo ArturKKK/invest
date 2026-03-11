@@ -49,10 +49,12 @@ import numpy as np
 
 warnings.filterwarnings('ignore')
 
+from telegram_bot import create_bot
+
 # ============================================================
 # CONFIG
 # ============================================================
-HORIZON = 4
+HORIZON = 12       # must match training pipeline (v6/v7 both use 12h target)
 TOP_K_DEFAULT = 10  # will be overridden by risk config
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
@@ -71,6 +73,16 @@ SYMBOLS = [
 SYMBOLS_TO_OKX = {
     sym: sym.replace('/', '-').replace('USDT', 'USDT-SWAP')
     for sym in SYMBOLS
+}
+
+# Symbols that don't exist on OKX Demo swaps or are compliance-restricted
+_OKX_BLOCKED = {
+    'MATIC/USDT', 'UNI/USDT', 'APT/USDT', 'FTM/USDT', 'MANA/USDT',
+    'RUNE/USDT', 'EGLD/USDT', 'FLOW/USDT', 'SNX/USDT', 'ENJ/USDT',
+    'BAT/USDT', 'ONE/USDT', 'ICX/USDT', 'ENS/USDT', 'GALA/USDT',
+    'GRT/USDT',
+    # Compliance-restricted (51155)
+    'CHZ/USDT', 'MKR/USDT',
 }
 
 # Feature columns to exclude
@@ -733,6 +745,13 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
             print(f"   ⚠️  Signal too weak (spread={max_spread:.2f} < {conf_thresh}), skipping")
             return []
 
+    # Filter out blocked symbols (not available on OKX demo)
+    before = len(signals)
+    signals = signals[~signals['symbol'].isin(_OKX_BLOCKED)].copy()
+    after = len(signals)
+    if before != after:
+        print(f"   🚫 Filtered {before - after} blocked symbols ({after} tradeable)")
+
     # Build positions
     signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
     n = len(signals)
@@ -839,15 +858,20 @@ def close_all(exchange):
         return
     try:
         positions = exchange.fetch_positions()
-        for pos in positions:
-            if float(pos.get('contracts', 0)) > 0:
-                side = 'sell' if pos['side'] == 'long' else 'buy'
+        # Sort by notional ascending to free margin from small positions first
+        open_pos = [p for p in positions if float(p.get('contracts', 0)) > 0]
+        open_pos.sort(key=lambda p: abs(float(p.get('notional', 0))))
+        for pos in open_pos:
+            side = 'sell' if pos['side'] == 'long' else 'buy'
+            try:
                 exchange.create_order(
                     symbol=pos['symbol'], type='market', side=side,
                     amount=pos['contracts'],
-                    params={'tdMode': 'isolated', 'posSide': 'net'},
+                    params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True},
                 )
                 print(f"      ✅ Closed {pos['side']} {pos['symbol']}")
+            except Exception as e:
+                print(f"      ⚠️  Close {pos['symbol']}: {str(e)[:120]}")
     except Exception as e:
         print(f"      ⚠️  Close failed: {e}")
 
@@ -905,6 +929,142 @@ def load_state(path):
 def save_state(state, path):
     with open(path, 'w') as f:
         json.dump(state, f, indent=2, default=str)
+
+
+# ============================================================
+# DASHBOARD JSON UPDATE
+# ============================================================
+
+def update_dashboard(exchange, positions, signals, state, results, root,
+                     capital, leverage, mode, next_rebal_str=''):
+    """Write dashboard/data/dashboard.json for the web UI."""
+    dashboard_dir = os.path.join(root, 'dashboard', 'data')
+    os.makedirs(dashboard_dir, exist_ok=True)
+    now = datetime.now(timezone.utc)
+
+    # Fetch live positions & balance from exchange
+    live_positions = []
+    equity = state.get('equity', capital)
+    free_usdt = 0
+    margin_used = 0
+    total_upnl = 0
+
+    if exchange:
+        try:
+            bal = exchange.fetch_balance()
+            total_usdt = float(bal.get('USDT', {}).get('total', 0))
+            free_usdt = float(bal.get('USDT', {}).get('free', 0))
+
+            exch_positions = exchange.fetch_positions()
+            open_pos = [p for p in exch_positions if float(p.get('contracts', 0)) > 0]
+
+            for p in open_pos:
+                notional = abs(float(p.get('notional', 0)))
+                upnl = float(p.get('unrealizedPnl', 0))
+                entry_price = float(p.get('entryPrice', 0))
+                total_upnl += upnl
+                margin_used += notional / leverage if leverage else notional
+                live_positions.append({
+                    'symbol': p['symbol'].replace('/USDT:USDT', ''),
+                    'side': p['side'],
+                    'notional': notional,
+                    'upnl': round(upnl, 2),
+                    'upnl_pct': round(upnl / notional * 100, 2) if notional else 0,
+                    'entryPrice': entry_price,
+                    'markPrice': float(p.get('markPrice', 0)),
+                    'score': 0,
+                    'confidence': 0,
+                })
+
+            equity = total_usdt + total_upnl
+        except Exception as e:
+            print(f"   ⚠️  Dashboard OKX fetch: {e}")
+
+    # Match scores from signals to live positions
+    if signals is not None and len(signals) > 0:
+        score_map = dict(zip(signals['symbol'].str.replace('/USDT', ''),
+                             zip(signals['score'], signals.get('confidence', pd.Series()))))
+        for pos in live_positions:
+            sym = pos['symbol']
+            if sym in score_map:
+                pos['score'] = round(float(score_map[sym][0]), 4)
+                pos['confidence'] = round(float(score_map[sym][1]), 3) if pd.notna(score_map[sym][1]) else 0
+
+    # Build signals list for dashboard
+    dash_signals = []
+    if signals is not None:
+        for _, row in signals.iterrows():
+            dash_signals.append({
+                'symbol': row['symbol'].replace('/USDT', ''),
+                'score': round(float(row['score']), 4),
+                'confidence': round(float(row.get('confidence', 0)), 3),
+            })
+
+    # Equity history: append to existing
+    eq_history = state.get('equity_history', [])
+    eq_history.append({
+        'timestamp': now.isoformat(),
+        'equity': round(equity, 2),
+        'pnl': round(equity - capital, 2),
+        'dd_pct': round(equity / state.get('peak', capital) - 1, 4),
+    })
+    # Keep last 2000 points
+    eq_history = eq_history[-2000:]
+    state['equity_history'] = eq_history
+
+    # Trades from results
+    dash_trades = state.get('dash_trades', [])
+    if results:
+        for r in results:
+            if r.get('status') in ('filled', 'dry_run'):
+                dash_trades.append({
+                    'symbol': r.get('symbol', '?').replace('/USDT', ''),
+                    'side': r.get('side', '?'),
+                    'usd': r.get('usd', 0),
+                    'score': r.get('score', 0),
+                    'pnl': 0,  # filled at open; PnL calculated at close
+                    'closed': None,
+                    'opened': now.isoformat(),
+                })
+    # Keep last 100 trades
+    dash_trades = dash_trades[-100:]
+    state['dash_trades'] = dash_trades
+
+    # Win rate from cycle PnLs
+    cycle_pnls = state.get('cycle_pnls', [])
+    n_wins = sum(1 for p in cycle_pnls if p > 0)
+    win_rate = n_wins / len(cycle_pnls) if cycle_pnls else 0
+    max_dd = min((e.get('dd_pct', 0) for e in eq_history), default=0)
+
+    n_models = 15  # 5 v6 + 5 v7 + 5 CB
+    dashboard_data = {
+        'updated': now.isoformat(),
+        'mode': mode,
+        'capital': capital,
+        'equity': round(equity, 2),
+        'leverage': leverage,
+        'margin_used': round(margin_used, 2),
+        'free_usdt': round(free_usdt, 2),
+        'win_rate': round(win_rate, 3),
+        'total_trades': len(dash_trades),
+        'max_dd': round(max_dd, 4),
+        'positions': live_positions,
+        'orders': [],
+        'trades': dash_trades[-30:],
+        'signals': dash_signals,
+        'equity_history': eq_history,
+        'models': f'{n_models} (LGB v6×5 + v7×5 + CB×5)',
+        'rebal_hours': HORIZON,
+        'min_score': 0,
+        'edge_boost': False,
+        'cycle': state.get('n_cycles', 0),
+        'next_rebal': next_rebal_str,
+    }
+
+    path = os.path.join(dashboard_dir, 'dashboard.json')
+    with open(path, 'w') as f:
+        json.dump(dashboard_data, f, indent=2, default=str)
+    print(f"   📊 Dashboard updated: {path}")
 
 
 # ============================================================
@@ -969,6 +1129,11 @@ def main():
     exchange = None
     if args.mode in ('paper', 'live'):
         exchange = init_exchange(args.mode)
+
+    # Init Telegram bot
+    bot = create_bot()
+    if bot.enabled:
+        bot.alert_startup(args.mode, args.capital, risk_cfg)
 
     def run_cycle():
         now = datetime.now(timezone.utc)
@@ -1047,10 +1212,12 @@ def main():
 
         # 4. Generate signal
         print(f"\n📡 Generating signal...")
+        nonlocal last_signals
         signals = generate_signal(df, feat_cols, root)
         if signals is None or len(signals) == 0:
             print("   ❌ No signals")
             return
+        last_signals = signals
 
         # 5. Portfolio
         print(f"\n💼 Portfolio construction...")
@@ -1094,7 +1261,23 @@ def main():
         save_state(state, state_path)
         print(f"\n   📝 Log: {os.path.basename(log_path)}")
 
+        # 8. Telegram alerts
+        try:
+            if bot.enabled:
+                bot.alert_positions(positions, args.capital, risk_cfg['leverage'])
+                bot.alert_fills(results)
+        except Exception as e:
+            print(f"   ⚠️  Telegram alert error: {e}")
+
+        # 9. Dashboard update
+        try:
+            update_dashboard(exchange, positions, signals, state, results, root,
+                             args.capital, risk_cfg['leverage'], args.mode)
+        except Exception as e:
+            print(f"   ⚠️  Dashboard update error: {e}")
+
     # Run
+    last_signals = None
     if args.loop:
         print(f"\n🔄 Continuous mode (every {HORIZON}h)...")
         while True:
@@ -1104,6 +1287,12 @@ def main():
                 print(f"\n❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
+                # Alert error via telegram
+                try:
+                    if bot.enabled:
+                        bot.alert_error(str(e), context="run_cycle")
+                except Exception:
+                    pass
 
             now = datetime.now(timezone.utc)
             # Align to next HORIZON-hour boundary + 5min
@@ -1113,8 +1302,22 @@ def main():
                 next_time += timedelta(hours=HORIZON)
 
             sleep = (next_time - now).total_seconds()
-            print(f"\n   ⏰ Next: {next_time.strftime('%H:%M UTC')} ({sleep/60:.0f} min)")
-            time.sleep(max(sleep, 60))
+            next_rebal_str = next_time.strftime('%H:%M UTC')
+            print(f"\n   ⏰ Next: {next_rebal_str} ({sleep/60:.0f} min)")
+
+            # Sleep in 5-min intervals, refreshing dashboard each tick
+            DASH_INTERVAL = 300  # 5 minutes
+            remaining = max(sleep, 60)
+            while remaining > 0:
+                try:
+                    update_dashboard(exchange, [], last_signals, state, [], root,
+                                     args.capital, risk_cfg['leverage'], args.mode,
+                                     next_rebal_str)
+                except Exception:
+                    pass
+                chunk = min(DASH_INTERVAL, remaining)
+                time.sleep(chunk)
+                remaining -= chunk
     else:
         run_cycle()
 
