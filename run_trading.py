@@ -816,6 +816,13 @@ def init_exchange(mode='paper'):
 
     exchange.session.verify = False
 
+    # Set net position mode (single direction per symbol)
+    try:
+        exchange.private_post_account_set_position_mode({'posMode': 'net_mode'})
+        print("   📋 Position mode: net")
+    except Exception:
+        pass  # already set or not supported
+
     try:
         balance = exchange.fetch_balance()
         usdt = balance.get('USDT', {}).get('free', 0)
@@ -838,7 +845,7 @@ def close_all(exchange):
                 exchange.create_order(
                     symbol=pos['symbol'], type='market', side=side,
                     amount=pos['contracts'],
-                    params={'tdMode': 'isolated', 'posSide': pos['side']},
+                    params={'tdMode': 'isolated', 'posSide': 'net'},
                 )
                 print(f"      ✅ Closed {pos['side']} {pos['symbol']}")
     except Exception as e:
@@ -872,7 +879,7 @@ def execute(exchange, positions, dry_run=True, leverage=1):
                 amount=pos['usd'],
                 params={
                     'tdMode': 'isolated',
-                    'posSide': 'long' if pos['side'] == 'long' else 'short',
+                    'posSide': 'net',
                 },
             )
             print(f"      ✅ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {order['id']}")
