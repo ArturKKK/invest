@@ -674,6 +674,60 @@ Cost: taker 3bps + slippage 1bp, funding 0.5bps/8h, top/bottom 5, rebalance 1h.
 
 ---
 
+## Production Models + Full Feature Pipeline (12 марта 2026)
+
+### Контекст
+- **Модели**: обучены на кластере с GPU + HPO (10-12 марта 2026)
+  - LGB v6 (5 seeds, 160 feats), LGB v7 (5 seeds, 150 feats), CatBoost (5 seeds, 160 feats), XGBoost (5 seeds, 160 feats)
+  - Production mode: train→2025-09-01, val 2025-09-09→2026-03-01
+- **Критический багфикс**: `run_fast_sim.py` online mode (live fetch) использовал только `build_features()` + `cross_sectional_rank()`, пропуская 4 функции обогащения:
+  - `add_cross_asset_features()` — eth_btc_ret_24h, btc_regime_*, market_dispersion
+  - `add_advanced_regime_features()` — regime_composite, regime_low_vol, etc.
+  - `add_sentiment_features()` — funding, L/S ratio, FNG, news (8+7 features)
+  - `add_derivatives_features()` — OI, taker CVD, basis, premium (30+ features)
+- **Результат бага**: V6 и CB получали 53/160 features = 0 (zero-filled). Модели работали на ~67% фичей.
+- **Фикс**: добавлена полная цепочка обогащения + drop 23 overlapping columns + news_mode='none'→'all'
+- **После фикса**: 0 zero-filled features для всех моделей (V6: 160/160, V7: 150/150, CB: 160/160)
+
+### Бенчмарк: 30d live fetch, $5000, rebal=12h, edge-boost
+
+| # | Config | Return | Ann. | Sharpe HAC | Max DD | Calmar | WR | PF | Trades | Costs |
+|---|--------|--------|------|------------|--------|--------|----|----|--------|-------|
+| 1 | single_v6 | -0.3% | -4% | **-0.75** | -1.3% | -2.80 | 54% | 0.93 | 1328 | 0.8% |
+| 2 | single_v7 | +0.3% | +3% | **+0.61** | -1.5% | 2.10 | 53% | 1.06 | 1254 | 0.8% |
+| 3 | ensemble_no_deriv | -0.1% | -1% | **-0.16** | -1.4% | -0.55 | 56% | 0.99 | 1320 | 0.8% |
+| 4 | ensemble_deriv | -0.0% | -0% | **-0.00** | -1.1% | -0.00 | 53% | 1.00 | 1320 | 0.7% |
+| 5 | ensemble_meta_lgb_min | +0.2% | +3% | **+0.74** | -0.9% | 2.90 | 53% | 1.06 | 1308 | 0.7% |
+| 6 | 🏆 **ensemble_meta_ridge** | **+1.2%** | **+15%** | **+2.85** | -1.2% | **12.33** | **60%** | **1.34** | 1316 | 0.7% |
+| 7 | 🔥 **ensemble_deriv_3x** | **+3.4%** | **+42%** | **+2.55** | -3.6% | **11.51** | **59%** | — | 1314 | 3.0% |
+
+### Ключевые выводы
+
+1. **Meta-model Ridge = чемпион**: Sharpe HAC 2.85 на 30d live — лучший результат среди всех конфигов.
+   Ridge с 3 фичами (v6_pred, v7_pred, cb_pred) лучше LGB-minimal с 21 фичей (0.74 vs 2.85 HAC).
+
+2. **3x leverage с meta+deriv**: +3.4% за 30 дней (42% ann.) при MaxDD -3.6%.
+   Calmar 11.51 — отличное risk/reward для 3x leverage.
+
+3. **Single models слабы**: v6 -0.3%, v7 +0.3% — на 30d live сигнал одной модели недостаточен.
+   Ансамбль без мета тоже ~0% — нужна мета-модель для lift.
+
+4. **Deriv-gate**: ensemble_deriv (0.00) vs ensemble_no_deriv (-0.16) — marginal improvement, но не значим.
+
+5. **Полный pipeline критичен**: до фикса meta_ridge давал ~0%, после +1.2%.
+   53 zero-filled features уничтожали сигнал моделей, обученных на полном наборе фич.
+
+### Конфигурация (обновлена 12 марта 2026)
+- **Production ensemble**: LGB v6 (5, 160 feat) + LGB v7 (5, 150 feat) + CatBoost (5, 160 feat, с news) = 15 L0 models
+- **Meta-model**: Ridge (3 feat: v6_pred, v7_pred, cb_pred) → `results/meta_stack/meta_model.pkl`
+- **Deriv-gate**: deriv_only model (5 seeds, 39 feat) для scaling
+- **Sizing**: Edge-boost (weight ∝ 1 + edge/P75, cap 4x)
+- **Features**: 207 total после полного pipeline (build_features + cross-asset + regime + 12h + sentiment + derivatives)
+- **Best config**: `--ensemble --edge-boost --meta-model auto --meta-variant ridge --leverage 3`
+- **Запуск**: `python run_fast_sim.py --ensemble --edge-boost --meta-model auto --meta-variant ridge --days 30`
+
+---
+
 ## Известные ограничения и bias
 
 ### 1. Survivorship bias (ошибка выжившего)

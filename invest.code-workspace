@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"/^cat trading_logs/trading_state\\.json \\| python3 -m json\\.tool 2>/dev/null \\| head -80$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"ssh": true,
+			"/^cd /Users/a\\.s\\.tabakov/Developer/invest && python3 -c \"\nimport run_trading as rt\nimport pandas as pd\nimport numpy as np\n\n# Check that the 5 missing features would now be generated\ncode = open\\('run_trading\\.py'\\)\\.read\\(\\)\nfor feat in \\['funding_rate', 'market_funding_std', 'funding_vs_market', 'long_short_ratio', 'cross_coin_dispersion'\\]:\n    # Check if the feature is in the code \\(not in a drop statement\\)\n    if f\\\\\"'\\{feat\\}'\\\\\" in code or f'\\\\\"\\{feat\\}\\\\\"' in code:\n        print\\(f'  ✅ \\{feat\\} — found in build_features'\\)\n    else:\n        print\\(f'  ❌ \\{feat\\} — MISSING'\\)\n\n# Now check the drop line\nimport re\ndrops = re\\.findall\\(r'df\\\\\\.drop\\\\\\(columns=\\\\\\[\\(\\.\\*\\?\\)\\\\\\]', code\\)\nfor d in drops:\n    if 'cross_coin_dispersion' in d:\n        print\\(f'  ❌ cross_coin_dispersion still in a drop statement: \\{d\\}'\\)\n        break\nelse:\n    print\\('  ✅ cross_coin_dispersion NOT dropped anymore'\\)\n\"\n$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"scp": true,
+			"/^python3 run_fast_sim\\.py --ensemble --leverage 3 --rebal 12 --npos 5 --edge-boost --days 60 --capital 5000 2>&1 \\| tail -25$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		}
+	}
+}

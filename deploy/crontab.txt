@@ -5,6 +5,9 @@
 # News update every 6 hours
 0 */6 * * * /home/trader/invest/deploy/update_news.sh >> /home/trader/invest/logs/news_update.log 2>&1
 
+# Derivatives data update every 6 hours (Binance Futures: OI, funding, taker ratio)
+30 */6 * * * cd /home/trader/invest && source venv/bin/activate && python src/data/download_binance_futures.py --start "$(date -u -d '3 days ago' +\%Y-\%m-\%d)" >> /home/trader/invest/logs/deriv_update.log 2>&1
+
 # Log rotation — keep last 7 days
 0 3 * * * find /home/trader/invest/logs -name "*.log" -mtime +7 -delete
 

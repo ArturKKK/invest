@@ -174,17 +174,9 @@ def compute_metrics(rets, label=""):
     max_dd = float(np.min(dd))
     sharpe = float((np.mean(rets) / (np.std(rets) + 1e-10)) * np.sqrt(PERIODS_PER_YEAR))
 
-    # Calmar = annual return / |max drawdown|, capped to avoid division issues
+    # Calmar = annual return / max drawdown
     ann_ret = np.mean(rets) * PERIODS_PER_YEAR
-    if max_dd < -0.01:
-        calmar = float(ann_ret / abs(max_dd))
-    else:
-        calmar = float(sharpe)  # fallback if no drawdown
-
-    # Combined score: Sharpe penalized for deep drawdowns
-    # This avoids the problem where Calmar rewards "no DD stop" configs
-    dd_penalty = max(0, (abs(max_dd) - 0.30)) * 5  # penalize MaxDD beyond 30%
-    adj_score = sharpe - dd_penalty
+    calmar = abs(ann_ret / (max_dd + 1e-10)) if max_dd < -0.01 else ann_ret * 100
 
     # Sortino (downside deviation)
     downside = rets[rets < 0]
@@ -207,7 +199,6 @@ def compute_metrics(rets, label=""):
         'sharpe': round(sharpe, 2),
         'sortino': round(sortino, 2),
         'calmar': round(calmar, 2),
-        'adj_score': round(adj_score, 2),
         'ann_ret_%': round(ann_ret * 100, 1),
         'total_%': round(total * 100, 1),
         'max_dd_%': round(max_dd * 100, 1),
@@ -304,8 +295,8 @@ def main():
     print(f"  PHASE 2: Vol Target × Kelly Fraction")
     print(f"{'=' * 70}")
 
-    vol_targets = [0.003, 0.005, 0.008, 0.01, 0.015, 0.02]
-    kelly_fracs = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
+    vol_targets = [0.003, 0.005, 0.008, 0.01, 0.015, 0.02, 0.03]
+    kelly_fracs = [0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]
 
     phase2_results = []
     print(f"\n   {'Vol%':>5} {'Kelly':>6} | {'Sharpe':>7} {'Sortino':>8} {'Ann%':>6} {'MaxDD%':>7} {'Calmar':>7} {'WinR%':>6}")
@@ -320,8 +311,8 @@ def main():
             m['kelly_frac'] = kf
             phase2_results.append(m)
 
-    # Sort by adj_score (Sharpe penalized for deep drawdowns)
-    phase2_results.sort(key=lambda x: -x['adj_score'])
+    # Sort by Calmar (return/risk balance)
+    phase2_results.sort(key=lambda x: -x['calmar'])
     for r in phase2_results[:15]:
         print(f"   {r['vol_target']*100:>5.1f} {r['kelly_frac']:>6.1f} | "
               f"{r['sharpe']:>+7.2f} {r['sortino']:>+8.2f} {r['ann_ret_%']:>+6.1f} "
@@ -341,7 +332,7 @@ def main():
     vt_use = best_vt_kf['vol_target']
     kf_use = best_vt_kf['kelly_frac']
 
-    dd_stops = [-0.08, -0.10, -0.12, -0.15, -0.18, -0.20, -0.25, -0.30]
+    dd_stops = [-0.08, -0.10, -0.12, -0.15, -0.18, -0.20, -0.25, -0.30, -0.40, -1.0]
     dd_resumes = [-0.02, -0.04, -0.06, -0.08, -0.10]
 
     phase3_results = []
@@ -358,7 +349,7 @@ def main():
             m['dd_resume'] = dd_resume
             phase3_results.append(m)
 
-    phase3_results.sort(key=lambda x: -x['adj_score'])
+    phase3_results.sort(key=lambda x: -x['calmar'])
     for r in phase3_results[:15]:
         print(f"   {r['dd_stop']*100:>7.1f} {r['dd_resume']*100:>8.1f} | "
               f"{r['sharpe']:>+7.2f} {r['max_dd_%']:>7.1f} {r['total_%']:>+8.1f} "
@@ -392,7 +383,7 @@ def main():
                   f"MaxDD={m['max_dd_%']:.1f}%, Active={m['pct_active_%']:.0f}%, "
                   f"Calmar={m['calmar']:.2f}")
 
-    best_conf = max(phase4_results, key=lambda x: x['adj_score'])
+    best_conf = max(phase4_results, key=lambda x: x['calmar'])
 
     # ================================================================
     # FINAL: Optimal configuration

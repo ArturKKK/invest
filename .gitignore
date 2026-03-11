@@ -8,7 +8,10 @@ data/
 # Source data scripts (not actual data)
 !src/data/
 
-# Results (all tracked — repo is private)
+# Results
+results/
+results_v2/
+results_v3/
 
 # Python
 venv/
@@ -30,9 +33,24 @@ build/
 # Secrets
 .env
 *.key
-data.tar.gz
 
-# Trading logs (VPS-specific, not in git)
-trading_logs/
-logs/
-zi6Jjotm
+# Archives
+data.tar.gz
+data_old.tar.gz
+*.tar.gz
+
+# Temp results dirs (copies outside results/)
+results_catboost/
+results_catboost_prod/
+results_deriv/
+results_v6/
+results_v6_prod/
+results_v7/
+results_v7_prod/
+results_xgboost/
+results_xgboost_prod/
+
+# Temp files
+_bench*
+_ab_*
+.commit_msg

@@ -1,8 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
-**Последнее обновление:** 2026-03-08  
-**Статус:** Phase 5 — PRODUCTION DEPLOYED. Бот торгует на OKX demo ($5000, 3x leverage). 15-model ensemble (LGB v6 + v7 + CatBoost). Champion: Sharpe 8.04, WR 67%, MaxDD -18.7%. VPS: 185.42.163.63.  
-**См. также:** [PROJECT_NOTES.md](PROJECT_NOTES.md) — справочник инфраструктуры, API ключей, деплоя.
+**Последнее обновление:** 2026-03-07  
+**Статус:** Phase 4 — Sentiment pipeline DONE. LGB v5 кластер: LS Sharpe net 1.35 (3 окна). HIST v2 кластер: Rank IC 0.074, LS Sharpe net 1.23. Ensemble v2 скрипт готов. Ждём ensemble run.
 
 ---
 

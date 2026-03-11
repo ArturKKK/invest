@@ -257,11 +257,25 @@ def main():
         from run_trading import add_12h_features
 
         if built_basic:
-            # build_features already created cross-asset + regime features.
-            # Only add what it doesn't provide: 12h features, derivatives, targets.
-            print("   Enriching features (12h+v7, derivatives)...")
+            # build_features created partial cross-asset/regime/FNG features;
+            # drop them so pipeline functions can recreate the full set cleanly
+            _overlap_prefixes = ('btc_close', 'eth_close',
+                'btc_ret_', 'eth_ret_', 'btc_vol_24h', 'btc_ma', 'btc_rolling_high',
+                'market_dispersion', 'ret_vs_btc', 'breadth_pct_positive',
+                'regime_btc_above_ma720', 'regime_btc_dd_720', 'regime_btc_not_crashed',
+                'fng_',
+                'reversal_', 'vol_surge_', 'btc_beta_')
+            _overlap_cols = [c for c in df.columns if c.startswith(_overlap_prefixes)]
+            if _overlap_cols:
+                df.drop(columns=_overlap_cols, inplace=True, errors='ignore')
+                print(f"   Dropped {len(_overlap_cols)} overlapping cols from build_features")
+
+            print("   Enriching features (full pipeline: cross-asset, regime, 12h, sentiment, derivatives)...")
             df = add_multi_horizon_targets(df)
+            df = add_cross_asset_features(df)
+            df = add_advanced_regime_features(df)
             df = add_12h_features(df)
+            df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
         else:
             # Pre-built features parquet — enrich all
@@ -270,7 +284,7 @@ def main():
             df = add_cross_asset_features(df)
             df = add_advanced_regime_features(df)
             df = add_12h_features(df)
-            df = add_sentiment_features(df, root, news_mode='none')
+            df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
 
         # Cross-sectional rank (after all features built)
@@ -302,17 +316,58 @@ def main():
         # ── 2  features ───────────────────────────────────────────
         print("🔧 Features …")
         df = build_features(raw)
+
+        # Save raw snapshot for reproducible offline runs
+        raw.to_parquet(os.path.join(root, "trading_logs", "frozen_raw.parquet"), index=False)
+        print(f"   💾 Raw OHLCV saved: trading_logs/frozen_raw.parquet ({raw.shape})")
+        print(f"      Date range: {raw['timestamp'].min()} → {raw['timestamp'].max()}")
+        print(f"      Per-symbol candles: {raw.groupby('symbol').size().describe()[['min','max']].to_dict()}")
+
+        # Enrich with pipeline features (same as offline built_basic path)
+        from run_pipeline_v6 import (
+            add_multi_horizon_targets, add_cross_asset_features,
+            add_advanced_regime_features,
+            add_derivatives_features, add_sentiment_features,
+        )
+        from run_trading import add_12h_features
+
+        # build_features() created partial cross-asset/regime/FNG features;
+        # drop them so pipeline functions can recreate the full set cleanly
+        _overlap_prefixes = ('btc_close', 'eth_close',
+            'btc_ret_', 'eth_ret_', 'btc_vol_24h', 'btc_ma', 'btc_rolling_high',
+            'market_dispersion', 'ret_vs_btc', 'breadth_pct_positive',
+            'regime_btc_above_ma720', 'regime_btc_dd_720', 'regime_btc_not_crashed',
+            'fng_',
+            'reversal_', 'vol_surge_', 'btc_beta_')
+        _overlap_cols = [c for c in df.columns if c.startswith(_overlap_prefixes)]
+        if _overlap_cols:
+            df.drop(columns=_overlap_cols, inplace=True, errors='ignore')
+            print(f"   Dropped {len(_overlap_cols)} overlapping cols from build_features")
+
+        print("   🔧 Enriching: targets, cross-asset, regime, 12h, sentiment, derivatives...")
+        df = add_multi_horizon_targets(df)
+        df = add_cross_asset_features(df)
+        df = add_advanced_regime_features(df)
+        df = add_12h_features(df)
+        df = add_sentiment_features(df, root, news_mode='all')
+        df = add_derivatives_features(df, root)
+
+        # Cross-sectional rank (after all features built)
         fc = [c for c in df.columns if c not in EXCLUDE_COLS
               and not c.startswith("target_")
               and df[c].dtype in ("float64","float32","int64","int32")]
         df = cross_sectional_rank(df, fc)
 
-        # Save snapshot for reproducible offline runs
-        snap_path = os.path.join(root, "trading_logs", "frozen_features.parquet")
-        raw.to_parquet(os.path.join(root, "trading_logs", "frozen_raw.parquet"), index=False)
-        print(f"   💾 Raw OHLCV saved: trading_logs/frozen_raw.parquet ({raw.shape})")
-        print(f"      Date range: {raw['timestamp'].min()} → {raw['timestamp'].max()}")
-        print(f"      Per-symbol candles: {raw.groupby('symbol').size().describe()[['min','max']].to_dict()}")
+        # Clean infinities
+        for col in df.select_dtypes(include=[np.number]).columns:
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+
+        # Feature columns + fillna
+        fc = [c for c in df.columns if c not in EXCLUDE_COLS
+              and not c.startswith("target_")
+              and df[c].dtype in ("float64", "float32", "int64", "int32")]
+        df[fc] = df[fc].fillna(0)
+        print(f"   Final: {df.shape}, {len(fc)} features")
 
     # ── 3  models ─────────────────────────────────────────────────
     print("📡 Models …")

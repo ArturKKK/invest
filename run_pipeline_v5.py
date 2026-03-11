@@ -250,7 +250,7 @@ def add_sentiment_features(df, project_root):
 
         df['date'] = df['timestamp'].dt.date
         df = df.merge(fng_daily, on='date', how='left')
-        df['fng_value'] = df['fng_value'].ffill().fillna(50)  # neutral default
+        df['fng_value'] = df['fng_value'].fillna(method='ffill').fillna(50)  # neutral default
 
         # Derived FNG features
         # Extreme zones: fear < 25, greed > 75

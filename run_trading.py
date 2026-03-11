@@ -94,6 +94,17 @@ UNRANKED_COLS = {
     'fng_value', 'fng_extreme_fear', 'fng_extreme_greed',
     'fng_ma7', 'fng_ma30', 'fng_momentum',
     'market_avg_funding', 'market_funding_skew',
+    # v6: binary features that should NOT be ranked
+    'is_asian_session',
+    # News sentiment (market-level, should NOT be ranked cross-sectionally)
+    'market_news_count_24h', 'market_news_sentiment_24h',
+    'news_sentiment_24h', 'news_sentiment_7d', 'news_sentiment_momentum',
+    # Political/macro news (market-level, same for all coins)
+    'political_news_count_24h', 'political_sentiment_24h',
+    'political_sentiment_7d', 'political_sentiment_shock',
+    'political_news_volume_zscore',
+    # Binary flags (should NOT be ranked)
+    'has_news_data', 'news_coverage_ok', 'news_event',
 }
 
 # Default risk config (overridden by optimal_config.json)
@@ -502,64 +513,186 @@ def generate_lgb_signal(df, models, feat_cols):
 
 def generate_signal(df, feat_cols, root):
     """
-    Generate ensemble signal.
-    Tries to load LGB v5 models. Falls back to feature-based signal.
+    Generate production ensemble signal.
+
+    Pipeline: LGB v6 + LGB v7 + CatBoost → meta-model Ridge → deriv gate → score.
+    Mirrors the architecture used in run_fast_sim.py benchmarks.
     """
-    signals = {}
+    latest = df.groupby('symbol').last().reset_index()
 
-    # LGB v5
-    lgb_dir = os.path.join(root, 'results_v5')
-    try:
-        models = load_lgb_models(lgb_dir)
-        if models:
-            sig = generate_lgb_signal(df, models, feat_cols)
-            signals['lgb'] = sig
-            print(f"   ✅ LGB v5: {len(models)} models, {len(sig)} coins")
-    except Exception as e:
-        print(f"   ⚠️  LGB v5 failed: {e}")
+    # ── Load L0 model groups ──────────────────────────────────
+    model_groups = []        # [(models, feature_names), ...]
+    model_group_labels = []  # 'v6', 'v7', 'cb'
+    loaded_types = set()
 
-    # Fallback: simple cross-sectional momentum+mean-reversion composite
-    if not signals:
-        print(f"   ⚠️  No trained models found — using signal from features")
-        latest = df.groupby('symbol').last().reset_index()
+    lgb_candidates = [
+        ("v6", "results/production/lgb_v6_no_news"),
+        ("v6", "results_v6_prod"),
+        ("v6", "results_v6"),
+        ("v7", "results/production/lgb_v7_no_news"),
+        ("v7", "results_v7_prod"),
+        ("v7", "results_v7"),
+    ]
+    for mtype, d in lgb_candidates:
+        if mtype in loaded_types:
+            continue
+        p = os.path.join(root, d)
+        if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
+            ms = load_lgb_models(p)
+            if ms:
+                mf_g = ms[0].feature_name()
+                n_missing = sum(1 for c in mf_g if c not in latest.columns)
+                for c in [c for c in mf_g if c not in latest.columns]:
+                    latest[c] = 0.0
+                model_groups.append((ms, mf_g))
+                model_group_labels.append(mtype)
+                loaded_types.add(mtype)
+                label = "PROD" if "_prod" in p or "production" in p else "research"
+                warn = f" ⚠️ {n_missing} zero-filled" if n_missing > 3 else ""
+                print(f"   {os.path.basename(p)}: {len(ms)} LGB, {len(mf_g)} feats [{label}]{warn}")
 
-        # Composite score from top features (breadth, MA ratios, volatility)
-        score_features = ['close_ma720_ratio', 'close_ma336_ratio', 'close_ma24_ratio',
-                          'ret_sharpe_168h', 'ret_sharpe_24h', 'breadth_pct_positive']
-        avail = [f for f in score_features if f in latest.columns]
+    # CatBoost
+    cb_dir = None
+    for _cb in ["results/production/catboost_with_news", "results_catboost_prod", "results_catboost"]:
+        _p = os.path.join(root, _cb)
+        if os.path.isdir(_p):
+            cb_dir = _p
+            break
+    if cb_dir and os.path.isdir(cb_dir):
+        try:
+            ms = load_catboost_models(cb_dir)
+            if ms:
+                fn_path = os.path.join(cb_dir, 'feature_names.json')
+                if os.path.exists(fn_path):
+                    with open(fn_path) as _f:
+                        mf_g = json.load(_f)
+                else:
+                    mf_g = ms[0].feature_names_
+                n_missing = sum(1 for c in mf_g if c not in latest.columns)
+                for c in [c for c in mf_g if c not in latest.columns]:
+                    latest[c] = 0.0
+                model_groups.append((ms, mf_g))
+                model_group_labels.append('cb')
+                warn = f" ⚠️ {n_missing} zero-filled" if n_missing > 3 else ""
+                print(f"   catboost: {len(ms)} CB, {len(mf_g)} feats{warn}")
+        except ImportError:
+            print("   ⚠️  catboost not installed, skipping")
 
-        if avail:
-            for col in avail:
-                latest[col] = (latest[col] - latest[col].mean()) / (latest[col].std() + 1e-10)
-            latest['pred_fallback'] = latest[avail].mean(axis=1)
-            signals['fallback'] = latest[['symbol', 'pred_fallback']].copy()
-            print(f"   ✅ Fallback signal: {len(avail)} features")
-
-    if not signals:
+    if not model_groups:
+        print("   ❌ No production models found")
         return None
 
-    # Merge and normalize
-    result = list(signals.values())[0]
-    for _, other in list(signals.items())[1:]:
-        result = result.merge(other, on='symbol', how='inner')
+    # ── L0 predictions ────────────────────────────────────────
+    all_individual = []
+    per_group_scores = []
+    for ms, mf_g in model_groups:
+        X = latest[mf_g].values
+        preds = [m.predict(X) for m in ms]
+        all_individual.extend(preds)
+        per_group_scores.append(np.mean(preds, axis=0))
 
-    pred_cols = [c for c in result.columns if c.startswith('pred_')]
-    for col in pred_cols:
-        result[col] = (result[col] - result[col].mean()) / (result[col].std() + 1e-10)
+    # Confidence = model agreement
+    if len(all_individual) > 1:
+        normed = [(p - p.mean()) / (p.std() + 1e-10) for p in all_individual]
+        model_std = np.std(normed, axis=0)
+        confidence = 1.0 / (1.0 + model_std)
+    else:
+        confidence = np.ones(len(latest)) * 0.5
 
-    result['score'] = sum(result[c] for c in pred_cols) / len(pred_cols)
-    return result.sort_values('score', ascending=False).reset_index(drop=True)
+    # ── Meta-model stacking ───────────────────────────────────
+    meta_group_idx = {lbl: i for i, lbl in enumerate(model_group_labels)}
+    scores = None
+
+    if all(k in meta_group_idx for k in ('v6', 'v7', 'cb')):
+        try:
+            from src.models.meta_model import MetaModelInference
+            meta_inf = MetaModelInference.load('auto', variant='ridge', root=root)
+            if meta_inf is not None:
+                scores = meta_inf.predict(
+                    latest,
+                    pred_v6=per_group_scores[meta_group_idx['v6']],
+                    pred_v7=per_group_scores[meta_group_idx['v7']],
+                    pred_cb=per_group_scores[meta_group_idx['cb']],
+                )
+                print(f"   ✅ Meta-model ridge applied")
+        except Exception as e:
+            print(f"   ⚠️  Meta-model failed: {e}")
+
+    if scores is None:
+        scores = np.mean(per_group_scores, axis=0)
+        print(f"   ✅ Simple mean ensemble ({len(model_groups)} groups)")
+
+    # ── Deriv risk gate ───────────────────────────────────────
+    DERIV_GATE_MIN, DERIV_GATE_MAX = 0.3, 1.0
+    deriv_scale = np.ones(len(latest))
+
+    deriv_dir = None
+    for _dd in ["results/production/deriv_only", "results_deriv"]:
+        _p = os.path.join(root, _dd)
+        if os.path.isdir(_p) and any(f.endswith('.txt') for f in os.listdir(_p)):
+            deriv_dir = _p
+            break
+
+    if deriv_dir:
+        try:
+            import lightgbm as _lgb
+            _files = sorted(Path(deriv_dir).glob('deriv_model_seed_*.txt'))
+            if not _files:
+                _files = sorted(Path(deriv_dir).glob('lgb_model_seed_*.txt'))
+            _d_ms = [_lgb.Booster(model_file=str(f)) for f in _files]
+            if _d_ms:
+                fn_path = os.path.join(deriv_dir, 'feature_names.json')
+                if os.path.exists(fn_path):
+                    with open(fn_path) as _f:
+                        _d_feats = json.load(_f)
+                else:
+                    _d_feats = _d_ms[0].feature_name()
+                for c in [c for c in _d_feats if c not in latest.columns]:
+                    latest[c] = 0.0
+                X_d = latest[_d_feats].values
+                d_preds = np.mean([m.predict(X_d) for m in _d_ms], axis=0)
+
+                # Rank-based agreement
+                n = len(scores)
+                ens_rank = np.argsort(np.argsort(scores)).astype(float) / max(n - 1, 1)
+                drv_rank = np.argsort(np.argsort(d_preds)).astype(float) / max(n - 1, 1)
+                for i in range(n):
+                    rank_diff = abs(ens_rank[i] - drv_rank[i])
+                    ens_extreme = abs(ens_rank[i] - 0.5) * 2
+                    effective_disagree = rank_diff * ens_extreme
+                    scale = DERIV_GATE_MAX - effective_disagree * (DERIV_GATE_MAX - DERIV_GATE_MIN) / 0.7
+                    deriv_scale[i] = float(np.clip(scale, DERIV_GATE_MIN, DERIV_GATE_MAX))
+                print(f"   ✅ Deriv gate: avg scale {deriv_scale.mean():.2f}x")
+        except Exception as e:
+            print(f"   ⚠️  Deriv gate failed: {e}")
+
+    # ── Build result ──────────────────────────────────────────
+    final_scores = scores * deriv_scale
+    latest['score'] = final_scores
+    latest['confidence'] = confidence
+    latest['deriv_scale'] = deriv_scale
+
+    n_models = sum(len(ms) for ms, _ in model_groups)
+    print(f"   🏗️  Architecture: {len(model_groups)} groups ({n_models} models)"
+          f" + meta-ridge + deriv gate")
+
+    return latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
+        'score', ascending=False).reset_index(drop=True)
 
 
 # ============================================================
 # PORTFOLIO CONSTRUCTION (risk-managed)
 # ============================================================
 
-def construct_portfolio(signals, capital, risk_cfg, state):
+def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
     """
     Risk-managed portfolio construction.
 
+    Equal-weight per position: total allocation is split by total number
+    of positions (longs + shorts), so 2 shorts don't eat 50% of capital.
+
     state: dict tracking equity curve for DD stop.
+    leverage: exchange leverage multiplier (positions get leverage × capital).
     """
     n_long = risk_cfg['n_long']
     n_short = risk_cfg['n_short']
@@ -591,11 +724,6 @@ def construct_portfolio(signals, capital, risk_cfg, state):
     else:
         vol_scale = 1.0
 
-    # Effective allocation
-    effective_kelly = kelly * vol_scale
-    long_capital = capital * 0.5 * effective_kelly
-    short_capital = capital * 0.5 * effective_kelly
-
     # Confidence check
     conf_thresh = risk_cfg.get('confidence_threshold', 0.0)
     if conf_thresh > 0:
@@ -610,10 +738,25 @@ def construct_portfolio(signals, capital, risk_cfg, state):
     n = len(signals)
     n_long = min(n_long, n // 3)
     n_short = min(n_short, n // 3)
+    total_positions = n_long + n_short
+
+    if total_positions == 0:
+        return []
+
+    # Total allocation: capital × kelly × vol_scale × leverage
+    # Split EQUALLY across all positions (not 50/50 between sides).
+    # This prevents 2 shorts from getting disproportionately large allocations.
+    effective_kelly = kelly * vol_scale
+    total_alloc = capital * effective_kelly * leverage
+    per_position = total_alloc / total_positions
+
+    # Cap per position at 15% of leveraged capital for diversification
+    max_per_pos = capital * leverage * 0.15
+    per_position = min(per_position, max_per_pos)
 
     positions = []
     for _, row in signals.head(n_long).iterrows():
-        usd = round(long_capital / n_long, 2)
+        usd = round(per_position, 2)
         if usd < 5:  # OKX minimum
             continue
         positions.append({
@@ -624,7 +767,7 @@ def construct_portfolio(signals, capital, risk_cfg, state):
         })
 
     for _, row in signals.tail(n_short).iterrows():
-        usd = round(short_capital / n_short, 2)
+        usd = round(per_position, 2)
         if usd < 5:
             continue
         positions.append({
@@ -634,9 +777,12 @@ def construct_portfolio(signals, capital, risk_cfg, state):
             'score': round(row['score'], 4),
         })
 
-    total_alloc = sum(p['usd'] for p in positions)
-    print(f"   📊 Allocating ${total_alloc:.0f} of ${capital:.0f} "
-          f"(kelly={kelly:.0%} × vol_scale={vol_scale:.2f})")
+    actual_alloc = sum(p['usd'] for p in positions)
+    n_l = sum(1 for p in positions if p['side'] == 'long')
+    n_s = sum(1 for p in positions if p['side'] == 'short')
+    print(f"   📊 Allocating ${actual_alloc:.0f} of ${capital:.0f} "
+          f"(kelly={kelly:.0%} × vol_scale={vol_scale:.2f} × lev={leverage}x)")
+    print(f"   📊 Positions: {n_l}L + {n_s}S = {n_l+n_s} × ${per_position:.0f} each")
 
     return positions
 
@@ -699,7 +845,7 @@ def close_all(exchange):
         print(f"      ⚠️  Close failed: {e}")
 
 
-def execute(exchange, positions, dry_run=True):
+def execute(exchange, positions, dry_run=True, leverage=1):
     """Execute positions on OKX."""
     results = []
     for pos in positions:
@@ -717,7 +863,7 @@ def execute(exchange, positions, dry_run=True):
 
         try:
             try:
-                exchange.set_leverage(1, okx_sym, params={'mgnMode': 'isolated'})
+                exchange.set_leverage(leverage, okx_sym, params={'mgnMode': 'isolated'})
             except Exception:
                 pass
 
@@ -767,6 +913,7 @@ def main():
     parser.add_argument('--vol-target', type=float, default=None)
     parser.add_argument('--kelly', type=float, default=None)
     parser.add_argument('--config', type=str, default=None, help='Path to risk config JSON')
+    parser.add_argument('--leverage', type=int, default=1, help='Exchange leverage (1-10)')
     args = parser.parse_args()
 
     root = os.path.dirname(os.path.abspath(__file__))
@@ -792,6 +939,7 @@ def main():
         risk_cfg['vol_target'] = args.vol_target
     if args.kelly is not None:
         risk_cfg['kelly_frac'] = args.kelly
+    risk_cfg['leverage'] = args.leverage
 
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
@@ -806,7 +954,8 @@ def main():
     print(f"  Capital: ${args.capital:,.0f}")
     print(f"  Risk: kelly={risk_cfg['kelly_frac']:.0%}, "
           f"vol_target={risk_cfg['vol_target']*100:.1f}%, "
-          f"DD_stop={risk_cfg['dd_stop']*100:.0f}%")
+          f"DD_stop={risk_cfg['dd_stop']*100:.0f}%, "
+          f"leverage={risk_cfg['leverage']}x")
     print("=" * 70)
 
     # Init exchange
@@ -831,13 +980,63 @@ def main():
         # 2. Build features
         print(f"\n🔧 Building features...")
         df = build_features(df)
+
+        # 2b. Enrich with full pipeline features (matches training pipeline)
+        from run_pipeline_v6 import (
+            add_multi_horizon_targets, add_cross_asset_features,
+            add_advanced_regime_features,
+            add_derivatives_features, add_sentiment_features,
+        )
+
+        # Drop overlap columns that build_features() created partially;
+        # pipeline functions will recreate them with correct formulas
+        _overlap_prefixes = ('btc_close', 'eth_close',
+            'btc_ret_', 'eth_ret_', 'btc_vol_24h', 'btc_ma', 'btc_rolling_high',
+            'market_dispersion', 'ret_vs_btc', 'breadth_pct_positive',
+            'regime_btc_above_ma720', 'regime_btc_dd_720', 'regime_btc_not_crashed',
+            'fng_',
+            'reversal_', 'vol_surge_', 'btc_beta_')
+        _overlap_cols = [c for c in df.columns if c.startswith(_overlap_prefixes)]
+        if _overlap_cols:
+            df.drop(columns=_overlap_cols, inplace=True, errors='ignore')
+            print(f"   Dropped {len(_overlap_cols)} overlapping cols from build_features")
+
+        print("   🔧 Enriching: targets, cross-asset, regime, 12h, sentiment, derivatives...")
+        df = add_multi_horizon_targets(df)
+        df = add_cross_asset_features(df)
+        df = add_advanced_regime_features(df)
+        df = add_12h_features(df)
+        df = add_sentiment_features(df, root, news_mode='all')
+        df = add_derivatives_features(df, root)
+
         feat_cols = [c for c in df.columns if c not in EXCLUDE_COLS
                      and not c.startswith('target_')
                      and df[c].dtype in ['float64', 'float32', 'int64', 'int32']]
-        print(f"   Features: {len(feat_cols)}")
+        print(f"   Features after enrichment: {len(feat_cols)}")
 
-        # 3. Cross-sectional rank
+        # Feature health diagnostic (latest snapshot)
+        latest_snap = df.groupby('symbol').last()
+        n_zero_cols = sum(1 for c in feat_cols if (latest_snap[c] == 0).all())
+        n_nan_cols = sum(1 for c in feat_cols if latest_snap[c].isna().all())
+        key_groups = {
+            'cross-asset': [c for c in feat_cols if c.startswith(('btc_', 'eth_'))],
+            'regime': [c for c in feat_cols if c.startswith('regime_')],
+            'sentiment': [c for c in feat_cols if c.startswith(('news_', 'fng_', 'market_news', 'political_'))],
+            'derivatives': [c for c in feat_cols if c.startswith(('oi_', 'taker_', 'funding_', 'basis_', 'ls_'))],
+        }
+        print(f"   🔍 Feature health: {n_zero_cols} all-zero, {n_nan_cols} all-NaN of {len(feat_cols)}")
+        for gname, gcols in key_groups.items():
+            if gcols:
+                n_live = sum(1 for c in gcols if not (latest_snap[c] == 0).all())
+                print(f"      {gname}: {n_live}/{len(gcols)} non-zero")
+
+        # 3. Cross-sectional rank (after all enrichment)
         df = cross_sectional_rank(df, feat_cols)
+
+        # Clean infinities & NaN
+        for col in df.select_dtypes(include=[np.number]).columns:
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+        df[feat_cols] = df[feat_cols].fillna(0)
 
         # 4. Generate signal
         print(f"\n📡 Generating signal...")
@@ -848,7 +1047,8 @@ def main():
 
         # 5. Portfolio
         print(f"\n💼 Portfolio construction...")
-        positions = construct_portfolio(signals, args.capital, risk_cfg, state)
+        positions = construct_portfolio(signals, args.capital, risk_cfg, state,
+                                          leverage=risk_cfg['leverage'])
 
         if not positions:
             print("   (no positions this cycle)")
@@ -861,12 +1061,12 @@ def main():
 
         # 6. Execute
         if args.mode == 'signal' or not positions:
-            results = execute(None, positions, dry_run=True)
+            results = execute(None, positions, dry_run=True, leverage=risk_cfg['leverage'])
         else:
             print(f"\n📤 Closing existing positions...")
             close_all(exchange)
             print(f"\n📥 Opening new positions...")
-            results = execute(exchange, positions, dry_run=False)
+            results = execute(exchange, positions, dry_run=False, leverage=risk_cfg['leverage'])
 
         # 7. Log
         log = {

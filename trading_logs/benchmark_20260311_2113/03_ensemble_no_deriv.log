@@ -1,0 +1,114 @@
+======================================================================
+  FAST SIMULATION
+  365d | $5,000 | rebal=12h | N=10+10 | kelly=30% | cost=4bp/side
+  leverage=1x | mode=boost
+======================================================================
+
+📊 Loading offline data: trading_logs/frozen_raw.parquet
+   (108500, 7), 50 symbols
+   Date range: 2024-05-08 03:00:00+00:00 → 2026-03-10 08:00:00+00:00
+   🔧 Raw OHLCV detected — building basic features...
+   Enriching features (12h+v7, derivatives)...
+   🎯 Adding targets...
+   🕐 Adding 12h-specific features (v7 enhanced)...
+   ✅ Added ~18 features for 12h holding period (v7)
+   📊 Adding derivatives features (Binance Futures)...
+      Loaded metrics: 1,798,238 rows, 50 symbols, 2021-12-01 → 2026-03-09
+      OI: 106,362 rows (98.0%), 9 features
+      Taker: 106,367 rows (98.0%), 6 features
+      Top L/S: 106,367 rows (98.0%), 5 features
+      Global L/S: 3 features
+      Binance funding: 105,984 rows (97.7%)
+      Market-wide aggregates: 4 features
+      Basis/Premium: 26,975 rows (24.9%), 6 features
+      ⚠️  No liquidation data (run download_binance_futures.py)
+   ✅ Derivatives features: +34 features
+   ⚠️  offline mode: some features may be zero-filled by models
+   Final: (108500, 183), 173 features
+📡 Models …
+   lgb_v6_no_news: 5 LGB models, 160 feats [PROD] ⚠️ 22 features zero-filled
+   lgb_v7_no_news: 5 LGB models, 156 feats [PROD] ⚠️ 4 features zero-filled
+   catboost: 5 CB models, 160 feats ⚠️ 4 features zero-filled
+   deriv_only: found but --no-deriv-gate, skipping
+   🏗️  Architecture: 3 groups (15 models)
+   2024-05-08 03:00:00+00:00 → 2026-03-10 05:00:00+00:00  (724 steps, 12h apart)
+
+📐 Calibrating edge distribution (P75 (for boost/adaptive)) ...
+   ⚠️  No calibration data, edge features disabled
+
+──────────────────────────────────────────────────────────────────────
+    545/723 | $4,935.15 | DD  -1.3% | L10 S10 | Δ32
+    550/723 | $4,919.21 | DD  -1.6% | L10 S10 | Δ24
+    555/723 | $4,934.28 | DD  -1.3% | L10 S10 | Δ24
+    560/723 | $4,965.17 | DD  -0.7% | L10 S10 | Δ26
+    565/723 | $4,944.82 | DD  -1.1% | L10 S10 | Δ18
+    570/723 | $4,957.45 | DD  -0.9% | L10 S10 | Δ34
+    575/723 | $4,942.28 | DD  -1.2% | L10 S10 | Δ20
+    580/723 | $4,906.41 | DD  -1.9% | L10 S10 | Δ20
+    585/723 | $4,893.30 | DD  -2.1% | L10 S10 | Δ16
+    590/723 | $4,899.44 | DD  -2.0% | L10 S10 | Δ20
+    595/723 | $4,920.12 | DD  -1.6% | L10 S10 | Δ22
+    600/723 | $4,935.35 | DD  -1.3% | L10 S10 | Δ18
+    605/723 | $4,940.06 | DD  -1.2% | L10 S10 | Δ22
+    610/723 | $4,960.81 | DD  -0.8% | L10 S10 | Δ22
+    615/723 | $4,942.56 | DD  -1.1% | L10 S10 | Δ20
+    620/723 | $4,862.58 | DD  -2.7% | L10 S10 | Δ20
+    625/723 | $4,872.52 | DD  -2.5% | L10 S10 | Δ16
+    630/723 | $4,838.33 | DD  -3.2% | L10 S10 | Δ20
+    635/723 | $4,869.64 | DD  -2.6% | L10 S10 | Δ28
+    640/723 | $4,864.50 | DD  -2.7% | L10 S10 | Δ20
+    645/723 | $4,873.48 | DD  -2.5% | L10 S10 | Δ16
+    650/723 | $4,890.93 | DD  -2.2% | L10 S10 | Δ18
+    655/723 | $4,879.65 | DD  -2.4% | L10 S10 | Δ20
+    660/723 | $4,878.17 | DD  -2.4% | L10 S10 | Δ20
+    665/723 | $4,869.50 | DD  -2.6% | L10 S10 | Δ22
+    670/723 | $4,888.88 | DD  -2.2% | L10 S10 | Δ24
+    675/723 | $4,902.01 | DD  -2.0% | L10 S10 | Δ20
+    680/723 | $4,908.95 | DD  -1.8% | L10 S10 | Δ28
+    685/723 | $4,898.93 | DD  -2.0% | L10 S10 | Δ22
+    690/723 | $4,884.61 | DD  -2.3% | L10 S10 | Δ16
+    695/723 | $4,906.32 | DD  -1.9% | L10 S10 | Δ24
+    700/723 | $4,912.76 | DD  -1.7% | L10 S10 | Δ28
+    705/723 | $4,939.46 | DD  -1.2% | L10 S10 | Δ26
+    710/723 | $4,917.82 | DD  -1.6% | L10 S10 | Δ16
+    715/723 | $4,938.45 | DD  -1.2% | L10 S10 | Δ32
+    720/723 | $4,935.45 | DD  -1.3% | L10 S10 | Δ26
+    722/723 | $4,907.88 | DD  -1.8% | L10 S10 | Δ12
+
+======================================================================
+  RESULTS — 365d, rebal=12h, N=10+10, lev=1x, mode=boost
+======================================================================
+
+   Start:      $5,000
+   End:        $4,907.88
+   Return:     -1.8%  (ann. ~-2%)
+   Max DD:     -3.4%
+   Sharpe:     -1.17
+   Sharpe HAC: -1.18  (Newey-West adjusted)
+   Calmar:     -0.54
+   Win Rate:   54%  (98W / 82L)
+   Avg Win:    $+6.82
+   Avg Loss:   $-9.27
+   PF:         0.88
+   Trades:     4038
+   Turnover:   $298,339  (59.7x capital)
+   Costs:      $119.34  (2.4%)
+
+   📈 Equity ($4838–$5000):
+      $   5,000 |████████████████████████████████████████|
+      $   4,941 |█████████████████████████░░░░░░░░░░░░░░░|
+      $   4,893 |█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,942 |█████████████████████████░░░░░░░░░░░░░░░|
+      $   4,868 |███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,892 |█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,878 |█████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,885 |███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,941 |█████████████████████████░░░░░░░░░░░░░░░|
+      $   4,935 |████████████████████████░░░░░░░░░░░░░░░░|
+
+   Saved: /Users/a.s.tabakov/Developer/invest/trading_logs/fast_sim_equity.csv
+
+======================================================================
+   🔴 Unprofitable
+======================================================================
+

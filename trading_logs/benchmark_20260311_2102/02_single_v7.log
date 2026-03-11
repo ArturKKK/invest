@@ -1,0 +1,16 @@
+======================================================================
+  FAST SIMULATION
+  365d | $5,000 | rebal=12h | N=10+10 | kelly=30% | cost=4bp/side
+  leverage=1x | mode=boost
+======================================================================
+
+📊 Loading offline data: trading_logs/frozen_raw.parquet
+   (108500, 7), 50 symbols
+   Date range: 2024-05-08 03:00:00+00:00 → 2026-03-10 08:00:00+00:00
+Traceback (most recent call last):
+  File "/Users/a.s.tabakov/Developer/invest/run_fast_sim.py", line 1207, in <module>
+    main()
+    ~~~~^^
+  File "/Users/a.s.tabakov/Developer/invest/run_fast_sim.py", line 254, in main
+    from run_trading import add_12h_features
+ImportError: cannot import name 'add_12h_features' from 'run_trading' (/Users/a.s.tabakov/Developer/invest/run_trading.py)

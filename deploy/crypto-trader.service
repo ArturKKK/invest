@@ -8,7 +8,7 @@ Type=simple
 User=trader
 Group=trader
 WorkingDirectory=/home/trader/invest
-ExecStart=/home/trader/invest/venv/bin/python run_trading.py --mode live --loop --capital 500
+ExecStart=/home/trader/invest/venv/bin/python run_trading.py --mode live --loop --capital 500 --leverage 3
 
 # Environment
 EnvironmentFile=/home/trader/invest/.env

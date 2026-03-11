@@ -1,0 +1,340 @@
+{
+  "timestamp": "2026-03-11T18:34:19.420628+00:00",
+  "mode": "signal",
+  "capital": 5000.0,
+  "risk_config": {
+    "n_long": 10,
+    "n_short": 10,
+    "vol_target": 0.008,
+    "vol_lookback": 48,
+    "kelly_frac": 0.3,
+    "dd_stop": -0.15,
+    "dd_resume": -0.06,
+    "confidence_threshold": 0.0
+  },
+  "positions": [
+    {
+      "symbol": "ETC/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3794
+    },
+    {
+      "symbol": "BTC/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3771
+    },
+    {
+      "symbol": "XTZ/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3698
+    },
+    {
+      "symbol": "APT/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3691
+    },
+    {
+      "symbol": "ATOM/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3681
+    },
+    {
+      "symbol": "LINK/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3655
+    },
+    {
+      "symbol": "EGLD/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3652
+    },
+    {
+      "symbol": "UNI/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3642
+    },
+    {
+      "symbol": "ETH/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3635
+    },
+    {
+      "symbol": "XRP/USDT",
+      "side": "long",
+      "usd": 75.0,
+      "score": 0.3632
+    },
+    {
+      "symbol": "ALGO/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.2574
+    },
+    {
+      "symbol": "SAND/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.2259
+    },
+    {
+      "symbol": "AVAX/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1909
+    },
+    {
+      "symbol": "MKR/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1851
+    },
+    {
+      "symbol": "FLOW/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1851
+    },
+    {
+      "symbol": "IOTA/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1799
+    },
+    {
+      "symbol": "GRT/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1791
+    },
+    {
+      "symbol": "ICX/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1709
+    },
+    {
+      "symbol": "SUSHI/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1651
+    },
+    {
+      "symbol": "MATIC/USDT",
+      "side": "short",
+      "usd": 75.0,
+      "score": 0.1092
+    }
+  ],
+  "state": {
+    "equity": 1000.0,
+    "peak": 1000.0,
+    "initial_capital": 1000.0,
+    "cycle_pnls": [],
+    "equity_history": [],
+    "total_pnl": 0.0,
+    "n_cycles": 0,
+    "sim_positions": [
+      {
+        "symbol": "ENJ/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 2.7503,
+        "entry_price": 0.01799,
+        "entry_time": "2026-03-07T11:13:32.254467+00:00"
+      },
+      {
+        "symbol": "ICX/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 1.7274,
+        "entry_price": 0.0355,
+        "entry_time": "2026-03-07T11:13:32.254495+00:00"
+      },
+      {
+        "symbol": "CHZ/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 1.3364,
+        "entry_price": 0.03568,
+        "entry_time": "2026-03-07T11:13:32.254499+00:00"
+      },
+      {
+        "symbol": "SUSHI/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 1.2318,
+        "entry_price": 0.1982,
+        "entry_time": "2026-03-07T11:13:32.254501+00:00"
+      },
+      {
+        "symbol": "MANA/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 1.1472,
+        "entry_price": 0.0929,
+        "entry_time": "2026-03-07T11:13:32.254504+00:00"
+      },
+      {
+        "symbol": "BNB/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 1.123,
+        "entry_price": 627.95,
+        "entry_time": "2026-03-07T11:13:32.254506+00:00"
+      },
+      {
+        "symbol": "DOGE/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 0.9785,
+        "entry_price": 0.09055,
+        "entry_time": "2026-03-07T11:13:32.254507+00:00"
+      },
+      {
+        "symbol": "AAVE/USDT",
+        "side": "long",
+        "usd": 18.75,
+        "score": 0.9656,
+        "entry_price": 110.32,
+        "entry_time": "2026-03-07T11:13:32.254509+00:00"
+      },
+      {
+        "symbol": "DOT/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -0.9496,
+        "entry_price": 1.495,
+        "entry_time": "2026-03-07T11:13:32.254511+00:00"
+      },
+      {
+        "symbol": "BAT/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -1.0054,
+        "entry_price": 0.0991,
+        "entry_time": "2026-03-07T11:13:32.254512+00:00"
+      },
+      {
+        "symbol": "ZIL/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -1.0788,
+        "entry_price": 0.00413,
+        "entry_time": "2026-03-07T11:13:32.254514+00:00"
+      },
+      {
+        "symbol": "EGLD/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -1.1088,
+        "entry_price": 4.12,
+        "entry_time": "2026-03-07T11:13:32.254516+00:00"
+      },
+      {
+        "symbol": "IMX/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -1.2506,
+        "entry_price": 0.1566,
+        "entry_time": "2026-03-07T11:13:32.254517+00:00"
+      },
+      {
+        "symbol": "FTM/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -2.3018,
+        "entry_price": 0.6994,
+        "entry_time": "2026-03-07T11:13:32.254519+00:00"
+      },
+      {
+        "symbol": "MKR/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -2.4452,
+        "entry_price": 1813.7,
+        "entry_time": "2026-03-07T11:13:32.254520+00:00"
+      },
+      {
+        "symbol": "MATIC/USDT",
+        "side": "short",
+        "usd": 18.75,
+        "score": -2.5113,
+        "entry_price": 0.3794,
+        "entry_time": "2026-03-07T11:13:32.254522+00:00"
+      }
+    ]
+  },
+  "signals_top5": [
+    {
+      "symbol": "ETC/USDT",
+      "score": 0.37940422018639824,
+      "confidence": 0.9303635732458285,
+      "deriv_scale": 1.0
+    },
+    {
+      "symbol": "BTC/USDT",
+      "score": 0.37710504772061143,
+      "confidence": 0.8845917728463314,
+      "deriv_scale": 1.0
+    },
+    {
+      "symbol": "XTZ/USDT",
+      "score": 0.36981808545900285,
+      "confidence": 0.9102218752276822,
+      "deriv_scale": 0.9887546855476884
+    },
+    {
+      "symbol": "APT/USDT",
+      "score": 0.3691400656151539,
+      "confidence": 0.8981027991606665,
+      "deriv_scale": 0.9895876718034153
+    },
+    {
+      "symbol": "ATOM/USDT",
+      "score": 0.368114151310924,
+      "confidence": 0.8972298839497129,
+      "deriv_scale": 0.9920866305705955
+    }
+  ],
+  "signals_bot5": [
+    {
+      "symbol": "IOTA/USDT",
+      "score": 0.17988459012340574,
+      "confidence": 0.9136119646291085,
+      "deriv_scale": 0.4693877551020409
+    },
+    {
+      "symbol": "GRT/USDT",
+      "score": 0.1790691218906007,
+      "confidence": 0.9256027728398784,
+      "deriv_scale": 0.47521865889212844
+    },
+    {
+      "symbol": "ICX/USDT",
+      "score": 0.17085877870496652,
+      "confidence": 0.7975199754770004,
+      "deriv_scale": 0.5102040816326532
+    },
+    {
+      "symbol": "SUSHI/USDT",
+      "score": 0.16506166700605676,
+      "confidence": 0.9384899249948363,
+      "deriv_scale": 0.43648479800083284
+    },
+    {
+      "symbol": "MATIC/USDT",
+      "score": 0.10921007527150466,
+      "confidence": 0.5130950152509522,
+      "deriv_scale": 0.31778425655976683
+    }
+  ]
+}

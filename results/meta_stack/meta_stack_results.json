@@ -1,13 +1,15 @@
 {
-  "variant": "baseline",
-  "meta_features": 33,
+  "variant": "exp15",
+  "meta_features": 37,
   "feature_names": [
     "pred_v6",
     "pred_v7",
     "pred_cb",
+    "pred_xgb",
     "spread_v6_v7",
-    "spread_v6_cb",
-    "spread_v7_cb",
+    "spread_v6_xgb",
+    "spread_v7_xgb",
+    "spread_cb_xgb",
     "pred_mean",
     "pred_std",
     "pred_min",
@@ -16,9 +18,11 @@
     "pred_v6_rank",
     "pred_v7_rank",
     "pred_cb_rank",
+    "pred_xgb_rank",
     "pred_v6_zscore",
     "pred_v7_zscore",
     "pred_cb_zscore",
+    "pred_xgb_zscore",
     "rank_std",
     "rank_min",
     "all_top_q",
@@ -37,82 +41,91 @@
     "dow_sin"
   ],
   "meta_train_rows": 216936,
-  "meta_test_rows": 490879,
+  "meta_test_rows": 489775,
   "meta_train_period": "2024-07-01 00:00:00+00:00 \u2192 2024-12-31 00:00:00+00:00",
   "meta_test_period": "2025-01-01 00:00:00+00:00 \u2192 2026-03-06 15:00:00+00:00",
   "summary": {
     "Simple Mean": {
-      "IC": 0.0182,
-      "Rank_IC": 0.0223,
-      "LS_Sharpe": 2.7,
-      "VT_Sharpe": 2.97,
-      "DDStop_Sharpe": 3.15,
-      "MaxDD_%": -83.6,
-      "Total_%": 10873680.35
+      "IC": 0.0181,
+      "Rank_IC": 0.0236,
+      "LS_Sharpe": 2.24,
+      "VT_Sharpe": 2.52,
+      "DDStop_Sharpe": 2.81,
+      "MaxDD_%": -88.71,
+      "Total_%": 1404427.78
+    },
+    "cb only": {
+      "IC": 0.0184,
+      "Rank_IC": 0.0228,
+      "LS_Sharpe": 2.57,
+      "VT_Sharpe": 2.8,
+      "DDStop_Sharpe": 3.13,
+      "MaxDD_%": -87.97,
+      "Total_%": 6624033.07
     },
     "v6 only": {
-      "IC": 0.0179,
-      "Rank_IC": 0.0228,
-      "LS_Sharpe": 2.7,
-      "VT_Sharpe": 2.9,
-      "DDStop_Sharpe": 2.96,
-      "MaxDD_%": -82.84,
-      "Total_%": 9205251.65
+      "IC": 0.0173,
+      "Rank_IC": 0.0231,
+      "LS_Sharpe": 2.09,
+      "VT_Sharpe": 2.37,
+      "DDStop_Sharpe": 2.47,
+      "MaxDD_%": -91.24,
+      "Total_%": 681205.46
     },
     "v7 only": {
+      "IC": 0.0173,
+      "Rank_IC": 0.0217,
+      "LS_Sharpe": 2.26,
+      "VT_Sharpe": 2.48,
+      "DDStop_Sharpe": 2.61,
+      "MaxDD_%": -88.85,
+      "Total_%": 1359615.43
+    },
+    "xgb only": {
+      "IC": 0.0185,
+      "Rank_IC": 0.0255,
+      "LS_Sharpe": 2.11,
+      "VT_Sharpe": 2.35,
+      "DDStop_Sharpe": 2.39,
+      "MaxDD_%": -89.25,
+      "Total_%": 754790.92
+    },
+    "Ridge-4": {
       "IC": 0.0184,
-      "Rank_IC": 0.0221,
-      "LS_Sharpe": 2.54,
-      "VT_Sharpe": 2.78,
-      "DDStop_Sharpe": 2.88,
-      "MaxDD_%": -83.97,
-      "Total_%": 4475922.5
-    },
-    "CB only": {
-      "IC": 0.0177,
-      "Rank_IC": 0.0214,
-      "LS_Sharpe": 2.92,
-      "VT_Sharpe": 3.19,
-      "DDStop_Sharpe": 3.5,
-      "MaxDD_%": -80.88,
-      "Total_%": 32651328.64
-    },
-    "Ridge-3": {
-      "IC": 0.0183,
-      "Rank_IC": 0.0223,
-      "LS_Sharpe": 2.7,
-      "VT_Sharpe": 2.96,
-      "DDStop_Sharpe": 3.09,
-      "MaxDD_%": -83.06,
-      "Total_%": 10637447.71
+      "Rank_IC": 0.0238,
+      "LS_Sharpe": 2.29,
+      "VT_Sharpe": 2.54,
+      "DDStop_Sharpe": 2.93,
+      "MaxDD_%": -88.52,
+      "Total_%": 1772569.96
     },
     "Ridge-ALL": {
-      "IC": 0.0203,
-      "Rank_IC": 0.0284,
-      "LS_Sharpe": 2.75,
-      "VT_Sharpe": 3.0,
-      "DDStop_Sharpe": 3.2,
-      "MaxDD_%": -84.86,
-      "Total_%": 12827412.45
+      "IC": 0.0194,
+      "Rank_IC": 0.0277,
+      "LS_Sharpe": 2.26,
+      "VT_Sharpe": 2.51,
+      "DDStop_Sharpe": 2.84,
+      "MaxDD_%": -89.11,
+      "Total_%": 1427740.13
     },
     "LGB-META": {
-      "IC": 0.0277,
-      "Rank_IC": 0.0353,
-      "LS_Sharpe": 2.34,
-      "VT_Sharpe": 2.47,
-      "DDStop_Sharpe": 2.72,
-      "MaxDD_%": -88.21,
-      "Total_%": 1974916.03
+      "IC": 0.0261,
+      "Rank_IC": 0.0328,
+      "LS_Sharpe": 2.25,
+      "VT_Sharpe": 2.49,
+      "DDStop_Sharpe": 2.75,
+      "MaxDD_%": -90.77,
+      "Total_%": 1393396.71
     },
     "LGB-MINIMAL": {
-      "IC": 0.0202,
-      "Rank_IC": 0.0284,
-      "LS_Sharpe": 2.76,
-      "VT_Sharpe": 2.97,
-      "DDStop_Sharpe": 3.14,
-      "MaxDD_%": -81.48,
-      "Total_%": 12842393.45
+      "IC": 0.0187,
+      "Rank_IC": 0.0269,
+      "LS_Sharpe": 2.23,
+      "VT_Sharpe": 2.43,
+      "DDStop_Sharpe": 2.95,
+      "MaxDD_%": -88.31,
+      "Total_%": 1179599.09
     }
   },
-  "timestamp": "2026-03-10T20:27:28.845095"
+  "timestamp": "2026-03-11T10:20:52.546746"
 }

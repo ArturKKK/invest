@@ -1,0 +1,78 @@
+======================================================================
+  FAST SIMULATION
+  30d | $5,000 | rebal=12h | N=10+10 | kelly=30% | cost=4bp/side
+  leverage=1x | mode=boost+deriv-gate
+======================================================================
+
+📊 Fetching 1440h …
+   (50000, 7), 50 symbols
+🔧 Features …
+   💾 Raw OHLCV saved: trading_logs/frozen_raw.parquet ((50000, 7))
+      Date range: 2024-07-30 11:00:00+00:00 → 2026-03-11 17:00:00+00:00
+      Per-symbol candles: {'min': 1000.0, 'max': 1000.0}
+📡 Models …
+   lgb_v6_no_news: 5 LGB models, 160 feats [PROD] ⚠️ 53 features zero-filled
+   lgb_v7_no_news: 5 LGB models, 150 feats [PROD] ⚠️ 8 features zero-filled
+   catboost: 5 CB models, 160 feats ⚠️ 7 features zero-filled
+   deriv_only (risk gate): 5 LGB models, 39 feats
+   Meta-model: /Users/a.s.tabakov/Developer/invest/results/meta_stack/meta_model.pkl
+   🏗️  Architecture: 3 groups (15 models) + deriv gate (5 models) + meta-lgb_minimal
+   2026-02-09 18:00:00+00:00 → 2026-03-11 06:00:00+00:00  (60 steps, 12h apart)
+
+📐 Calibrating edge distribution (P75 (for boost/adaptive)) ...
+   P75 edge = 0.02326, P90 = 0.04064
+   (1410 samples, 30 steps)
+
+──────────────────────────────────────────────────────────────────────
+      0/59 | $5,001.97 | DD   0.0% | L10 S10 | Δ20
+      5/59 | $5,004.00 | DD   0.0% | L10 S10 | Δ12
+     10/59 | $4,998.89 | DD  -0.2% | L10 S10 | Δ20
+     15/59 | $5,021.59 | DD   0.0% | L10 S10 | Δ16
+     20/59 | $4,994.36 | DD  -0.5% | L10 S10 | Δ22
+     25/59 | $4,987.71 | DD  -0.7% | L10 S10 | Δ14
+     30/59 | $4,990.37 | DD  -0.6% | L10 S10 | Δ16
+     35/59 | $4,985.14 | DD  -0.7% | L10 S10 | Δ22
+     40/59 | $5,009.01 | DD  -0.3% | L10 S10 | Δ24
+     45/59 | $5,008.15 | DD  -0.3% | L10 S10 | Δ20
+     50/59 | $5,010.03 | DD  -0.2% | L10 S10 | Δ12
+     55/59 | $5,002.60 | DD  -0.4% | L10 S10 | Δ26
+     58/59 | $5,002.76 | DD  -0.4% | L10 S10 | Δ16
+
+======================================================================
+  RESULTS — 30d, rebal=12h, N=10+10, lev=1x, mode=boost+deriv-gate+meta-lgb_minimal
+======================================================================
+
+   Start:      $5,000
+   End:        $5,002.76
+   Return:     +0.1%  (ann. ~+1%)
+   Max DD:     -0.9%
+   Sharpe:     +0.18
+   Sharpe HAC: +0.20  (Newey-West adjusted)
+   Calmar:     0.76
+   Win Rate:   53%  (31W / 28L)
+   Avg Win:    $+4.99
+   Avg Loss:   $-5.42
+   PF:         1.02
+   Trades:     1210
+   Turnover:   $84,325  (16.9x capital)
+   Costs:      $33.73  (0.7%)
+   Deriv gate: avg scale 0.79x (0.3–1.0)
+
+   📈 Equity ($4977–$5022):
+      $   5,002 |██████████████████████░░░░░░░░░░░░░░░░░░|
+      $   4,999 |███████████████████░░░░░░░░░░░░░░░░░░░░░|
+      $   5,016 |██████████████████████████████████░░░░░░|
+      $   4,994 |███████████████░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,997 |█████████████████░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,985 |███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,001 |█████████████████████░░░░░░░░░░░░░░░░░░░|
+      $   5,010 |█████████████████████████████░░░░░░░░░░░|
+      $   4,987 |████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,003 |███████████████████████░░░░░░░░░░░░░░░░░|
+
+   Saved: /Users/a.s.tabakov/Developer/invest/trading_logs/fast_sim_equity.csv
+
+======================================================================
+   🟡 Marginal — keep monitoring
+======================================================================
+
