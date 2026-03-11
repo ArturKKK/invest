@@ -68,6 +68,12 @@ L0_CONFIGS = {
         'v7': ('v7_res_hyb', 'test_predictions_v6.parquet', 'pred_v7'),
         'cb': ('catboost_res_hyb_no_news', 'test_predictions_catboost.parquet', 'pred_cb'),
     },
+    'exp15': {
+        'v6':  ('v6',       'test_predictions_v6.parquet',       'pred_v6'),
+        'v7':  ('v7',       'test_predictions_v6.parquet',       'pred_v7'),
+        'cb':  ('catboost',  'test_predictions_catboost.parquet', 'pred_cb'),
+        'xgb': ('xgboost',  'test_predictions_xgboost.parquet',  'pred_xgb'),
+    },
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -199,16 +205,17 @@ def load_l0_predictions(variant='baseline', exp_dir=None):
         print(f"  {model_key}: {df.shape[0]:,} rows from {subdir}/{fname}{dup_str}")
         dfs[model_key] = df
 
-    # Merge v6 + v7 + cb on (timestamp, symbol)
-    merged = dfs['v6'][['timestamp', 'symbol', 'target_ret_12h', 'pred_v6']].copy()
-    merged = merged.merge(
-        dfs['v7'][['timestamp', 'symbol', 'pred_v7']],
-        on=['timestamp', 'symbol'], how='inner'
-    )
-    merged = merged.merge(
-        dfs['cb'][['timestamp', 'symbol', 'pred_cb']],
-        on=['timestamp', 'symbol'], how='inner'
-    )
+    # Dynamic merge: start with first model, iteratively join the rest
+    keys = list(cfg.keys())
+    first_key = keys[0]
+    first_pred = cfg[first_key][2]
+    merged = dfs[first_key][['timestamp', 'symbol', 'target_ret_12h', first_pred]].copy()
+    for key in keys[1:]:
+        pred_col = cfg[key][2]
+        merged = merged.merge(
+            dfs[key][['timestamp', 'symbol', pred_col]],
+            on=['timestamp', 'symbol'], how='inner'
+        )
 
     # Sanity check: no duplicates should remain after per-model dedup
     n_dupes_after = merged.duplicated(subset=['timestamp', 'symbol']).sum()
@@ -241,12 +248,13 @@ def build_meta_features(merged, add_context=True):
       - Optional: market context (regime, vol, dispersion, time)
     """
     df = merged.copy()
-    pred_cols = ['pred_v6', 'pred_v7', 'pred_cb']
+    pred_cols = sorted([c for c in df.columns if c.startswith('pred_')])
 
-    # ── Pairwise spreads ──
-    df['spread_v6_v7'] = (df['pred_v6'] - df['pred_v7']).abs()
-    df['spread_v6_cb'] = (df['pred_v6'] - df['pred_cb']).abs()
-    df['spread_v7_cb'] = (df['pred_v7'] - df['pred_cb']).abs()
+    # ── Pairwise spreads (dynamic for 3 or 4 L0 models) ──
+    from itertools import combinations
+    for c1, c2 in combinations(pred_cols, 2):
+        name = f'spread_{c1.replace("pred_", "")}_{c2.replace("pred_", "")}'
+        df[name] = (df[c1] - df[c2]).abs()
 
     # ── Cross-model stats ──
     preds = df[pred_cols].values
@@ -346,16 +354,17 @@ def _add_market_context(df):
 
 # Explicit feature lists for reproducibility
 META_FEATURES_FULL = [
-    # L0 predictions (3)
-    'pred_v6', 'pred_v7', 'pred_cb',
-    # Pairwise spreads (3)
-    'spread_v6_v7', 'spread_v6_cb', 'spread_v7_cb',
+    # L0 predictions (3–4, xgb present only in exp15+)
+    'pred_v6', 'pred_v7', 'pred_cb', 'pred_xgb',
+    # Pairwise spreads (3–6)
+    'spread_v6_v7', 'spread_v6_cb', 'spread_v6_xgb',
+    'spread_v7_cb', 'spread_v7_xgb', 'spread_cb_xgb',
     # Cross-model aggregate stats (5)
     'pred_mean', 'pred_std', 'pred_min', 'pred_max', 'pred_range',
-    # Cross-sectional ranks (3)
-    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank',
-    # Cross-sectional z-scores (3)
-    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore',
+    # Cross-sectional ranks (3–4)
+    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank', 'pred_xgb_rank',
+    # Cross-sectional z-scores (3–4)
+    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore', 'pred_xgb_zscore',
     # Rank agreement (4)
     'rank_std', 'rank_min', 'all_top_q', 'all_bot_q',
     # Per-symbol context (3)
@@ -369,11 +378,12 @@ META_FEATURES_FULL = [
 ]
 
 META_FEATURES_MINIMAL = [
-    'pred_v6', 'pred_v7', 'pred_cb',
-    'spread_v6_v7', 'spread_v6_cb', 'spread_v7_cb',
+    'pred_v6', 'pred_v7', 'pred_cb', 'pred_xgb',
+    'spread_v6_v7', 'spread_v6_cb', 'spread_v6_xgb',
+    'spread_v7_cb', 'spread_v7_xgb', 'spread_cb_xgb',
     'pred_mean', 'pred_std', 'pred_min', 'pred_max', 'pred_range',
-    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank',
-    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore',
+    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank', 'pred_xgb_rank',
+    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore', 'pred_xgb_zscore',
     'rank_std', 'rank_min', 'all_top_q', 'all_bot_q',
 ]
 
@@ -521,6 +531,8 @@ def main():
     parser.add_argument("--variant", default="baseline",
                         choices=list(L0_CONFIGS.keys()),
                         help="Which L0 model variant to use")
+    parser.add_argument("--exp-dir", default=None,
+                        help="Override L0 experiment directory (e.g., results/exp15_new_features)")
     parser.add_argument("--no-context", action="store_true",
                         help="Skip market context features (pure stacking)")
     parser.add_argument("--save-model", action="store_true", default=True,
@@ -545,7 +557,9 @@ def main():
 
     # ── 1. Load L0 predictions ──
     print("\n📦 Loading L0 predictions...")
-    merged = load_l0_predictions(variant=args.variant)
+    exp_dir = Path(args.exp_dir) if args.exp_dir else None
+    merged = load_l0_predictions(variant=args.variant, exp_dir=exp_dir)
+    l0_pred_cols = sorted([c for c in merged.columns if c.startswith('pred_')])
 
     # ── 2. Build meta-features ──
     print("\n🔧 Building meta-features...")
@@ -609,7 +623,7 @@ def main():
     eval_cache['pred_mean'] = evaluate_meta(meta_test, 'pred_mean', 'BASELINE-0: Simple Mean (current production)')
 
     # Baseline per model
-    for col in ['pred_v6', 'pred_v7', 'pred_cb']:
+    for col in l0_pred_cols:
         eval_cache[col] = evaluate_meta(meta_test, col, f'Individual: {col}')
 
     # ── 6. Ridge ──
@@ -617,14 +631,15 @@ def main():
     print(f"  RIDGE META-MODEL")
     print(f"{'━'*70}")
 
-    # Ridge on 3 raw preds only (sanity check)
-    ridge_cols_minimal = ['pred_v6', 'pred_v7', 'pred_cb']
+    # Ridge on raw L0 preds only (sanity check)
+    ridge_cols_minimal = l0_pred_cols
     X_tr_r3 = meta_train[ridge_cols_minimal].values
     X_te_r3 = meta_test[ridge_cols_minimal].values
     ridge_pred_3, ridge_model_3 = train_ridge(X_tr_r3, y_train, X_te_r3)
     meta_test = meta_test.copy()
     meta_test['pred_ridge_3'] = ridge_pred_3
-    eval_cache['pred_ridge_3'] = evaluate_meta(meta_test, 'pred_ridge_3', 'RIDGE-3: Ridge on [v6, v7, cb]')
+    eval_cache['pred_ridge_3'] = evaluate_meta(meta_test, 'pred_ridge_3',
+        f'RIDGE-{len(l0_pred_cols)}: Ridge on {l0_pred_cols}')
 
     # Ridge on all meta-features
     ridge_pred_all, ridge_model_all = train_ridge(X_train, y_train, X_test)
@@ -662,16 +677,16 @@ def main():
 
     # Build summary from cached results (no redundant L/S recomputation)
     summary = {}
-    for col, label in [
-        ('pred_mean', 'Simple Mean'),
-        ('pred_v6', 'v6 only'),
-        ('pred_v7', 'v7 only'),
-        ('pred_cb', 'CB only'),
-        ('pred_ridge_3', 'Ridge-3'),
+    summary_items = [('pred_mean', 'Simple Mean')]
+    for col in l0_pred_cols:
+        summary_items.append((col, f'{col.replace("pred_", "")} only'))
+    summary_items.extend([
+        ('pred_ridge_3', f'Ridge-{len(l0_pred_cols)}'),
         ('pred_ridge_all', 'Ridge-ALL'),
         ('pred_lgb_meta', 'LGB-META'),
         ('pred_lgb_minimal', 'LGB-MINIMAL'),
-    ]:
+    ])
+    for col, label in summary_items:
         if col not in eval_cache:
             continue
         m = eval_cache[col]
@@ -692,9 +707,8 @@ def main():
 
     # ── 10. Save outputs ──
     # Save predictions
-    save_cols = ['timestamp', 'symbol', 'target_ret_12h',
-                 'pred_v6', 'pred_v7', 'pred_cb', 'pred_mean',
-                 'pred_ridge_3', 'pred_ridge_all', 'pred_lgb_meta', 'pred_lgb_minimal']
+    save_cols = ['timestamp', 'symbol', 'target_ret_12h'] + l0_pred_cols + [
+                 'pred_mean', 'pred_ridge_3', 'pred_ridge_all', 'pred_lgb_meta', 'pred_lgb_minimal']
     save_cols = [c for c in save_cols if c in meta_test.columns]
     meta_test[save_cols].to_parquet(output_dir / 'meta_test_predictions.parquet', index=False)
 

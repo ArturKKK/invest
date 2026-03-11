@@ -21,16 +21,17 @@ import pandas as pd
 # ──────────────────────────────────────────────────────────────────────
 
 META_FEATURES_FULL = [
-    # L0 predictions (3)
-    'pred_v6', 'pred_v7', 'pred_cb',
-    # Pairwise spreads (3)
-    'spread_v6_v7', 'spread_v6_cb', 'spread_v7_cb',
+    # L0 predictions (3–4, xgb present only in exp15+)
+    'pred_v6', 'pred_v7', 'pred_cb', 'pred_xgb',
+    # Pairwise spreads (3–6)
+    'spread_v6_v7', 'spread_v6_cb', 'spread_v6_xgb',
+    'spread_v7_cb', 'spread_v7_xgb', 'spread_cb_xgb',
     # Cross-model aggregate stats (5)
     'pred_mean', 'pred_std', 'pred_min', 'pred_max', 'pred_range',
-    # Cross-sectional ranks (3)
-    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank',
-    # Cross-sectional z-scores (3)
-    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore',
+    # Cross-sectional ranks (3–4)
+    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank', 'pred_xgb_rank',
+    # Cross-sectional z-scores (3–4)
+    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore', 'pred_xgb_zscore',
     # Rank agreement (4)
     'rank_std', 'rank_min', 'all_top_q', 'all_bot_q',
     # Per-symbol context (3)
@@ -44,18 +45,19 @@ META_FEATURES_FULL = [
 ]
 
 META_FEATURES_MINIMAL = [
-    'pred_v6', 'pred_v7', 'pred_cb',
-    'spread_v6_v7', 'spread_v6_cb', 'spread_v7_cb',
+    'pred_v6', 'pred_v7', 'pred_cb', 'pred_xgb',
+    'spread_v6_v7', 'spread_v6_cb', 'spread_v6_xgb',
+    'spread_v7_cb', 'spread_v7_xgb', 'spread_cb_xgb',
     'pred_mean', 'pred_std', 'pred_min', 'pred_max', 'pred_range',
-    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank',
-    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore',
+    'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank', 'pred_xgb_rank',
+    'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore', 'pred_xgb_zscore',
     'rank_std', 'rank_min', 'all_top_q', 'all_bot_q',
 ]
 
 VALID_VARIANTS = ('lgb', 'lgb_minimal', 'ridge', 'ridge_all')
 
 
-def build_meta_features_live(snap_df, pred_v6, pred_v7, pred_cb):
+def build_meta_features_live(snap_df, pred_v6, pred_v7, pred_cb, pred_xgb=None):
     """
     Build meta-features from L0 predictions at inference time.
     Must match run_meta_stack.py build_meta_features() exactly.
@@ -68,6 +70,7 @@ def build_meta_features_live(snap_df, pred_v6, pred_v7, pred_cb):
         pred_v6: np.ndarray of v6 predictions (one per symbol)
         pred_v7: np.ndarray of v7 predictions
         pred_cb: np.ndarray of CatBoost predictions
+        pred_xgb: np.ndarray of XGBoost predictions (optional, None if not available)
 
     Returns:
         pd.DataFrame with all META_FEATURES_FULL columns.
@@ -79,14 +82,20 @@ def build_meta_features_live(snap_df, pred_v6, pred_v7, pred_cb):
     mf['pred_v6'] = pred_v6
     mf['pred_v7'] = pred_v7
     mf['pred_cb'] = pred_cb
+    has_xgb = pred_xgb is not None
+    if has_xgb:
+        mf['pred_xgb'] = pred_xgb
 
-    # ── Pairwise spreads ──
-    mf['spread_v6_v7'] = np.abs(pred_v6 - pred_v7)
-    mf['spread_v6_cb'] = np.abs(pred_v6 - pred_cb)
-    mf['spread_v7_cb'] = np.abs(pred_v7 - pred_cb)
+    # ── Pairwise spreads (dynamic) ──
+    pred_cols = ['pred_v6', 'pred_v7', 'pred_cb'] + (['pred_xgb'] if has_xgb else [])
+    from itertools import combinations
+    for c1, c2 in combinations(pred_cols, 2):
+        name = f'spread_{c1.replace("pred_", "")}_{c2.replace("pred_", "")}'
+        mf[name] = np.abs(mf[c1].values - mf[c2].values)
 
     # ── Cross-model stats ──
-    preds = np.column_stack([pred_v6, pred_v7, pred_cb])
+    preds_list = [pred_v6, pred_v7, pred_cb] + ([pred_xgb] if has_xgb else [])
+    preds = np.column_stack(preds_list)
     mf['pred_mean'] = preds.mean(axis=1)
     mf['pred_std'] = preds.std(axis=1)
     mf['pred_min'] = preds.min(axis=1)
@@ -94,17 +103,17 @@ def build_meta_features_live(snap_df, pred_v6, pred_v7, pred_cb):
     mf['pred_range'] = mf['pred_max'] - mf['pred_min']
 
     # ── Cross-sectional ranks (per snapshot = single timestamp) ──
-    for col in ['pred_v6', 'pred_v7', 'pred_cb']:
+    for col in pred_cols:
         mf[f'{col}_rank'] = pd.Series(mf[col].values).rank(pct=True).values
 
     # ── Cross-sectional z-scores ──
-    for col in ['pred_v6', 'pred_v7', 'pred_cb']:
+    for col in pred_cols:
         vals = mf[col].values
         mu, sigma = vals.mean(), vals.std() + 1e-10
         mf[f'{col}_zscore'] = (vals - mu) / sigma
 
     # ── Rank agreement ──
-    rank_cols = ['pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank']
+    rank_cols = [f'{c}_rank' for c in pred_cols]
     rank_vals = mf[rank_cols].values
     mf['rank_std'] = rank_vals.std(axis=1)
     mf['rank_min'] = rank_vals.min(axis=1)
@@ -227,7 +236,7 @@ class MetaModelInference:
 
         return cls(models=models, feature_cols=feat_cols, variant=variant, is_ridge=is_ridge)
 
-    def predict(self, snap_df, pred_v6, pred_v7, pred_cb):
+    def predict(self, snap_df, pred_v6, pred_v7, pred_cb, pred_xgb=None):
         """
         Generate meta-model predictions.
 
@@ -236,12 +245,13 @@ class MetaModelInference:
             pred_v6: np.ndarray — L0 v6 group mean predictions
             pred_v7: np.ndarray — L0 v7 group mean predictions
             pred_cb: np.ndarray — L0 CatBoost group mean predictions
+            pred_xgb: np.ndarray — L0 XGBoost group mean predictions (optional)
 
         Returns:
             np.ndarray of meta-model scores (one per symbol)
         """
         # Build meta-features
-        mf = build_meta_features_live(snap_df, pred_v6, pred_v7, pred_cb)
+        mf = build_meta_features_live(snap_df, pred_v6, pred_v7, pred_cb, pred_xgb=pred_xgb)
 
         # Ensure all required features exist (fill missing with 0)
         for col in self.feature_cols:
