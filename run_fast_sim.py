@@ -241,36 +241,55 @@ def main():
         print(f"   {df.shape}, {df['symbol'].nunique()} symbols")
         print(f"   Date range: {df['timestamp'].min()} → {df['timestamp'].max()}")
 
+        # If raw OHLCV (no feature columns), build basic features first
+        built_basic = False
+        if 'ret_1h' not in df.columns:
+            print("   🔧 Raw OHLCV detected — building basic features...")
+            df = build_features(df)
+            built_basic = True
+
         # Enrich with features computed at runtime (same as pipeline)
         from run_pipeline_v6 import (
             add_multi_horizon_targets, add_cross_asset_features,
             add_advanced_regime_features,
             add_derivatives_features, add_sentiment_features,
         )
-        # Use run_trading.add_12h_features (v7 superset: v6 features + 9 v7-specific)
-        # run_pipeline_v6.add_12h_features lacks: range_position_12h, vwpc_12h,
-        # hh/ll_count_12h, trend_strength_12h, vol_crush_ratio, direction_quality_12h,
-        # funding_cs_rank, cum_funding_24h/72h — which makes v7 models get zeros.
         from run_trading import add_12h_features
-        print("   Enriching features (cross-asset, regime, 12h+v7, sentiment, derivatives)...")
-        df = add_multi_horizon_targets(df)
-        df = add_cross_asset_features(df)
-        df = add_advanced_regime_features(df)
-        df = add_12h_features(df)
-        df = add_sentiment_features(df, root, news_mode='none')  # no news data in offline
-        df = add_derivatives_features(df, root)
-        print("   ⚠️  news_mode='none': CatBoost news features will be zeros (trained with news)")
+
+        if built_basic:
+            # build_features already created cross-asset + regime features.
+            # Only add what it doesn't provide: 12h features, derivatives, targets.
+            print("   Enriching features (12h+v7, derivatives)...")
+            df = add_multi_horizon_targets(df)
+            df = add_12h_features(df)
+            df = add_derivatives_features(df, root)
+        else:
+            # Pre-built features parquet — enrich all
+            print("   Enriching features (cross-asset, regime, 12h+v7, sentiment, derivatives)...")
+            df = add_multi_horizon_targets(df)
+            df = add_cross_asset_features(df)
+            df = add_advanced_regime_features(df)
+            df = add_12h_features(df)
+            df = add_sentiment_features(df, root, news_mode='none')
+            df = add_derivatives_features(df, root)
+
+        # Cross-sectional rank (after all features built)
+        fc = [c for c in df.columns if c not in EXCLUDE_COLS
+              and not c.startswith("target_")
+              and df[c].dtype in ("float64","float32","int64","int32")]
+        df = cross_sectional_rank(df, fc)
+
+        print("   ⚠️  offline mode: some features may be zero-filled by models")
 
         # Clean infinities
         for col in df.select_dtypes(include=[np.number]).columns:
             df[col] = df[col].replace([np.inf, -np.inf], np.nan)
 
-        # Feature columns
+        # Feature columns + fillna
         fc = [c for c in df.columns if c not in EXCLUDE_COLS
               and not c.startswith("target_")
               and df[c].dtype in ("float64", "float32", "int64", "int32")]
         df[fc] = df[fc].fillna(0)
-        df = cross_sectional_rank(df, fc)
         print(f"   Final: {df.shape}, {len(fc)} features")
 
     else:
