@@ -1100,10 +1100,9 @@ def main():
 
             now = datetime.now(timezone.utc)
             # Align to next HORIZON-hour boundary + 5min
-            next_h = now.hour
-            next_h = ((next_h // HORIZON) + 1) * HORIZON
-            next_time = now.replace(hour=next_h % 24, minute=5, second=0, microsecond=0)
-            if next_time <= now:
+            next_h = ((now.hour // HORIZON) + 1) * HORIZON
+            next_time = now.replace(hour=0, minute=5, second=0, microsecond=0) + timedelta(hours=next_h)
+            while next_time <= now:
                 next_time += timedelta(hours=HORIZON)
 
             sleep = (next_time - now).total_seconds()
