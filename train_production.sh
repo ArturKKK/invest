@@ -4,8 +4,8 @@
 # ============================================================
 # Usage:
 #   ./train_production.sh                    # Default: train→2025-09, val→2026-03
+#   ./train_production.sh --gpu              # CatBoost + XGBoost on GPU
 #   ./train_production.sh --train-end 2025-10-01 --val-end 2026-03-15
-#   ./train_production.sh --skip-hpo         # Skip HPO (use defaults)
 #
 # Research models (with test holdout) — for comparing ideas:
 #   python run_pipeline_v6.py                # 3 walk-forward windows
@@ -17,27 +17,40 @@
 
 set -e
 
-EXTRA_ARGS="$@"
+# Parse --gpu separately (only CatBoost & XGBoost support it)
+EXTRA_ARGS=""
+GPU_FLAG=""
+
+for arg in "$@"; do
+    if [[ "$arg" == "--gpu" ]]; then
+        GPU_FLAG="--gpu"
+    else
+        EXTRA_ARGS="$EXTRA_ARGS $arg"
+    fi
+done
 
 echo "============================================================"
 echo "  PRODUCTION TRAINING — max data, models for live trading"
+if [[ -n "$GPU_FLAG" ]]; then
+echo "  GPU enabled for CatBoost + XGBoost"
+fi
 echo "============================================================"
 echo ""
 
 echo "━━━ [1/4] LGB v6 (production) ━━━"
-python run_pipeline_v6.py --production --skip-hpo $EXTRA_ARGS
+python run_pipeline_v6.py --production $EXTRA_ARGS
 echo ""
 
 echo "━━━ [2/4] LGB v7 (production) ━━━"
-python run_pipeline_v7.py --production --skip-hpo $EXTRA_ARGS
+python run_pipeline_v7.py --production $EXTRA_ARGS
 echo ""
 
 echo "━━━ [3/4] CatBoost (production) ━━━"
-python run_pipeline_catboost.py --production --skip-hpo $EXTRA_ARGS
+python run_pipeline_catboost.py --production $GPU_FLAG $EXTRA_ARGS
 echo ""
 
 echo "━━━ [4/4] XGBoost + News Interactions (production) ━━━"
-python run_pipeline_xgboost.py --production --skip-hpo $EXTRA_ARGS
+python run_pipeline_xgboost.py --production $GPU_FLAG $EXTRA_ARGS
 echo ""
 
 echo "============================================================"
