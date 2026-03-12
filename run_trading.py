@@ -761,12 +761,49 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
 # PORTFOLIO CONSTRUCTION (risk-managed)
 # ============================================================
 
+def _edge_boost_weights(scores, n_long, n_short):
+    """Compute per-position weights using edge-proportional boost.
+
+    Mirrors run_fast_sim.py compute_weights(edge_boost=True):
+      edge_i  = |score_i - median|
+      boost_i = 1 + min(edge_i / P75_edge, 3.0)
+      weight  = boost / sum(boosts)   (per side, normalised to 1)
+
+    Returns list of (symbol, side, weight, score) sorted long-first.
+    """
+    all_scores = scores['score'].values
+    median_score = np.median(all_scores)
+    abs_edges = np.abs(all_scores - median_score)
+    edge_p75 = float(np.percentile(abs_edges, 75)) + 1e-10
+
+    sorted_df = scores.sort_values('score', ascending=False).reset_index(drop=True)
+    long_df = sorted_df.head(n_long)
+    short_df = sorted_df.tail(n_short)
+
+    def _side_weights(df):
+        edges = np.abs(df['score'].values - median_score)
+        boosts = 1.0 + np.minimum(edges / edge_p75, 3.0)
+        w = boosts / boosts.sum()
+        # Cap any single position at 25% of its side
+        w = np.minimum(w, 0.25)
+        w = w / w.sum()  # re-normalise after cap
+        return w
+
+    result = []
+    for w, (_, row) in zip(_side_weights(long_df), long_df.iterrows()):
+        result.append((row['symbol'], 'long', float(w), round(row['score'], 4)))
+    for w, (_, row) in zip(_side_weights(short_df), short_df.iterrows()):
+        result.append((row['symbol'], 'short', float(w), round(row['score'], 4)))
+    return result
+
+
 def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
     """
-    Risk-managed portfolio construction.
+    Risk-managed portfolio construction with edge-boost sizing.
 
-    Equal-weight per position: total allocation is split by total number
-    of positions (longs + shorts), so 2 shorts don't eat 50% of capital.
+    Each position gets capital proportional to signal strength:
+      weight ∝ 1 + min(|score - median| / P75_edge, 3.0)
+    Total allocation per side is split 50/50 (half long, half short).
 
     state: dict tracking equity curve for DD stop.
     leverage: exchange leverage multiplier (positions get leverage × capital).
@@ -794,10 +831,12 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
         return []
 
     # Vol targeting: scale position based on recent realized vol
+    # Cap (0.5, 1.2): don't shrink below 0.5x in stress, don't inflate above
+    # 1.2x in calm markets (was 0.1–3.0 = 30x spread, now 2.4x).
     vol_history = state.get('recent_rets', [])
     if len(vol_history) >= 6:
         realized_vol = np.std(vol_history[-risk_cfg['vol_lookback']:]) + 1e-10
-        vol_scale = np.clip(risk_cfg['vol_target'] / realized_vol, 0.1, 3.0)
+        vol_scale = np.clip(risk_cfg['vol_target'] / realized_vol, 0.5, 1.2)
     else:
         vol_scale = 1.0
 
@@ -828,45 +867,39 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
         return []
 
     # Total allocation: capital × kelly × vol_scale × leverage
-    # Split EQUALLY across all positions (not 50/50 between sides).
-    # This prevents 2 shorts from getting disproportionately large allocations.
+    # Split 50/50 between long and short sides.
+    # Within each side, allocate proportionally to edge-boost weights.
     effective_kelly = kelly * vol_scale
     total_alloc = capital * effective_kelly * leverage
-    per_position = total_alloc / total_positions
+    half_alloc = total_alloc / 2
 
     # Cap per position at 15% of leveraged capital for diversification
     max_per_pos = capital * leverage * 0.15
-    per_position = min(per_position, max_per_pos)
+
+    # Compute edge-boost weights
+    weighted = _edge_boost_weights(signals, n_long, n_short)
 
     positions = []
-    for _, row in signals.head(n_long).iterrows():
-        usd = round(per_position, 2)
+    for symbol, side, weight, score in weighted:
+        side_alloc = half_alloc
+        usd = round(min(side_alloc * weight, max_per_pos), 2)
         if usd < 5:  # OKX minimum
             continue
         positions.append({
-            'symbol': row['symbol'],
-            'side': 'long',
+            'symbol': symbol,
+            'side': side,
             'usd': usd,
-            'score': round(row['score'], 4),
-        })
-
-    for _, row in signals.tail(n_short).iterrows():
-        usd = round(per_position, 2)
-        if usd < 5:
-            continue
-        positions.append({
-            'symbol': row['symbol'],
-            'side': 'short',
-            'usd': usd,
-            'score': round(row['score'], 4),
+            'score': score,
         })
 
     actual_alloc = sum(p['usd'] for p in positions)
     n_l = sum(1 for p in positions if p['side'] == 'long')
     n_s = sum(1 for p in positions if p['side'] == 'short')
+    usds = [p['usd'] for p in positions]
     print(f"   📊 Allocating ${actual_alloc:.0f} of ${capital:.0f} "
           f"(kelly={kelly:.0%} × vol_scale={vol_scale:.2f} × lev={leverage}x)")
-    print(f"   📊 Positions: {n_l}L + {n_s}S = {n_l+n_s} × ${per_position:.0f} each")
+    print(f"   📊 Positions: {n_l}L + {n_s}S = {n_l+n_s} "
+          f"[edge-boost ${min(usds):.0f}–${max(usds):.0f}]")
 
     return positions
 
