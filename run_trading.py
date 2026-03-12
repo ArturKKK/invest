@@ -1335,6 +1335,14 @@ def main():
         df = add_advanced_regime_features(df)
         df = add_12h_features(df)
         df = add_sentiment_features(df, root, news_mode='all')
+
+        # Patch derivatives parquet with real-time data before feature build
+        try:
+            from src.data.fetch_realtime_derivatives import patch_metrics_realtime
+            patch_metrics_realtime(root)
+        except Exception as e:
+            print(f"   ⚠️  Real-time deriv patch failed: {e}")
+
         df = add_derivatives_features(df, root)
 
         feat_cols = [c for c in df.columns if c not in EXCLUDE_COLS
