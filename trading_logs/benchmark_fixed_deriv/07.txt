@@ -1,0 +1,7 @@
+   Return:     -2.4%  (ann. ~-29%)
+   Max DD:     -5.8%
+   Sharpe:     -1.74
+   Sharpe HAC: -1.81  (Newey-West adjusted)
+   Calmar:     -5.08
+   Win Rate:   51%  (30W / 29L)
+   Deriv gate: avg scale 0.84x (0.3–1.0)

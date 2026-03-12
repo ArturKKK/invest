@@ -590,6 +590,47 @@ def generate_signal(df, feat_cols, root):
         except ImportError:
             print("   ⚠️  catboost not installed, skipping")
 
+    # XGBoost
+    xgb_dir = None
+    for _xd in ["results/production/xgboost", "results_xgboost"]:
+        _p = os.path.join(root, _xd)
+        if os.path.isdir(_p) and any(f.endswith('.json') for f in os.listdir(_p)):
+            xgb_dir = _p
+            break
+    if xgb_dir:
+        try:
+            import xgboost as xgb_lib
+            _files = sorted(Path(xgb_dir).glob('xgb_model_seed_*.json'))
+            if _files:
+                ms = [xgb_lib.Booster(model_file=str(f)) for f in _files]
+                fn_path = os.path.join(xgb_dir, 'feature_names.json')
+                if os.path.exists(fn_path):
+                    with open(fn_path) as _f:
+                        mf_g = json.load(_f)
+                else:
+                    mf_g = ms[0].feature_names
+                n_missing = sum(1 for c in mf_g if c not in latest.columns)
+                for c in [c for c in mf_g if c not in latest.columns]:
+                    latest[c] = 0.0
+                # XGBoost Booster.predict() needs DMatrix → wrap
+                class _XgbWrapper:
+                    def __init__(self, booster, feat_names):
+                        self._b = booster
+                        self._fn = feat_names
+                    def predict(self, X):
+                        import xgboost as _xgb
+                        dm = _xgb.DMatrix(X, feature_names=self._fn)
+                        return self._b.predict(dm)
+                ms_wrapped = [_XgbWrapper(m, mf_g) for m in ms]
+                model_groups.append((ms_wrapped, mf_g))
+                model_group_labels.append('xgb')
+                warn = f" ⚠️ {n_missing} zero-filled" if n_missing > 3 else ""
+                print(f"   xgboost: {len(ms)} XGB, {len(mf_g)} feats{warn}")
+        except ImportError:
+            print("   ⚠️  xgboost not installed, skipping")
+        except Exception as e:
+            print(f"   ⚠️  XGBoost load failed: {e}")
+
     if not model_groups:
         print("   ❌ No production models found")
         return None
@@ -1151,7 +1192,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
     win_rate = n_wins / len(cycle_pnls) if cycle_pnls else 0
     max_dd = min((e.get('dd_pct', 0) for e in eq_history), default=0)
 
-    n_models = 15  # 5 v6 + 5 v7 + 5 CB
+    n_models = 20  # 5 v6 + 5 v7 + 5 CB + 5 XGB
     dashboard_data = {
         'updated': now.isoformat(),
         'mode': mode,
@@ -1168,7 +1209,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
         'trades': dash_trades[-30:],
         'signals': dash_signals,
         'equity_history': eq_history,
-        'models': f'{n_models} (LGB v6×5 + v7×5 + CB×5)',
+        'models': f'{n_models} (LGB v6×5 + v7×5 + CB×5 + XGB×5)',
         'rebal_hours': HORIZON,
         'min_score': 0,
         'edge_boost': False,

@@ -23,8 +23,8 @@ OHLCV данные (50 монет, 800 часов)
 │   lgb_v6_no_news  × 5  → pred_v6               │
 │   lgb_v7_no_news  × 5  → pred_v7               │
 │   catboost_with_news × 5 → pred_cb             │
-│   xgboost         × 5  → pred_xgb  ⚠️ НЕ подключён │
-│   deriv_only      × ?  → pred_deriv ❌ НЕ обучена  │
+│   xgboost         × 5  → pred_xgb  ✅ подключён     │
+│   deriv_only      × 5  → deriv gate ⚠️ не на VPS   │
 └─────────────────────────────────────────────────┘
         │
         ▼
@@ -63,8 +63,8 @@ OHLCV данные (50 монет, 800 часов)
 | `lgb_v6_no_news` | LightGBM | 160 | 5 (разные random seed) | ✅ На проде |
 | `lgb_v7_no_news` | LightGBM | 150 | 5 | ✅ На проде |
 | `catboost_with_news` | CatBoost | 160 | 5 | ✅ На проде |
-| `xgboost` | XGBoost | ~160 | 5 | ⚠️ Обучена, лежит на проде, но **не вызывается** в коде |
-| `deriv_only` | ? | ? | 0 | ❌ Никогда не обучалась, папка пустая |
+| `xgboost` | XGBoost | 179 | 5 | ✅ Обучена, подключена в `generate_signal()` (нужен `pip install xgboost` на VPS) |
+| `deriv_only` | LightGBM | ~45 (deriv) | 5 | ⚠️ Обучена локально (11.03), но не синхронизирована на VPS |
 
 Каждая группа из 5 моделей усредняет свои прогнозы → один `pred_XXX`.
 
@@ -76,7 +76,7 @@ OHLCV данные (50 монет, 800 часов)
 
 Meta-model берёт прогнозы L0-моделей и комбинирует их в один финальный скор. Это «модель над моделями».
 
-На вход подаётся: `pred_v6`, `pred_v7`, `pred_cb` (+ `pred_xgb` = 0, т.к. не подключён).
+На вход подаётся: `pred_v6`, `pred_v7`, `pred_cb`, `pred_xgb` (если XGBoost загрузился, иначе 6 xgb-фичей zero-filled).
 
 При тестировании (`run_meta_stack.py`) сравнивались разные варианты мета-комбинации:
 
@@ -98,11 +98,11 @@ Meta-model берёт прогнозы L0-моделей и комбинируе
 
 ## Что такое deriv_only
 
-Планировалось как отдельная L0-модель, обученная **только на деривативных фичах** (OI, funding, taker ratio, L/S ratio, basis). Идея — специализированная модель, которая ловит сигналы из рынка деривативов.
+Отдельная L0-модель, обученная **только на деривативных фичах** (~45 фичей: OI, funding, taker ratio, L/S ratio, basis). Специализированная модель для сигналов из рынка деривативов.
 
-Была запланирована как Phase 3 в `run_prod_training.sh`, но скрипт до неё не дошёл. Результат: папка `results/production/deriv_only/` пустая, модели не обучены.
+Обучена локально (11 марта 2026), 5 сидов (42/123/456/789/2024), файлы в `results/production/deriv_only/`. **Но НЕ синхронизирована на VPS** — там папка пустая.
 
-В `generate_signal()` есть код «deriv gate» — он должен был гейтить (фильтровать) сигналы через deriv_only модель, но т.к. модели нет, это no-op.
+В `generate_signal()` есть код «deriv gate» (строки ~687-726) — гейтит сигналы через deriv_only модель: загружает 5 deriv-моделей, строит ранковую меру agreement между meta и deriv прогнозами, и масштабирует итоговый скор. Если модели не найдены — no-op.
 
 ---
 
@@ -121,7 +121,7 @@ Meta-model берёт прогнозы L0-моделей и комбинируе
 
 ### Известные проблемы с фичами
 
-**15 all-zero фичей** (из 207):
+**11 all-zero фичей из-за OI лага** (из 207):
 
 | Фича | Причина |
 |------|---------|
@@ -129,8 +129,8 @@ Meta-model берёт прогнозы L0-моделей и комбинируе
 | `oi_ret_interaction`, `oi_ret_interaction_12h` | Зависят от oi_change → тоже 0 |
 | `agg_oi_change_12h`, `agg_oi_total_change_12h` | Агрегаты по oi_change → 0 |
 | `top_ls_change_12h/24h` | L/S ratio из тех же CSV → тот же лаг |
-| `close_ma720_ratio`, `vol_ma720_ratio` | MA(720) на 800 точках — на границе окна |
-| `btc_regime_24`, `btc_regime_72` | Structural zero — зависит от режима BTC |
+| `close_ma720_ratio`, `vol_ma720_ratio` | OHLCV-based: MA(720) на 800 точках — вычисляется корректно, но значения near-1.0 а не zero. Если zero — нет данных |
+| `btc_regime_24`, `btc_regime_72` | Нормальная бинарная фича (0 или 1): 0 = BTC ниже MA. НЕ баг |
 | `fng_extreme_greed` | Корректно: FNG=16 (extreme fear), поэтому extreme_greed=0 |
 
 ---
@@ -142,7 +142,7 @@ Meta-model берёт прогнозы L0-моделей и комбинируе
 
 1. Fetch OHLCV (50 монет × 800 часов) — с Binance через ccxt
 2. Build features (207 фичей)
-3. L0 inference → pred_v6, pred_v7, pred_cb
+3. L0 inference → pred_v6, pred_v7, pred_cb, pred_xgb
 4. Meta-model → финальный скор
 5. Z-score нормализация (cross-sectional)
 6. Portfolio: TOP-10 = Long, BOTTOM-10 = Short
@@ -201,8 +201,8 @@ results/production/
 ├── lgb_v7_no_news/        ← 5 LGB моделей ✅
 ├── catboost_with_news/    ← 5 CB моделей ✅
 ├── catboost_no_news/      ← 5 CB моделей (не используются)
-├── xgboost/               ← 5+5 XGB моделей (обучены, НЕ подключены) ⚠️
-└── deriv_only/            ← ПУСТО ❌
+├── xgboost/               ← 5 XGB моделей ✅ (подключены, нужен `pip install xgboost` на VPS)
+└── deriv_only/            ← 5 LGB моделей ⚠️ (обучены локально, НЕ на VPS)
 
 results/meta_stack/
 ├── meta_model.pkl         ← LGB-MINIMAL мета-модель
@@ -226,8 +226,10 @@ results/meta_stack/
 
 ## TODO / Потенциальные улучшения
 
-- [ ] Подключить XGBoost в `generate_signal()` — модели обучены, мета-модель ожидает `pred_xgb`
+- [x] Подключить XGBoost в `generate_signal()` — код добавлен (DMatrix wrapper)
+- [ ] Установить `xgboost` на VPS (`venv/bin/pip install xgboost`)
+- [ ] Синхронизировать `deriv_only/` модели на VPS
 - [ ] Попробовать `cb only` мета-вариант (Sharpe 3.13 vs текущие 2.95)
-- [ ] Обучить `deriv_only` (Phase 3 из run_prod_training.sh)
 - [ ] Добавить REST API fallback для OI/taker данных (убирает 10 из 15 нулевых фичей)
-- [ ] Переобучить мета-модель с подключённым XGBoost
+- [ ] Переобучить мета-модель с полноценным XGBoost (сейчас при обучении xgb мог быть другим)
+- [ ] Запустить 30-дневный A/B: сравнить все варианты мета-модели

@@ -1,0 +1,9 @@
+   ✅ Derivatives features: +35 features
+   Return:     -2.8%  (ann. ~-11%)
+   Max DD:     -4.4%
+   Sharpe:     -1.73
+   Sharpe HAC: -2.15  (Newey-West adjusted)
+   Calmar:     -2.59
+   Win Rate:   49%  (40W / 42L)
+   Trades:     1958
+   Deriv gate: avg scale 0.84x (0.3–1.0)

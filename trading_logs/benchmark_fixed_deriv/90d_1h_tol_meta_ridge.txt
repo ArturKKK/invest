@@ -1,0 +1,10 @@
+      OI: 47,519 rows (95.0%), 9 features
+   ✅ Derivatives features: +35 features
+   Return:     -0.4%  (ann. ~-2%)
+   Max DD:     -1.1%
+   Sharpe:     -0.81
+   Sharpe HAC: -1.00  (Newey-West adjusted)
+   Calmar:     -1.54
+   Win Rate:   50%  (41W / 41L)
+   Trades:     1962
+   Deriv gate: avg scale 0.84x (0.3–1.0)

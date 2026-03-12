@@ -1,0 +1,6 @@
+   Return:     +0.4%  (ann. ~+5%)
+   Max DD:     -1.7%
+   Sharpe:     +0.85
+   Sharpe HAC: +0.84  (Newey-West adjusted)
+   Calmar:     2.92
+   Win Rate:   49%  (29W / 30L)
