@@ -87,12 +87,13 @@ WALK_FORWARD_WINDOWS = [
 ]
 
 # PRODUCTION mode — maximum training data, no held-out test set
+# Updated 2026-03-13: extended window to use all available data.
 PRODUCTION_WINDOW = {
     'name': 'PROD (max data)',
-    'train_end': '2025-09-01',
-    'val_start': '2025-09-09',
-    'val_end': '2026-03-01',
-    'test_start': '2026-03-01',
+    'train_end': '2025-12-01',
+    'val_start': '2025-12-09',
+    'val_end': '2026-03-07',
+    'test_start': '2026-03-07',
     'test_end': '2026-12-31',
 }
 

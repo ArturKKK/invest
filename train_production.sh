@@ -3,7 +3,7 @@
 # Train PRODUCTION models (maximum data, no test holdout)
 # ============================================================
 # Usage:
-#   ./train_production.sh                    # Default: train→2025-09, val→2026-03
+#   ./train_production.sh                    # Default: train→2025-12, val→2026-03-07
 #   ./train_production.sh --gpu              # CatBoost + XGBoost on GPU
 #   ./train_production.sh --train-end 2025-10-01 --val-end 2026-03-15
 #
