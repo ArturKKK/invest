@@ -1247,7 +1247,6 @@ def main():
     parser.add_argument('--no-deriv-gate', action='store_true', help='Disable derivative risk gate')
     parser.add_argument('--no-meta', action='store_true', help='Disable meta-model (use simple mean ensemble)')
     parser.add_argument('--no-xgb', action='store_true', help='Exclude XGBoost from ensemble')
-    parser.add_argument('--ensemble', action='store_true', help='Use full ensemble (v6+v7+CB+XGB, default with multi-model)')
     args = parser.parse_args()
 
     root = os.path.dirname(os.path.abspath(__file__))

@@ -79,7 +79,8 @@ def main():
     print(f"   Enriched: {df.shape}, {len(feat_cols)} feature columns")
 
     # ── Filter to OOS period early (speeds up predictions dramatically) ──
-    oos_start = pd.Timestamp('2025-09-01', tz='UTC')
+    # Must be AFTER L0 train_end (currently 2025-12-01 in PRODUCTION_WINDOW)
+    oos_start = pd.Timestamp('2025-12-01', tz='UTC')
     print(f"\n🔪 Filtering to OOS period (>= {oos_start.date()}) before L0 prediction...")
     df = df[df['timestamp'] >= oos_start].copy()
     print(f"   Filtered: {df.shape[0]:,} rows, {df['timestamp'].min()} → {df['timestamp'].max()}")
@@ -192,9 +193,9 @@ def main():
     print(f"   Done: {len(df):,} rows × {n_l0} L0 predictions")
 
     # ── 5. Build meta-features & prepare training data ──
-    # Production L0 models trained through 2025-09-01. Only data AFTER that
+    # Production L0 models trained through 2025-12-01. Only data AFTER that
     # is truly out-of-sample for L0. Use that as meta-train period.
-    # Split: meta-train 2025-09-09→2026-01-01, meta-test 2026-01-01→latest.
+    # Split: meta-train 2025-12-09→2026-02-01, meta-test 2026-02-01→latest.
 
     if 'target_ret_12h' not in df.columns:
         print("❌ target_ret_12h not found"); sys.exit(1)
@@ -224,8 +225,8 @@ def main():
     meta_df = pd.concat(meta_dfs, ignore_index=True)
     print(f"   Built meta-features: {meta_df.shape}, {meta_df['timestamp'].nunique()} snapshots")
 
-    # Filter to OOS period only
-    oos_start = pd.Timestamp('2025-09-09', tz='UTC')
+    # Filter to OOS period only (L0 train_end + PURGE_DAYS=8)
+    oos_start = pd.Timestamp('2025-12-09', tz='UTC')
     meta_df = meta_df[meta_df['timestamp'] >= oos_start].copy()
     print(f"\n📊 OOS data (after L0 train cutoff): {meta_df.shape[0]:,} rows")
     print(f"   Period: {meta_df['timestamp'].min()} → {meta_df['timestamp'].max()}")
@@ -238,8 +239,8 @@ def main():
     # Cross-sectional target rank (per timestamp)
     meta_df['target_rank'] = meta_df.groupby('timestamp')['target_ret_12h'].rank(pct=True)
 
-    # Train/test split
-    cutoff = pd.Timestamp('2026-01-01', tz='UTC')
+    # Train/test split (~70/30 of OOS period)
+    cutoff = pd.Timestamp('2026-02-01', tz='UTC')
     meta_train = meta_df[meta_df['timestamp'] < cutoff].copy()
     meta_test = meta_df[meta_df['timestamp'] >= cutoff].copy()
 
