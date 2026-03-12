@@ -527,7 +527,7 @@ def generate_signal(df, feat_cols, root):
     """
     Generate production ensemble signal.
 
-    Pipeline: LGB v6 + LGB v7 + CatBoost → meta-model Ridge → deriv gate → score.
+    Pipeline: LGB v6 + LGB v7 + CatBoost → meta-model LGB → deriv gate → score.
     Mirrors the architecture used in run_fast_sim.py benchmarks.
     """
     latest = df.groupby('symbol').last().reset_index()
@@ -618,15 +618,21 @@ def generate_signal(df, feat_cols, root):
     if all(k in meta_group_idx for k in ('v6', 'v7', 'cb')):
         try:
             from src.models.meta_model import MetaModelInference
-            meta_inf = MetaModelInference.load('auto', variant='ridge', root=root)
+            # Use lgb_minimal (non-linear LGB meta-model) — ridge compresses
+            # scores to a narrow band [0.44, 0.56] making L/S nearly random.
+            # lgb_minimal produces wider score range [-2, +1.5] for meaningful
+            # portfolio differentiation.
+            meta_inf = MetaModelInference.load('auto', variant='lgb_minimal', root=root)
             if meta_inf is not None:
+                pred_xgb = per_group_scores[meta_group_idx['xgb']] if 'xgb' in meta_group_idx else None
                 scores = meta_inf.predict(
                     latest,
                     pred_v6=per_group_scores[meta_group_idx['v6']],
                     pred_v7=per_group_scores[meta_group_idx['v7']],
                     pred_cb=per_group_scores[meta_group_idx['cb']],
+                    pred_xgb=pred_xgb,
                 )
-                print(f"   ✅ Meta-model ridge applied")
+                print(f"   ✅ Meta-model lgb_minimal applied")
         except Exception as e:
             print(f"   ⚠️  Meta-model failed: {e}")
 
@@ -680,13 +686,24 @@ def generate_signal(df, feat_cols, root):
 
     # ── Build result ──────────────────────────────────────────
     final_scores = scores * deriv_scale
+
+    # Z-normalize scores cross-sectionally: converts raw model output ~[0.44, 0.56]
+    # to z-scores ~[-2, +2].  This makes score magnitude meaningful:
+    #   |z| > 1  → strong conviction (top/bottom ~16%)
+    #   |z| > 2  → very strong conviction (top/bottom ~2%)
+    # Without this, all scores cluster near 0.5 and L/S differentiation is poor.
+    # The old (working) pipeline z-normalized each L0 model before averaging.
+    score_std = np.std(final_scores)
+    if score_std > 1e-10:
+        final_scores = (final_scores - np.mean(final_scores)) / score_std
+
     latest['score'] = final_scores
     latest['confidence'] = confidence
     latest['deriv_scale'] = deriv_scale
 
     n_models = sum(len(ms) for ms, _ in model_groups)
     print(f"   🏗️  Architecture: {len(model_groups)} groups ({n_models} models)"
-          f" + meta-ridge + deriv gate")
+          f" + meta-lgb + deriv gate")
 
     return latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
         'score', ascending=False).reset_index(drop=True)
@@ -1237,6 +1254,37 @@ def main():
         if args.mode == 'signal' or not positions:
             results = execute(None, positions, dry_run=True, leverage=risk_cfg['leverage'])
         else:
+            # Snapshot UPnL before closing — update dash_trades with realized PnL
+            dash_trades = state.get('dash_trades', [])
+            if exchange and dash_trades:
+                try:
+                    live_pos = exchange.fetch_positions()
+                    pnl_map = {}  # symbol -> {side, upnl}
+                    for p in live_pos:
+                        if float(p.get('contracts', 0)) > 0:
+                            sym = p['symbol'].replace('/USDT:USDT', '')
+                            pnl_map[sym] = {
+                                'side': p['side'],
+                                'upnl': float(p.get('unrealizedPnl', 0)),
+                            }
+                    # Mark matching open trades as closed
+                    for t in dash_trades:
+                        if t.get('closed') is None and t['symbol'] in pnl_map:
+                            info = pnl_map[t['symbol']]
+                            if t['side'] == info['side']:
+                                t['pnl'] = round(info['upnl'], 2)
+                                t['closed'] = now.isoformat()
+                    state['dash_trades'] = dash_trades
+                    # Record cycle PnL for win-rate calculation
+                    cycle_total = sum(info['upnl'] for info in pnl_map.values())
+                    cycle_pnls = state.get('cycle_pnls', [])
+                    cycle_pnls.append(round(cycle_total, 2))
+                    cycle_pnls = cycle_pnls[-200:]  # keep last 200 cycles
+                    state['cycle_pnls'] = cycle_pnls
+                    print(f"   📊 Cycle PnL: ${cycle_total:+.2f} (win rate: {sum(1 for p in cycle_pnls if p > 0)}/{len(cycle_pnls)})")
+                except Exception as e:
+                    print(f"   ⚠️  PnL snapshot: {e}")
+
             print(f"\n📤 Closing existing positions...")
             close_all(exchange)
             print(f"\n📥 Opening new positions...")
@@ -1305,8 +1353,8 @@ def main():
             next_rebal_str = next_time.strftime('%H:%M UTC')
             print(f"\n   ⏰ Next: {next_rebal_str} ({sleep/60:.0f} min)")
 
-            # Sleep in 5-min intervals, refreshing dashboard each tick
-            DASH_INTERVAL = 300  # 5 minutes
+            # Sleep in short intervals, refreshing dashboard each tick
+            DASH_INTERVAL = 60  # 1 minute
             remaining = max(sleep, 60)
             while remaining > 0:
                 try:
