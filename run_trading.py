@@ -523,12 +523,12 @@ def generate_lgb_signal(df, models, feat_cols):
     return latest[['symbol', 'pred_lgb']].copy()
 
 
-def generate_signal(df, feat_cols, root):
+def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use_xgb=True):
     """
     Generate production ensemble signal.
 
-    Pipeline: LGB v6 + LGB v7 + CatBoost → meta-model LGB → deriv gate → score.
-    Mirrors the architecture used in run_fast_sim.py benchmarks.
+    Pipeline: LGB v6 + LGB v7 + CatBoost [+ XGB] [→ meta-model] [→ deriv gate] → score.
+    Flags allow disabling components based on walk-forward validation results.
     """
     latest = df.groupby('symbol').last().reset_index()
 
@@ -597,7 +597,7 @@ def generate_signal(df, feat_cols, root):
         if os.path.isdir(_p) and any(f.endswith('.json') for f in os.listdir(_p)):
             xgb_dir = _p
             break
-    if xgb_dir:
+    if xgb_dir and use_xgb:
         try:
             import xgboost as xgb_lib
             _files = sorted(Path(xgb_dir).glob('xgb_model_seed_*.json'))
@@ -656,7 +656,7 @@ def generate_signal(df, feat_cols, root):
     meta_group_idx = {lbl: i for i, lbl in enumerate(model_group_labels)}
     scores = None
 
-    if all(k in meta_group_idx for k in ('v6', 'v7', 'cb')):
+    if use_meta and all(k in meta_group_idx for k in ('v6', 'v7', 'cb')):
         try:
             from src.models.meta_model import MetaModelInference
             # Use lgb_minimal (non-linear LGB meta-model) — ridge compresses
@@ -685,6 +685,9 @@ def generate_signal(df, feat_cols, root):
     DERIV_GATE_MIN, DERIV_GATE_MAX = 0.3, 1.0
     deriv_scale = np.ones(len(latest))
 
+    if not use_deriv_gate:
+        print("   ⏭️  Deriv gate: disabled via --no-deriv-gate")
+
     deriv_dir = None
     for _dd in ["results/production/deriv_only", "results_deriv"]:
         _p = os.path.join(root, _dd)
@@ -692,7 +695,7 @@ def generate_signal(df, feat_cols, root):
             deriv_dir = _p
             break
 
-    if deriv_dir:
+    if deriv_dir and use_deriv_gate:
         try:
             import lightgbm as _lgb
             _files = sorted(Path(deriv_dir).glob('deriv_model_seed_*.txt'))
@@ -743,8 +746,12 @@ def generate_signal(df, feat_cols, root):
     latest['deriv_scale'] = deriv_scale
 
     n_models = sum(len(ms) for ms, _ in model_groups)
-    print(f"   🏗️  Architecture: {len(model_groups)} groups ({n_models} models)"
-          f" + meta-lgb + deriv gate")
+    arch_parts = [f"{len(model_groups)} groups ({n_models} models)"]
+    if use_meta and scores is not None:
+        arch_parts.append("meta-lgb")
+    if use_deriv_gate:
+        arch_parts.append("deriv-gate")
+    print(f"   🏗️  Architecture: {' + '.join(arch_parts)}")
 
     return latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
         'score', ascending=False).reset_index(drop=True)
@@ -1237,6 +1244,10 @@ def main():
     parser.add_argument('--kelly', type=float, default=None)
     parser.add_argument('--config', type=str, default=None, help='Path to risk config JSON')
     parser.add_argument('--leverage', type=int, default=1, help='Exchange leverage (1-10)')
+    parser.add_argument('--no-deriv-gate', action='store_true', help='Disable derivative risk gate')
+    parser.add_argument('--no-meta', action='store_true', help='Disable meta-model (use simple mean ensemble)')
+    parser.add_argument('--no-xgb', action='store_true', help='Exclude XGBoost from ensemble')
+    parser.add_argument('--ensemble', action='store_true', help='Use full ensemble (v6+v7+CB+XGB, default with multi-model)')
     args = parser.parse_args()
 
     root = os.path.dirname(os.path.abspath(__file__))
@@ -1380,7 +1391,10 @@ def main():
         # 4. Generate signal
         print(f"\n📡 Generating signal...")
         nonlocal last_signals
-        signals = generate_signal(df, feat_cols, root)
+        signals = generate_signal(df, feat_cols, root,
+                                     use_meta=not args.no_meta,
+                                     use_deriv_gate=not args.no_deriv_gate,
+                                     use_xgb=not args.no_xgb)
         if signals is None or len(signals) == 0:
             print("   ❌ No signals")
             return
