@@ -168,6 +168,10 @@ def main():
                     help="Force disable deriv risk gate even if models exist.")
     ap.add_argument("--no-xgb", action="store_true",
                     help="Exclude XGBoost from ensemble (for A/B testing).")
+    ap.add_argument("--softmax-temp", type=float, default=0.0,
+                    help="Softmax temperature for score-proportional sizing (e.g. 2.5). "
+                         "0=off (uses default exp(score*2) or edge-boost). "
+                         "Higher = more concentration on strong signals.")
     ap.add_argument("--no-ddstop", action="store_true",
                     help="Disable drawdown stop completely (for diagnostic runs).")
     ap.add_argument("--meta-model", type=str, default=None, nargs='?', const='auto',
@@ -213,13 +217,15 @@ def main():
     edge_str = f"P{args.edge_pct}" if args.edge_pct > 0 else (
         f"edge>{min_edge:.4f}" if min_edge > 0 else "off")
     boost_str = "boost" if args.edge_boost else ""
+    softmax_str = f"softmax{args.softmax_temp:.1f}" if args.softmax_temp > 0 else ""
     adapt_str = "adaptive" if args.adaptive_rebal else ""
     dynlev_str = f"dynlev→{args.max_lev:.0f}x" if args.dynamic_lev else ""
     evtfilt_str = "evtfilt" if args.event_filter else ""
     voltgt_str = f"voltgt{args.vol_target_ann:.0%}" if args.vol_target_ann > 0 else ""
     metarisk_str = "meta-risk" if args.meta_risk else ""
     derivgate_str = "deriv-gate" if (not args.no_deriv_gate) else ""
-    mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, adapt_str,
+    mode_parts = [s for s in [edge_str if edge_str != 'off' else '', boost_str, softmax_str,
+                               adapt_str,
                                dynlev_str, evtfilt_str, voltgt_str, metarisk_str,
                                derivgate_str] if s]
     mode_str = '+'.join(mode_parts) if mode_parts else 'baseline'
@@ -1037,7 +1043,16 @@ def main():
             syms_list = list(symbols)
 
             # --- Base weights ---
-            if args.edge_boost and edge_p75 > 0:
+            if args.softmax_temp > 0:
+                # Softmax score-proportional: weight ∝ exp(score × temp)
+                if is_long:
+                    arr = np.array([score_dict[s] for s in syms_list])
+                else:
+                    arr = np.array([-score_dict[s] for s in syms_list])
+                arr = arr - arr.mean()  # numerical stability
+                w = np.exp(arr * args.softmax_temp)
+                w = w / w.sum()
+            elif args.edge_boost and edge_p75 > 0:
                 raw_w = []
                 conf_arr = []
                 for s in syms_list:

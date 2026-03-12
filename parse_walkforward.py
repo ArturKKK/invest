@@ -14,10 +14,29 @@ WINDOW_LABELS = {
     'W3': '2025-03→06', 'W4': '2025-06→09',
     'W5': '2025-09→12', 'W6': '2025-12→03',
 }
-CONFIGS = [
+
+# Auto-detect configs from log files, or fall back to known list
+_default_configs = [
     'v7_solo', 'ens3', 'ens4',
     'ens4+deriv', 'ens4+meta_lgb', 'ens4+meta_ridge',
 ]
+
+def detect_configs(log_dir):
+    """Auto-detect config names from log filenames like '{config}_{W1..W6}.log'."""
+    configs = set()
+    for fname in os.listdir(log_dir):
+        if not fname.endswith('.log'):
+            continue
+        for w in WINDOWS:
+            suffix = f'_{w}.log'
+            if fname.endswith(suffix):
+                cfg = fname[:-len(suffix)]
+                configs.add(cfg)
+    if configs:
+        return sorted(configs)
+    return _default_configs
+
+CONFIGS = detect_configs(log_dir)
 
 def parse_log(path):
     if not os.path.exists(path):
@@ -175,23 +194,32 @@ print(f"    Positive: {best_st['n_positive']}/{best_st['n_windows']} windows")
 # ── 5. Impact analysis across windows ────────────────────────
 print()
 print("=" * 100)
-print("  IMPACT ANALYSIS (per-window Sharpe deltas)")
+print("  IMPACT ANALYSIS (per-window Sharpe deltas vs baseline)")
 print("=" * 100)
 
-comparisons = [
-    ("ens4 vs v7_solo", "v7_solo", "ens4"),
-    ("ens4 vs ens3 (+XGB)", "ens3", "ens4"),
-    ("+deriv gate", "ens4", "ens4+deriv"),
-    ("+meta LGB", "ens4", "ens4+meta_lgb"),
-    ("+meta Ridge", "ens4", "ens4+meta_ridge"),
-]
+# Auto-build comparisons: find a baseline config and compare all others
+# Priority: ens4 > baseline_10 > first config
+_baseline_priority = ['ens4', 'baseline_10', 'baseline_7']
+base_cfg = None
+for bp in _baseline_priority:
+    if bp in config_stats:
+        base_cfg = bp
+        break
+if base_cfg is None and config_stats:
+    base_cfg = list(config_stats.keys())[0]
+
+if base_cfg:
+    comparisons = [(f"{base_cfg} → {cfg}", base_cfg, cfg)
+                    for cfg in CONFIGS if cfg != base_cfg and cfg in config_stats]
+else:
+    comparisons = []
 
 for label, base, test in comparisons:
-    print(f"\n  {label}: {base} → {test}")
+    print(f"\n  {label}")
     deltas = []
     for w in WINDOWS:
-        r_base = data[base][w]
-        r_test = data[test][w]
+        r_base = data.get(base, {}).get(w)
+        r_test = data.get(test, {}).get(w)
         if r_base and r_test and r_base['sharpe'] is not None and r_test['sharpe'] is not None:
             d = r_test['sharpe'] - r_base['sharpe']
             deltas.append(d)
