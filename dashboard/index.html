@@ -261,13 +261,19 @@
     }
 
     function renderSignals() {
-        let slongs, sshorts;
+        // Scores are rank-normalized [0,1] where 0.5 = median.
+        // Split by median: top half = longs, bottom half = shorts.
+        const sorted = [...cachedSignals].sort((a, b) => b.score - a.score);
+        const mid = Math.floor(sorted.length / 2);
+        let slongs = sorted.slice(0, mid);
+        let sshorts = sorted.slice(mid);
+
         if (signalSortMode === 'conf') {
-            slongs = cachedSignals.filter(s => s.score > 0).sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
-            sshorts = cachedSignals.filter(s => s.score < 0).sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+            slongs = slongs.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+            sshorts = sshorts.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
         } else {
-            slongs = cachedSignals.filter(s => s.score > 0).sort((a, b) => b.score - a.score);
-            sshorts = cachedSignals.filter(s => s.score < 0).sort((a, b) => a.score - b.score);
+            slongs = slongs.sort((a, b) => b.score - a.score);
+            sshorts = sshorts.sort((a, b) => a.score - b.score);
         }
 
         const renderRow = (s, isLong) => {
@@ -277,7 +283,7 @@
             const barColor = isLong ? 'bg-profit' : 'bg-loss';
             const scoreColor = isLong ? 'text-profit' : 'text-loss';
             const scoreText = isLong ? `+${s.score.toFixed(3)}` : s.score.toFixed(3);
-            const barWidth = Math.min(Math.abs(s.score) / 2 * 100, 100);
+            const barWidth = Math.min(Math.abs(s.score - 0.5) * 2 * 100, 100);
             return `
             <div class="flex justify-between items-center text-sm">
                 <span class="text-dark-200">${s.symbol}</span>

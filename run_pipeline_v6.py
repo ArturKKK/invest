@@ -634,7 +634,7 @@ def add_derivatives_features(df, project_root):
 
     if has_metrics:
         metrics = pd.read_parquet(metrics_path)
-        metrics['timestamp'] = pd.to_datetime(metrics['timestamp'], utc=True)
+        metrics['timestamp'] = pd.to_datetime(metrics['timestamp'], utc=True).astype('datetime64[ns, UTC]')
         metrics = metrics.sort_values(['symbol', 'timestamp']).drop_duplicates(
             ['timestamp', 'symbol'], keep='last')
 
@@ -642,13 +642,18 @@ def add_derivatives_features(df, project_root):
         ts_range = f"{metrics['timestamp'].min():%Y-%m-%d} → {metrics['timestamp'].max():%Y-%m-%d}"
         print(f"      Loaded metrics: {len(metrics):,} rows, {n_syms} symbols, {ts_range}")
 
-        # Merge all raw columns at once
-        merge_cols = ['timestamp', 'symbol']
+        # Merge all raw columns at once (merge_asof to handle data lag)
         avail = [c for c in ['oi_value_usd', 'top_ls_ratio', 'top_long_pct',
                              'global_ls_ratio', 'global_long_pct',
                              'taker_buy_sell_ratio'] if c in metrics.columns]
-        metrics_merge = metrics[merge_cols + avail]
-        df = df.merge(metrics_merge, on=merge_cols, how='left')
+        metrics_merge = metrics[['timestamp', 'symbol'] + avail].sort_values('timestamp')
+        df['timestamp'] = df['timestamp'].astype('datetime64[ns, UTC]')
+        df = df.sort_values('timestamp')
+        df = pd.merge_asof(
+            df, metrics_merge,
+            on='timestamp', by='symbol',
+            direction='backward', tolerance=pd.Timedelta('48h')
+        )
 
         # ---- 1. OI features ----
         if 'oi_value_usd' in df.columns:
@@ -817,10 +822,15 @@ def add_derivatives_features(df, project_root):
     premium_path = os.path.join(sent_dir, 'binance_premium_index.parquet')
     if os.path.exists(premium_path):
         prem = pd.read_parquet(premium_path)
-        prem['timestamp'] = pd.to_datetime(prem['timestamp'], utc=True)
-        prem = prem.drop_duplicates(['timestamp', 'symbol'], keep='last')
-        df = df.merge(prem[['timestamp', 'symbol', 'premium_index']],
-                      on=['timestamp', 'symbol'], how='left')
+        prem['timestamp'] = pd.to_datetime(prem['timestamp'], utc=True).astype('datetime64[ns, UTC]')
+        prem = prem.drop_duplicates(['timestamp', 'symbol'], keep='last').sort_values('timestamp')
+        df['timestamp'] = df['timestamp'].astype('datetime64[ns, UTC]')
+        df = df.sort_values('timestamp')
+        df = pd.merge_asof(
+            df, prem[['timestamp', 'symbol', 'premium_index']],
+            on='timestamp', by='symbol',
+            direction='backward', tolerance=pd.Timedelta('24h')
+        )
 
         if 'premium_index' in df.columns:
             # basis_pct = premium index (already = markPrice/indexPrice - 1 ≈ perp premium)
@@ -859,10 +869,15 @@ def add_derivatives_features(df, project_root):
     liq_path = os.path.join(sent_dir, 'binance_liquidations.parquet')
     if os.path.exists(liq_path):
         liq = pd.read_parquet(liq_path)
-        liq['timestamp'] = pd.to_datetime(liq['timestamp'], utc=True)
-        liq = liq.drop_duplicates(['timestamp', 'symbol'], keep='last')
-        df = df.merge(liq[['timestamp', 'symbol', 'liq_long_usd', 'liq_short_usd']],
-                      on=['timestamp', 'symbol'], how='left')
+        liq['timestamp'] = pd.to_datetime(liq['timestamp'], utc=True).astype('datetime64[ns, UTC]')
+        liq = liq.drop_duplicates(['timestamp', 'symbol'], keep='last').sort_values('timestamp')
+        df['timestamp'] = df['timestamp'].astype('datetime64[ns, UTC]')
+        df = df.sort_values('timestamp')
+        df = pd.merge_asof(
+            df, liq[['timestamp', 'symbol', 'liq_long_usd', 'liq_short_usd']],
+            on='timestamp', by='symbol',
+            direction='backward', tolerance=pd.Timedelta('48h')
+        )
         df['liq_long_usd'] = df['liq_long_usd'].fillna(0)
         df['liq_short_usd'] = df['liq_short_usd'].fillna(0)
 

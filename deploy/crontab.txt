@@ -1,15 +1,26 @@
 # Crypto Trading Bot — Crontab
 # Install: crontab deploy/crontab.txt
 # Or: crontab -e and paste these lines
+#
+# Bot rebalances at 00:05 and 12:05 UTC (HORIZON=12h).
+# Data downloads run at XX:40 so fresh data is ready before each cycle.
+
+PYTHON=/home/trader/invest/venv/bin/python
+ROOT=/home/trader/invest
 
 # News update every 6 hours
-0 */6 * * * /home/trader/invest/deploy/update_news.sh >> /home/trader/invest/logs/news_update.log 2>&1
+0 */6 * * * $ROOT/deploy/update_news.sh >> $ROOT/logs/news_update.log 2>&1
 
-# Derivatives data update every 6 hours (Binance Futures: OI, funding, taker ratio)
-30 */6 * * * cd /home/trader/invest && source venv/bin/activate && python src/data/download_binance_futures.py --start "$(date -u -d '3 days ago' +\%Y-\%m-\%d)" >> /home/trader/invest/logs/deriv_update.log 2>&1
+# Derivatives data (Binance Futures: OI, funding, taker ratio, premium)
+# Runs at :40 before each 12h cycle (23:40 → 00:05 cycle, 11:40 → 12:05 cycle)
+# Plus 5:40, 17:40 for extra freshness
+40 5,11,17,23 * * * cd $ROOT && $PYTHON src/data/download_binance_futures.py --start "$(date -u -d '3 days ago' +\%Y-\%m-\%d)" >> $ROOT/logs/deriv_update.log 2>&1
+
+# OKX sentiment data (funding rates, fear & greed) every 6 hours
+35 5,11,17,23 * * * cd $ROOT && $PYTHON src/data/download_sentiment.py >> $ROOT/logs/sentiment_update.log 2>&1
 
 # Log rotation — keep last 7 days
-0 3 * * * find /home/trader/invest/logs -name "*.log" -mtime +7 -delete
+0 3 * * * find $ROOT/logs -name "*.log" -mtime +7 -delete
 
 # Health check — restart if crashed (backup to systemd)
-*/5 * * * * systemctl is-active crypto-trader || (echo "$(date) RESTART" >> /home/trader/invest/logs/watchdog.log && sudo systemctl restart crypto-trader)
+*/5 * * * * systemctl is-active crypto-trader || (echo "$(date) RESTART" >> $ROOT/logs/watchdog.log && sudo systemctl restart crypto-trader)
