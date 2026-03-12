@@ -1,0 +1,124 @@
+======================================================================
+  FAST SIMULATION
+  600d | $5,000 | rebal=12h | N=10+10 | kelly=30% | cost=4bp/side
+  leverage=3x | mode=baseline
+======================================================================
+
+📊 Loading offline data: trading_logs/frozen_features_wf.parquet
+   (710142, 107), 50 symbols
+   Date range: 2024-07-01 00:00:00+00:00 → 2026-03-07 15:00:00+00:00
+   Enriching features (cross-asset, regime, 12h+v7, sentiment, derivatives)...
+   🎯 Adding targets...
+   🌐 Adding cross-asset features...
+   🔰 Adding advanced regime features...
+   🕐 Adding 12h-specific features (v7 enhanced)...
+   ✅ Added ~18 features for 12h holding period (v7)
+   📰 Adding sentiment features... (news_mode=all)
+      FNG: 2018-02-01 → 2026-03-11, mean=48.5
+      Funding: 96,393 non-zero rows (13.6%)
+      LS ratio: 0 non-missing rows
+      Synthetic positioning features...
+      Loading news features (mode=all)...
+      + coin-level news: 8 features
+      + market-level news: 7 features
+      📊 Coverage: 710,142/710,142 rows (100.0%)
+      📰 Events: 327,500/710,142 covered rows (46.1%) have news
+      🕳️  Holes: 0 rows = NaN (not 0!)
+   ✅ Sentiment features added: 135 → 172 total
+   📊 Adding derivatives features (Binance Futures)...
+      Loaded metrics: 1,800,870 rows, 50 symbols, 2021-12-01 → 2026-03-12
+      OI: 707,456 rows (99.6%), 9 features
+      Taker: 707,807 rows (99.7%), 6 features
+      Top L/S: 707,809 rows (99.7%), 5 features
+      Global L/S: 3 features
+      Binance funding: 700,128 rows (98.6%)
+      Funding surprise: computed from OKX funding data
+      Market-wide aggregates: 4 features
+      Basis/Premium: 169,661 rows (23.9%), 6 features
+      ⚠️  No liquidation data (run download_binance_futures.py)
+   ✅ Derivatives features: +35 features
+   🧬 Adding news interaction features...
+   ✅ Added 23 news interaction features
+   ⚠️  offline mode: some features may be zero-filled by models
+   Final: (710142, 248), 230 features
+📡 Models …
+   5 models, 150 feats
+   deriv_only: found but --no-deriv-gate, skipping
+   🏗️  Architecture: 1 groups (5 models)
+   2025-12-12 04:00:00+00:00 → 2026-03-07 04:00:00+00:00  (171 steps, 12h apart)
+
+──────────────────────────────────────────────────────────────────────
+      0/170 | $5,011.99 | DD   0.0% | L10 S10 | Δ20
+      5/170 | $5,019.71 | DD  -0.2% | L10 S10 | Δ22
+     10/170 | $5,047.60 | DD   0.0% | L10 S10 | Δ20
+     15/170 | $5,074.21 | DD   0.0% | L10 S10 | Δ16
+     20/170 | $5,056.70 | DD  -0.5% | L10 S10 | Δ20
+     25/170 | $5,042.81 | DD  -0.8% | L10 S10 | Δ22
+     30/170 | $4,927.63 | DD  -3.1% | L10 S10 | Δ18
+     35/170 | $4,919.11 | DD  -3.3% | L10 S10 | Δ22
+     40/170 | $4,918.92 | DD  -3.3% | L10 S10 | Δ22
+     45/170 | $4,891.17 | DD  -3.8% | L10 S10 | Δ12
+     50/170 | $4,885.18 | DD  -3.9% | L10 S10 | Δ18
+     55/170 | $4,891.18 | DD  -3.8% | L10 S10 | Δ18
+     60/170 | $4,906.40 | DD  -3.5% | L10 S10 | Δ18
+     65/170 | $4,944.13 | DD  -2.8% | L10 S10 | Δ20
+     70/170 | $4,888.42 | DD  -3.9% | L10 S10 | Δ14
+     75/170 | $4,744.62 | DD  -6.7% | L10 S10 | Δ20
+     80/170 | $4,701.68 | DD  -7.5% | L10 S10 | Δ22
+     85/170 | $4,663.34 | DD  -8.3% | L10 S10 | Δ16
+     90/170 | $4,696.02 | DD  -7.6% | L10 S10 | Δ26
+     95/170 | $4,764.08 | DD  -6.3% | L10 S10 | Δ22
+    100/170 | $4,772.27 | DD  -6.1% | L10 S10 | Δ24
+    105/170 | $4,781.30 | DD  -6.0% | L10 S10 | Δ28
+    110/170 | $4,772.05 | DD  -6.1% | L10 S10 | Δ22
+    115/170 | $4,805.09 | DD  -5.5% | L10 S10 | Δ22
+    120/170 | $4,796.93 | DD  -5.7% | L10 S10 | Δ22
+    125/170 | $4,828.80 | DD  -5.0% | L10 S10 | Δ12
+    130/170 | $4,769.36 | DD  -6.2% | L10 S10 | Δ18
+    135/170 | $4,842.14 | DD  -4.8% | L10 S10 | Δ16
+    140/170 | $4,860.62 | DD  -4.4% | L10 S10 | Δ24
+    145/170 | $4,841.60 | DD  -4.8% | L10 S10 | Δ14
+    150/170 | $4,905.09 | DD  -3.5% | L10 S10 | Δ16
+    155/170 | $4,913.21 | DD  -3.4% | L10 S10 | Δ18
+    160/170 | $4,903.86 | DD  -3.6% | L10 S10 | Δ22
+    165/170 | $4,970.79 | DD  -2.2% | L10 S10 | Δ26
+    169/170 | $5,001.33 | DD  -1.6% | L10 S10 | Δ30
+
+======================================================================
+  RESULTS — 600d, rebal=12h, N=10+10, lev=3x, mode=baseline
+======================================================================
+
+   Start:      $5,000
+   End:        $5,001.33
+   Return:     +0.0%  (ann. ~+0%)
+   Max DD:     -9.5%
+   Sharpe:     +0.01
+   Sharpe HAC: +0.01  (Newey-West adjusted)
+   Calmar:     0.00
+   Win Rate:   56%  (96W / 74L)
+   Avg Win:    $+16.53
+   Avg Loss:   $-21.42
+   PF:         1.00
+   Trades:     3460
+   Turnover:   $761,931  (152.4x capital)
+   Costs:      $416.59  (8.3%)
+   Leverage:   3x
+   Liq. level: -33% DD (approx)
+
+   📈 Equity ($4626–$5074):
+      $   5,012 |██████████████████████████████████░░░░░░|
+      $   5,067 |███████████████████████████████████████░|
+      $   4,914 |█████████████████████████░░░░░░░░░░░░░░░|
+      $   4,962 |██████████████████████████████░░░░░░░░░░|
+      $   4,626 |░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,781 |█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,800 |███████████████░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   4,858 |████████████████████░░░░░░░░░░░░░░░░░░░░|
+      $   4,995 |████████████████████████████████░░░░░░░░|
+
+   Saved: /Users/a.s.tabakov/Developer/invest/trading_logs/fast_sim_equity.csv
+
+======================================================================
+   🟡 Marginal — keep monitoring
+======================================================================
+
