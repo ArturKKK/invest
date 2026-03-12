@@ -46,8 +46,8 @@ META_FEATURES_FULL = [
 
 META_FEATURES_MINIMAL = [
     'pred_v6', 'pred_v7', 'pred_cb', 'pred_xgb',
-    'spread_v6_v7', 'spread_v6_cb', 'spread_v6_xgb',
-    'spread_v7_cb', 'spread_v7_xgb', 'spread_cb_xgb',
+    'spread_v6_v7', 'spread_v6_xgb',
+    'spread_v7_xgb', 'spread_cb_xgb',
     'pred_mean', 'pred_std', 'pred_min', 'pred_max', 'pred_range',
     'pred_v6_rank', 'pred_v7_rank', 'pred_cb_rank', 'pred_xgb_rank',
     'pred_v6_zscore', 'pred_v7_zscore', 'pred_cb_zscore', 'pred_xgb_zscore',

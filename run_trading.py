@@ -1192,7 +1192,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
     win_rate = n_wins / len(cycle_pnls) if cycle_pnls else 0
     max_dd = min((e.get('dd_pct', 0) for e in eq_history), default=0)
 
-    n_models = 20  # 5 v6 + 5 v7 + 5 CB + 5 XGB
+    n_models = 20  # max: 5 v6 + 5 v7 + 5 CB + 5 XGB (XGB optional)
     dashboard_data = {
         'updated': now.isoformat(),
         'mode': mode,
@@ -1209,7 +1209,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
         'trades': dash_trades[-30:],
         'signals': dash_signals,
         'equity_history': eq_history,
-        'models': f'{n_models} (LGB v6×5 + v7×5 + CB×5 + XGB×5)',
+        'models': f'{n_models} (LGB v6×5 + v7×5 + CB×5 + XGB×5 if avail)',
         'rebal_hours': HORIZON,
         'min_score': 0,
         'edge_boost': False,
