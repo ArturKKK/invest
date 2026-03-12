@@ -1,0 +1,107 @@
+======================================================================
+  FAST SIMULATION
+  30d | $5,000 | rebal=12h | N=10+10 | kelly=30% | cost=4bp/side
+  leverage=3x | mode=baseline
+======================================================================
+
+📊 Loading offline data: trading_logs/frozen_raw.parquet
+   (50000, 7), 50 symbols
+   Date range: 2024-07-30 11:00:00+00:00 → 2026-03-12 15:00:00+00:00
+   🔧 Raw OHLCV detected — building basic features...
+   Dropped 30 overlapping cols from build_features
+   Enriching features (full pipeline: cross-asset, regime, 12h, sentiment, derivatives)...
+   🎯 Adding targets...
+   🌐 Adding cross-asset features...
+   🔰 Adding advanced regime features...
+   🕐 Adding 12h-specific features (v7 enhanced)...
+   ✅ Added ~18 features for 12h holding period (v7)
+   📰 Adding sentiment features... (news_mode=all)
+      FNG: 2018-02-01 → 2026-03-11, mean=14.0
+      Funding: 45,264 non-zero rows (90.5%)
+      LS ratio: 1,880 non-missing rows
+      Synthetic positioning features...
+      Loading news features (mode=all)...
+      + coin-level news: 8 features
+      + market-level news: 7 features
+      📊 Coverage: 46,663/50,000 rows (93.3%)
+      📰 Events: 23,546/46,663 covered rows (50.5%) have news
+      🕳️  Holes: 3,337 rows = NaN (not 0!)
+   ✅ Sentiment features added: 135 → 172 total
+   📊 Adding derivatives features (Binance Futures)...
+      Loaded metrics: 1,800,870 rows, 50 symbols, 2021-12-01 → 2026-03-12
+      OI: 49,556 rows (99.1%), 9 features
+      Taker: 49,481 rows (99.0%), 6 features
+      Top L/S: 49,575 rows (99.2%), 5 features
+      Global L/S: 3 features
+      Binance funding: 48,199 rows (96.4%)
+      Funding surprise: computed from OKX funding data
+      Market-wide aggregates: 4 features
+      Basis/Premium: 13,337 rows (26.7%), 6 features
+      ⚠️  No liquidation data (run download_binance_futures.py)
+   ✅ Derivatives features: +35 features
+   🧬 Adding news interaction features...
+   ✅ Added 23 news interaction features
+   ⚠️  offline mode: some features may be zero-filled by models
+   Final: (50000, 240), 230 features
+📡 Models …
+   lgb_v6_no_news: 5 LGB models, 160 feats [PROD]
+   lgb_v7_no_news: 5 LGB models, 150 feats [PROD]
+   catboost: 5 CB models, 160 feats
+   deriv_only: found but --no-deriv-gate, skipping
+   🏗️  Architecture: 3 groups (15 models)
+   2026-02-10 16:00:00+00:00 → 2026-03-12 04:00:00+00:00  (60 steps, 12h apart)
+
+──────────────────────────────────────────────────────────────────────
+      0/59 | $5,009.19 | DD   0.0% | L10 S10 | Δ20
+      5/59 | $4,997.20 | DD  -0.6% | L10 S10 | Δ24
+     10/59 | $5,012.49 | DD  -0.3% | L10 S10 | Δ24
+     15/59 | $5,024.75 | DD  -0.6% | L10 S10 | Δ24
+     20/59 | $5,075.82 | DD  -0.0% | L10 S10 | Δ26
+     25/59 | $5,066.36 | DD  -0.2% | L10 S10 | Δ20
+     30/59 | $5,099.02 | DD  -0.1% | L10 S10 | Δ24
+     35/59 | $5,124.63 | DD   0.0% | L10 S10 | Δ16
+     40/59 | $5,115.65 | DD  -0.4% | L10 S10 | Δ26
+     45/59 | $5,190.51 | DD  -0.0% | L10 S10 | Δ18
+     50/59 | $5,196.55 | DD  -0.6% | L10 S10 | Δ24
+     55/59 | $5,205.07 | DD  -0.4% | L10 S10 | Δ22
+     58/59 | $5,271.45 | DD   0.0% | L10 S10 | Δ18
+
+======================================================================
+  RESULTS — 30d, rebal=12h, N=10+10, lev=3x, mode=baseline
+======================================================================
+
+   Start:      $5,000
+   End:        $5,271.45
+   Return:     +5.4%  (ann. ~+66%)
+   Max DD:     -1.1%
+   Sharpe:     +7.05
+   Sharpe HAC: +9.12  (Newey-West adjusted)
+   Calmar:     58.98
+   Win Rate:   58%  (34W / 25L)
+   Avg Win:    $+16.01
+   Avg Loss:   $-10.91
+   PF:         2.00
+   Trades:     1268
+   Turnover:   $292,475  (58.5x capital)
+   Costs:      $157.59  (3.2%)
+   Leverage:   3x
+   Liq. level: -33% DD (approx)
+
+   📈 Equity ($4971–$5271):
+      $   5,009 |█████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,005 |████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,055 |███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,063 |████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,101 |█████████████████░░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,125 |████████████████████░░░░░░░░░░░░░░░░░░░░|
+      $   5,113 |██████████████████░░░░░░░░░░░░░░░░░░░░░░|
+      $   5,217 |████████████████████████████████░░░░░░░░|
+      $   5,251 |█████████████████████████████████████░░░|
+      $   5,271 |████████████████████████████████████████|
+
+   Saved: /Users/a.s.tabakov/Developer/invest/trading_logs/fast_sim_equity.csv
+
+======================================================================
+   🟢 PROFITABLE — go live
+======================================================================
+

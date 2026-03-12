@@ -166,6 +166,8 @@ def main():
                          "based on deriv model disagreement). Auto-enabled if deriv models found.")
     ap.add_argument("--no-deriv-gate", action="store_true",
                     help="Force disable deriv risk gate even if models exist.")
+    ap.add_argument("--no-xgb", action="store_true",
+                    help="Exclude XGBoost from ensemble (for A/B testing).")
     ap.add_argument("--no-ddstop", action="store_true",
                     help="Disable drawdown stop completely (for diagnostic runs).")
     ap.add_argument("--meta-model", type=str, default=None, nargs='?', const='auto',
@@ -255,6 +257,7 @@ def main():
             add_derivatives_features, add_sentiment_features,
         )
         from run_trading import add_12h_features
+        from run_pipeline_xgboost import add_news_interaction_features
 
         if built_basic:
             # build_features created partial cross-asset/regime/FNG features;
@@ -277,6 +280,7 @@ def main():
             df = add_12h_features(df)
             df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
+            df = add_news_interaction_features(df)
         else:
             # Pre-built features parquet — enrich all
             print("   Enriching features (cross-asset, regime, 12h+v7, sentiment, derivatives)...")
@@ -286,6 +290,7 @@ def main():
             df = add_12h_features(df)
             df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
+            df = add_news_interaction_features(df)
 
         # Cross-sectional rank (after all features built)
         fc = [c for c in df.columns if c not in EXCLUDE_COLS
@@ -351,6 +356,8 @@ def main():
         df = add_12h_features(df)
         df = add_sentiment_features(df, root, news_mode='all')
         df = add_derivatives_features(df, root)
+        from run_pipeline_xgboost import add_news_interaction_features as _anif
+        df = _anif(df)
 
         # Cross-sectional rank (after all features built)
         fc = [c for c in df.columns if c not in EXCLUDE_COLS
@@ -439,7 +446,46 @@ def main():
             except ImportError:
                 print("   ⚠️  catboost not installed, skipping CatBoost models")
 
-        # XGBoost убран из ансамбля — дублирует LGB/CB, не даёт доп. alpha
+        # XGBoost ensemble member
+        if not args.no_xgb:
+            xgb_dir = None
+            for _xd in ["results/production/xgboost", "results_xgboost_prod", "results_xgboost"]:
+                _p = os.path.join(root, _xd)
+                if os.path.isdir(_p) and any(f.endswith('.json') for f in os.listdir(_p)):
+                    xgb_dir = _p; break
+            if xgb_dir:
+                try:
+                    import xgboost as _xgb_lib
+                    from pathlib import Path as _XPath
+                    _xfiles = sorted(_XPath(xgb_dir).glob('xgb_model_seed_*.json'))
+                    if _xfiles:
+                        _xms = [_xgb_lib.Booster(model_file=str(f)) for f in _xfiles]
+                        fn_path = os.path.join(xgb_dir, 'feature_names.json')
+                        if os.path.exists(fn_path):
+                            with open(fn_path) as _f:
+                                mf_g = json.load(_f)
+                        else:
+                            mf_g = _xms[0].feature_names
+                        n_missing = sum(1 for c in mf_g if c not in df.columns)
+                        for c in [c for c in mf_g if c not in df.columns]:
+                            df[c] = 0.0
+                        class _XgbWrapper:
+                            def __init__(self, booster, feat_names):
+                                self._b = booster
+                                self._fn = feat_names
+                            def predict(self, X):
+                                import xgboost as __xgb
+                                dm = __xgb.DMatrix(X, feature_names=self._fn)
+                                return self._b.predict(dm)
+                        ms_wrapped = [_XgbWrapper(m, mf_g) for m in _xms]
+                        model_groups.append((ms_wrapped, mf_g))
+                        model_group_labels.append('xgb')
+                        warn = f" ⚠️ {n_missing} features zero-filled" if n_missing > 3 else ""
+                        print(f"   xgboost: {len(_xms)} XGB models, {len(mf_g)} feats{warn}")
+                except ImportError:
+                    print("   ⚠️  xgboost not installed, skipping XGBoost models")
+                except Exception as e:
+                    print(f"   ⚠️  XGBoost load failed: {e}")
 
         if not model_groups:
             print("❌ no models for ensemble"); return
@@ -549,11 +595,13 @@ def main():
 
         # Step 2: Meta-model stacking (if enabled and v6+v7+cb all present)
         if _meta_model_inf is not None and all(k in _meta_group_idx for k in ('v6', 'v7', 'cb')):
+            _xgb_scores = per_group_scores[_meta_group_idx['xgb']] if 'xgb' in _meta_group_idx else None
             meta_scores = _meta_model_inf.predict(
                 snap_df,
                 pred_v6=per_group_scores[_meta_group_idx['v6']],
                 pred_v7=per_group_scores[_meta_group_idx['v7']],
                 pred_cb=per_group_scores[_meta_group_idx['cb']],
+                pred_xgb=_xgb_scores,
             )
             return meta_scores, confidence
 

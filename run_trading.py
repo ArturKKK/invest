@@ -1345,6 +1345,9 @@ def main():
 
         df = add_derivatives_features(df, root)
 
+        from run_pipeline_xgboost import add_news_interaction_features
+        df = add_news_interaction_features(df)
+
         feat_cols = [c for c in df.columns if c not in EXCLUDE_COLS
                      and not c.startswith('target_')
                      and df[c].dtype in ['float64', 'float32', 'int64', 'int32']]
