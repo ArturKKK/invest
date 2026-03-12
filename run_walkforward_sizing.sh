@@ -82,7 +82,7 @@ for win_line in "${WINDOWS[@]}"; do
     LOG="$OUTDIR/${clabel}_${wlabel}.log"
 
     # Skip if already completed (allows restarts)
-    if [ -f "$LOG" ] && grep -q "DDStop Sharpe" "$LOG" 2>/dev/null; then
+    if [ -f "$LOG" ] && grep -q "Sharpe HAC" "$LOG" 2>/dev/null; then
       echo "  [${run_idx}/${TOTAL}] ${clabel} ... CACHED"
       continue
     fi
@@ -90,7 +90,7 @@ for win_line in "${WINDOWS[@]}"; do
     echo -n "  [${run_idx}/${TOTAL}] ${clabel} ..."
     if $PYTHON $SIM --days 600 --start-date "$wstart" --end-date "$wend" $COMMON $extra_args > "$LOG" 2>&1; then
       # Extract key metric
-      sharpe=$(grep -oP 'DDStop Sharpe\s*=\s*\K[\d.+-]+' "$LOG" 2>/dev/null || echo "?")
+      sharpe=$(grep 'Sharpe HAC' "$LOG" 2>/dev/null | grep -oE '[+-][0-9.]+' | head -1 || echo "?")
       echo " Sharpe=${sharpe}"
     else
       echo " FAILED"
