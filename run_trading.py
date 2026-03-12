@@ -893,41 +893,139 @@ def close_all(exchange):
         print(f"      ⚠️  Close failed: {e}")
 
 
+def wait_for_margin(exchange, required_usd, timeout=45):
+    """Poll balance until enough free USDT is available after closing positions."""
+    import time as _time
+    start = _time.time()
+    _time.sleep(2)  # initial settle time
+    while _time.time() - start < timeout:
+        try:
+            bal = exchange.fetch_balance()
+            free = float(bal.get('USDT', {}).get('free', 0))
+            if free >= required_usd * 0.9:  # 90% threshold
+                print(f"      💰 Margin ready: ${free:.0f} free (need ${required_usd:.0f})")
+                return True
+            print(f"      ⏳ Waiting for margin: ${free:.0f} free (need ${required_usd:.0f})...")
+        except Exception as e:
+            print(f"      ⚠️  Balance poll error: {e}")
+        _time.sleep(3)
+    print(f"      ⚠️  Margin timeout after {timeout}s — proceeding anyway")
+    return False
+
+
 def execute(exchange, positions, dry_run=True, leverage=1):
-    """Execute positions on OKX."""
+    """Execute positions on OKX with proper USD→contract conversion and retry sweeps."""
+    import time as _time
     results = []
-    for pos in positions:
+
+    # Load markets for contract size info (needed for proper amount calculation)
+    markets = {}
+    if exchange and not dry_run:
+        try:
+            exchange.load_markets()
+            markets = exchange.markets
+        except Exception as e:
+            print(f"      ⚠️  load_markets: {e}")
+
+    def _usd_to_contracts(okx_sym, usd_amount):
+        """Convert USD notional to number of contracts."""
+        # Find the unified symbol (e.g., 'BTC/USDT:USDT') from exchange ID ('BTC-USDT-SWAP')
+        market = None
+        for sym, m in markets.items():
+            if m.get('id') == okx_sym:
+                market = m
+                break
+        if not market:
+            return usd_amount  # fallback: assume 1:1
+
+        ct_val = float(market.get('contractSize', 1))
+        # Get current price
+        try:
+            ticker = exchange.fetch_ticker(market['symbol'])
+            price = ticker['last']
+        except Exception:
+            return usd_amount  # fallback
+
+        if price <= 0 or ct_val <= 0:
+            return usd_amount
+
+        contracts = usd_amount / (ct_val * price)
+        # Round down to valid precision
+        precision = market.get('precision', {}).get('amount', 0)
+        if isinstance(precision, (int, float)) and precision > 0:
+            contracts = round(int(contracts / precision) * precision, 10)
+        else:
+            contracts = int(contracts)
+
+        return max(contracts, precision if isinstance(precision, (int, float)) else 1)
+
+    def _try_order(pos, is_retry=False):
+        """Attempt to place a single order. Returns True if filled, False if 51008."""
         okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'])
         if not okx_sym:
-            continue
-
+            return True  # skip, not a retry candidate
         side = 'buy' if pos['side'] == 'long' else 'sell'
+        try:
+            if not is_retry:
+                try:
+                    exchange.set_leverage(leverage, okx_sym, params={'mgnMode': 'isolated'})
+                except Exception:
+                    pass
 
-        if dry_run:
+            amount = _usd_to_contracts(okx_sym, pos['usd'])
+            order = exchange.create_order(
+                symbol=okx_sym, type='market', side=side,
+                amount=amount,
+                params={'tdMode': 'isolated', 'posSide': 'net'},
+            )
+            tag = "🔄" if is_retry else "✅"
+            print(f"      {tag} {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} ({amount} cts) → {order['id']}")
+            results.append({**pos, 'status': 'filled', 'order_id': order['id']})
+            return True
+        except Exception as e:
+            if '51008' in str(e):
+                return False  # retry candidate
+            print(f"      ❌ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {e}")
+            results.append({**pos, 'status': 'error', 'error': str(e)})
+            return True  # non-retryable error
+
+    if dry_run:
+        for pos in positions:
+            okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'])
+            if not okx_sym:
+                continue
+            side = 'buy' if pos['side'] == 'long' else 'sell'
             print(f"      [DRY] {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
                   f"(score: {pos['score']:+.3f})")
             results.append({**pos, 'status': 'dry_run'})
-            continue
+        return results
 
-        try:
-            try:
-                exchange.set_leverage(leverage, okx_sym, params={'mgnMode': 'isolated'})
-            except Exception:
-                pass
+    # First pass
+    pending = list(positions)
+    failed = []
+    for pos in pending:
+        if not _try_order(pos):
+            failed.append(pos)
 
-            order = exchange.create_order(
-                symbol=okx_sym, type='market', side=side,
-                amount=pos['usd'],
-                params={
-                    'tdMode': 'isolated',
-                    'posSide': 'net',
-                },
-            )
-            print(f"      ✅ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {order['id']}")
-            results.append({**pos, 'status': 'filled', 'order_id': order['id']})
-        except Exception as e:
-            print(f"      ❌ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {e}")
-            results.append({**pos, 'status': 'error', 'error': str(e)})
+    # Retry sweeps (up to 2 more passes with 10s waits)
+    for sweep in range(2):
+        if not failed:
+            break
+        wait_s = 10
+        print(f"      ⏳ {len(failed)} orders need margin — waiting {wait_s}s (sweep {sweep + 1})...")
+        _time.sleep(wait_s)
+        still_failed = []
+        for pos in failed:
+            if not _try_order(pos, is_retry=True):
+                still_failed.append(pos)
+        failed = still_failed
+
+    # Any remaining failures
+    for pos in failed:
+        okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'], pos['symbol'])
+        side = 'buy' if pos['side'] == 'long' else 'sell'
+        print(f"      ❌ {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → insufficient balance after retries")
+        results.append({**pos, 'status': 'error', 'error': '51008 insufficient balance after retries'})
 
     return results
 
@@ -1287,6 +1385,11 @@ def main():
 
             print(f"\n📤 Closing existing positions...")
             close_all(exchange)
+
+            # Wait for margin to be freed before opening new positions
+            total_usd = sum(p['usd'] for p in positions)
+            wait_for_margin(exchange, total_usd / risk_cfg['leverage'])
+
             print(f"\n📥 Opening new positions...")
             results = execute(exchange, positions, dry_run=False, leverage=risk_cfg['leverage'])
 
