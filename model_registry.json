@@ -1,0 +1,90 @@
+{
+  "generations": [
+    {
+      "gen": 1,
+      "tag": "v2.0-gbdt-no-calendar",
+      "timestamp": "2026-03-13T20:24:21.752320",
+      "notes": "4 GBDT models (v6/v7 LGB + CB + XGB), 5 seeds each = 20 models. Train→2025-12-01, val→2026-03-07. NO calendar features, NO MLP. OOS Sharpe 2.25, Return +29.6%",
+      "models": {
+        "results_v6_prod": {
+          "path": "results_v6_prod",
+          "exists": true,
+          "n_features": 158,
+          "has_calendar": false,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "lgb_model_seed_123.txt",
+            "lgb_model_seed_2024.txt",
+            "lgb_model_seed_42.txt",
+            "lgb_model_seed_456.txt",
+            "lgb_model_seed_789.txt"
+          ],
+          "model_date": "2026-03-13T04:01:16.253524",
+          "size_mb": 4.5
+        },
+        "results_v7_prod": {
+          "path": "results_v7_prod",
+          "exists": true,
+          "n_features": 151,
+          "has_calendar": false,
+          "has_derivatives": true,
+          "has_sentiment": false,
+          "train_end": "2025-12-01",
+          "val_end": "2026-03-07",
+          "train_rows": 2456365,
+          "trained_at": "2026-03-12T23:18:15.022088",
+          "n_models": 5,
+          "model_files": [
+            "lgb_model_seed_123.txt",
+            "lgb_model_seed_2024.txt",
+            "lgb_model_seed_42.txt",
+            "lgb_model_seed_456.txt",
+            "lgb_model_seed_789.txt"
+          ],
+          "model_date": "2026-03-13T04:01:16.283223",
+          "size_mb": 2.5
+        },
+        "results_catboost_prod": {
+          "path": "results_catboost_prod",
+          "exists": true,
+          "n_features": 160,
+          "has_calendar": false,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "cb_model_seed_123.cbm",
+            "cb_model_seed_2024.cbm",
+            "cb_model_seed_42.cbm",
+            "cb_model_seed_456.cbm",
+            "cb_model_seed_789.cbm"
+          ],
+          "model_date": "2026-03-13T04:01:16.429916",
+          "size_mb": 15.9
+        },
+        "results_xgboost_prod": {
+          "path": "results_xgboost_prod",
+          "exists": true,
+          "n_features": 181,
+          "has_calendar": false,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "xgb_model_seed_123.json",
+            "xgb_model_seed_2024.json",
+            "xgb_model_seed_42.json",
+            "xgb_model_seed_456.json",
+            "xgb_model_seed_789.json"
+          ],
+          "model_date": "2026-03-13T04:01:16.568825",
+          "size_mb": 53.1
+        }
+      },
+      "archive_path": "models_archive/gen_001_v2.0-gbdt-no-calendar_20260313"
+    }
+  ],
+  "current_gen": 1
+}

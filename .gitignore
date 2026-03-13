@@ -43,12 +43,15 @@ data_old.tar.gz
 results_catboost/
 results_catboost_prod/
 results_deriv/
+results_mlp/
+results_mlp_prod/
 results_v6/
 results_v6_prod/
 results_v7/
 results_v7_prod/
 results_xgboost/
 results_xgboost_prod/
+models_archive/
 
 # Temp files
 _bench*
