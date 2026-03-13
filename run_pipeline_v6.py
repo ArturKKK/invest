@@ -1613,11 +1613,20 @@ def main():
                              'coin-only, none (same as --no-news)')
     parser.add_argument('--no-derivatives', action='store_true',
                         help='Skip loading Binance derivatives features (for clean A/B tests)')
+    parser.add_argument('--horizon', type=int, default=None,
+                        help='Override target horizon in hours (default: 12). '
+                             'E.g. --horizon 4 trains on target_ret_4h')
     args = parser.parse_args()
     
     # --no-news is syntactic sugar for --news-mode none
     if args.no_news:
         args.news_mode = 'none'
+
+    # Override global HORIZON if --horizon is passed
+    global HORIZON
+    if args.horizon is not None:
+        HORIZON = args.horizon
+        print(f"   ⚡ HORIZON overridden to {HORIZON}h")
 
     project_root = os.path.dirname(os.path.abspath(__file__))
     data_dir = args.data or os.path.join(project_root, 'data', 'features')
@@ -1662,7 +1671,7 @@ def main():
     for col in df.select_dtypes(include=[np.number]).columns:
         df[col] = df[col].replace([np.inf, -np.inf], np.nan)
 
-    df = df.dropna(subset=['target_ret_12h'])       # v6: 12h target
+    df = df.dropna(subset=[f'target_ret_{HORIZON}h'])  # drop rows without target
 
     # Feature columns
     feat_cols = [c for c in df.columns if c not in EXCLUDE_COLS

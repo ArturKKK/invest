@@ -22,7 +22,7 @@ Usage:
   python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --deriv-gate  # recommended
 """
 
-import os, sys, json, argparse, warnings
+import os, sys, json, argparse, warnings, glob
 import pandas as pd, numpy as np
 from datetime import datetime, timezone
 
@@ -549,6 +549,23 @@ def main():
                 print("   ⚠️  torch not installed, skipping MLP models")
             except Exception as e:
                 print(f"   ⚠️  MLP load failed: {e}")
+
+        # Multi-horizon LGB models (e.g. results_v6_4h_prod)
+        for _hz_dir in sorted(glob.glob(os.path.join(root, "results_v6_*h_prod"))):
+            if os.path.isdir(_hz_dir) and any(f.endswith('.txt') for f in os.listdir(_hz_dir)):
+                _hz_name = os.path.basename(_hz_dir)  # e.g. results_v6_4h_prod
+                _hz_label = _hz_name.replace("results_", "").replace("_prod", "")  # v6_4h
+                ms = load_lgb_models(_hz_dir)
+                if ms:
+                    mf_g = ms[0].feature_name()
+                    n_missing = 0
+                    for c in [c for c in mf_g if c not in df.columns]:
+                        df[c] = 0.0
+                        n_missing += 1
+                    model_groups.append((ms, mf_g))
+                    model_group_labels.append(_hz_label)
+                    warn = f" ⚠️ {n_missing} features zero-filled" if n_missing > 3 else ""
+                    print(f"   {_hz_label}: {len(ms)} LGB models, {len(mf_g)} feats{warn}")
 
         if not model_groups:
             print("❌ no models for ensemble"); return
