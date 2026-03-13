@@ -38,7 +38,7 @@ cleanup() {
   unset SKIP_CALENDAR 2>/dev/null
   echo "   cleanup done."
 }
-trap cleanup ERR
+trap cleanup ERR INT TERM
 
 echo "============================================================"
 echo "  OVERNIGHT RESEARCH — $(date)"
