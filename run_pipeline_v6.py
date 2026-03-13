@@ -316,7 +316,12 @@ def add_calendar_features(df):
     Computed purely from timestamp — no external data needed.
     All features are market-level (same for all coins) → go into REGIME_COLS.
     Uses 'cal_' prefix to avoid collision with EXCLUDE_COLS entries.
+
+    Set SKIP_CALENDAR=1 env var to disable (for A/B testing).
     """
+    if os.environ.get('SKIP_CALENDAR'):
+        print("   📅 SKIPPED calendar features (SKIP_CALENDAR=1)")
+        return df
     print("   📅 Adding calendar features...")
 
     ts = df['timestamp']
