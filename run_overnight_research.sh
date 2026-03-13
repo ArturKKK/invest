@@ -11,7 +11,7 @@
 #
 # Total time estimate: ~3-4 hours on GPU cluster
 # ============================================================
-set -e
+set -euo pipefail
 
 TRAIN_END="2026-02-01"
 VAL_END="2026-03-07"
@@ -23,6 +23,22 @@ SIM_BASE="python run_fast_sim.py --data data/features/crypto_features_1h.parquet
 
 RESULTS_DIR="overnight_results"
 mkdir -p $RESULTS_DIR
+
+# Safety trap — restore Gen#3 models on any failure
+cleanup() {
+  echo ""
+  echo "⚠️  Script interrupted or failed! Restoring Gen#3 models..."
+  for d in results_v6_prod results_v7_prod results_catboost_prod results_xgboost_prod; do
+    [ -d "${d}_gen3_backup" ] && rm -rf "$d" && mv "${d}_gen3_backup" "$d" && echo "   restored $d"
+  done
+  # Restore any hidden dirs
+  [ -d results_mlp_prod_bak_overnight ] && mv results_mlp_prod_bak_overnight results_mlp_prod
+  [ -d results_v6_4h_prod_bak ] && mv results_v6_4h_prod_bak results_v6_4h_prod
+  [ -d results_v6_24h_prod_bak ] && mv results_v6_24h_prod_bak results_v6_24h_prod
+  unset SKIP_CALENDAR 2>/dev/null
+  echo "   cleanup done."
+}
+trap cleanup ERR
 
 echo "============================================================"
 echo "  OVERNIGHT RESEARCH — $(date)"
@@ -50,19 +66,19 @@ export SKIP_CALENDAR=1
 
 echo "━━━ v6 LGB (no-cal) ━━━"
 python run_pipeline_v6.py --production --train-end $TRAIN_END --val-end $VAL_END \
-  2>&1 | tail -30
+  2>&1 | tee $RESULTS_DIR/train_v6_nocal.txt | tail -20
 
 echo "━━━ v7 LGB (no-cal) ━━━"
 python run_pipeline_v7.py --production --train-end $TRAIN_END --val-end $VAL_END \
-  2>&1 | tail -30
+  2>&1 | tee $RESULTS_DIR/train_v7_nocal.txt | tail -20
 
 echo "━━━ CatBoost (no-cal) ━━━"
 python run_pipeline_catboost.py --production --train-end $TRAIN_END --val-end $VAL_END \
-  2>&1 | tail -30
+  2>&1 | tee $RESULTS_DIR/train_cb_nocal.txt | tail -20
 
 echo "━━━ XGBoost (no-cal) ━━━"
 python run_pipeline_xgboost.py --production --train-end $TRAIN_END --val-end $VAL_END \
-  2>&1 | tail -30
+  2>&1 | tee $RESULTS_DIR/train_xgb_nocal.txt | tail -20
 
 unset SKIP_CALENDAR
 
@@ -140,11 +156,13 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 cp $RESULTS_DIR/sim_with_calendar.txt $RESULTS_DIR/sim_baseline_4grp.txt
 cp $RESULTS_DIR/equity_with_calendar.csv $RESULTS_DIR/equity_baseline_4grp.csv
 
-# 4b. 5-grp: baseline + 4h model
+# 4b. 5-grp: baseline + 4h model ONLY
 echo "📊 Sim: 5-grp (4 GBDT + LGB_4h)..."
+[ -d results_v6_24h_prod ] && mv results_v6_24h_prod results_v6_24h_prod_bak
 [ -d results_mlp_prod ] && mv results_mlp_prod results_mlp_prod_bak_overnight
 eval $SIM_BASE 2>&1 | tee $RESULTS_DIR/sim_5grp_with_4h.txt
 cp trading_logs/fast_sim_equity.csv $RESULTS_DIR/equity_5grp_with_4h.csv
+[ -d results_v6_24h_prod_bak ] && mv results_v6_24h_prod_bak results_v6_24h_prod
 [ -d results_mlp_prod_bak_overnight ] && mv results_mlp_prod_bak_overnight results_mlp_prod
 
 # 4c. 5-grp: baseline + 24h model  
