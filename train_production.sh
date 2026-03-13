@@ -37,20 +37,24 @@ fi
 echo "============================================================"
 echo ""
 
-echo "━━━ [1/4] LGB v6 (production) ━━━"
+echo "━━━ [1/5] LGB v6 (production) ━━━"
 python run_pipeline_v6.py --production $EXTRA_ARGS
 echo ""
 
-echo "━━━ [2/4] LGB v7 (production) ━━━"
+echo "━━━ [2/5] LGB v7 (production) ━━━"
 python run_pipeline_v7.py --production $EXTRA_ARGS
 echo ""
 
-echo "━━━ [3/4] CatBoost (production) ━━━"
+echo "━━━ [3/5] CatBoost (production) ━━━"
 python run_pipeline_catboost.py --production $GPU_FLAG $EXTRA_ARGS
 echo ""
 
-echo "━━━ [4/4] XGBoost + News Interactions (production) ━━━"
+echo "━━━ [4/5] XGBoost + News Interactions (production) ━━━"
 python run_pipeline_xgboost.py --production $GPU_FLAG $EXTRA_ARGS
+echo ""
+
+echo "━━━ [5/5] MLP (production, GPU) ━━━"
+python run_pipeline_mlp.py --production $GPU_FLAG $EXTRA_ARGS
 echo ""
 
 echo "============================================================"
@@ -61,6 +65,7 @@ echo "    results_v6_prod/"
 echo "    results_v7_prod/"
 echo "    results_catboost_prod/"
 echo "    results_xgboost_prod/"
+echo "    results_mlp_prod/"
 echo ""
 echo "  run_trading.py will auto-detect and use these."
 echo "  To deploy: scp -r results_*_prod/ root@185.42.163.63:/home/trader/invest/"
