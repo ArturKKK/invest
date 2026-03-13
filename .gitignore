@@ -57,3 +57,11 @@ models_archive/
 _bench*
 _ab_*
 .commit_msg
+walkforward_sizing/
+benchmark_results/
+results_ridge_prod/
+_backfill_meta.py
+_close_all_positions.py
+_tune_ridge.py
+run_pipeline_ridge.py
+temp.md
