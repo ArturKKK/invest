@@ -168,8 +168,114 @@
           "size_mb": 4.7
         }
       },
-      "archive_path": "models_archive/gen_002_v2.0-fresh-data_20260313"
+      "archive_path": "models_archive/gen_002_v2.0-fresh-data_20260314"
+    },
+    {
+      "gen": 3,
+      "tag": "gen3-calendar",
+      "timestamp": "2026-03-14T05:06:36.114981",
+      "notes": "Gen#3: +9 calendar feats, +MLP(128,64,32), train→Feb01, val→Mar07",
+      "models": {
+        "results_v6_prod": {
+          "path": "results_v6_prod",
+          "exists": true,
+          "n_features": 165,
+          "has_calendar": true,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "lgb_model_seed_123.txt",
+            "lgb_model_seed_2024.txt",
+            "lgb_model_seed_42.txt",
+            "lgb_model_seed_456.txt",
+            "lgb_model_seed_789.txt"
+          ],
+          "model_date": "2026-03-14T05:06:24.730930",
+          "size_mb": 3.1
+        },
+        "results_v7_prod": {
+          "path": "results_v7_prod",
+          "exists": true,
+          "n_features": 159,
+          "has_calendar": true,
+          "has_derivatives": true,
+          "has_sentiment": false,
+          "train_end": "2026-02-01",
+          "val_end": "2026-03-07",
+          "train_rows": 2526168,
+          "trained_at": "2026-03-13T21:07:47.909004",
+          "n_models": 5,
+          "model_files": [
+            "lgb_model_seed_123.txt",
+            "lgb_model_seed_2024.txt",
+            "lgb_model_seed_42.txt",
+            "lgb_model_seed_456.txt",
+            "lgb_model_seed_789.txt"
+          ],
+          "model_date": "2026-03-14T05:06:24.757237",
+          "size_mb": 3.5
+        },
+        "results_catboost_prod": {
+          "path": "results_catboost_prod",
+          "exists": true,
+          "n_features": 167,
+          "has_calendar": true,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "cb_model_seed_123.cbm",
+            "cb_model_seed_2024.cbm",
+            "cb_model_seed_42.cbm",
+            "cb_model_seed_456.cbm",
+            "cb_model_seed_789.cbm"
+          ],
+          "model_date": "2026-03-14T05:06:24.533062",
+          "size_mb": 1.9
+        },
+        "results_xgboost_prod": {
+          "path": "results_xgboost_prod",
+          "exists": true,
+          "n_features": 188,
+          "has_calendar": true,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "xgb_model_seed_123.json",
+            "xgb_model_seed_2024.json",
+            "xgb_model_seed_42.json",
+            "xgb_model_seed_456.json",
+            "xgb_model_seed_789.json"
+          ],
+          "model_date": "2026-03-14T05:06:24.874935",
+          "size_mb": 5.5
+        },
+        "results_mlp_prod": {
+          "path": "results_mlp_prod",
+          "exists": true,
+          "n_features": 177,
+          "has_calendar": true,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "train_end": "2026-02-01",
+          "val_end": "2026-03-07",
+          "train_rows": 2526204,
+          "trained_at": "2026-03-14T00:43:02.812768",
+          "n_models": 5,
+          "model_files": [
+            "mlp_model_seed_123.pt",
+            "mlp_model_seed_2024.pt",
+            "mlp_model_seed_42.pt",
+            "mlp_model_seed_456.pt",
+            "mlp_model_seed_789.pt"
+          ],
+          "model_date": "2026-03-14T05:06:24.643360",
+          "size_mb": 1.3
+        }
+      }
     }
   ],
-  "current_gen": 2
+  "current_gen": 3
 }
