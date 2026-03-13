@@ -122,6 +122,10 @@ REGIME_COLS = {
     'market_avg_funding', 'market_funding_skew',
     # v6: binary features that should NOT be ranked
     'is_asian_session',
+    # Calendar features (same for all coins at same timestamp)
+    'cal_hour_sin', 'cal_hour_cos', 'cal_dow_sin', 'cal_dow_cos',
+    'cal_is_us_session', 'cal_is_weekend',
+    'cal_days_to_monthly_expiry', 'cal_month_sin', 'cal_month_cos',
     # News sentiment (market-level, should NOT be ranked cross-sectionally)
     'market_news_count_24h', 'market_news_sentiment_24h',
     'news_sentiment_24h', 'news_sentiment_7d', 'news_sentiment_momentum',
@@ -302,6 +306,73 @@ def add_advanced_regime_features(df):
     if 'eth_close' in df.columns:
         df.drop(columns=['eth_close'], inplace=True, errors='ignore')
 
+    return df
+
+
+def add_calendar_features(df):
+    """
+    Add calendar/seasonality features.
+
+    Computed purely from timestamp — no external data needed.
+    All features are market-level (same for all coins) → go into REGIME_COLS.
+    Uses 'cal_' prefix to avoid collision with EXCLUDE_COLS entries.
+    """
+    print("   📅 Adding calendar features...")
+
+    ts = df['timestamp']
+    hour = ts.dt.hour
+    dow = ts.dt.dayofweek  # 0=Monday, 6=Sunday
+    dom = ts.dt.day
+    month = ts.dt.month
+
+    # Cyclical hour encoding (24h period)
+    df['cal_hour_sin'] = np.sin(2 * np.pi * hour / 24)
+    df['cal_hour_cos'] = np.cos(2 * np.pi * hour / 24)
+
+    # Cyclical day-of-week encoding (7d period)
+    df['cal_dow_sin'] = np.sin(2 * np.pi * dow / 7)
+    df['cal_dow_cos'] = np.cos(2 * np.pi * dow / 7)
+
+    # Cyclical month encoding (12m period)
+    df['cal_month_sin'] = np.sin(2 * np.pi * month / 12)
+    df['cal_month_cos'] = np.cos(2 * np.pi * month / 12)
+
+    # US session overlap (14:00-21:00 UTC = NYSE 9:30-16:00 + pre/post)
+    df['cal_is_us_session'] = ((hour >= 14) & (hour < 21)).astype(float)
+
+    # Weekend (Sat/Sun — lower liquidity, different vol regime)
+    df['cal_is_weekend'] = (dow >= 5).astype(float)
+
+    # Days to monthly options/futures expiry (last Friday of month)
+    # Approximation: distance to last day of month, clipped 0-30
+    from pandas.tseries.offsets import LastWeekOfMonth, Week
+    def _days_to_expiry(t):
+        """Days until last Friday of this month."""
+        # Last Friday = last weekday 4 in month
+        last_day = t + pd.offsets.MonthEnd(0)
+        # Walk back to Friday
+        last_friday = last_day
+        while last_friday.dayofweek != 4:  # 4 = Friday
+            last_friday -= pd.Timedelta(days=1)
+        delta = (last_friday - t).days
+        if delta < 0:
+            # Past expiry this month — count to next month's
+            next_month_end = t + pd.offsets.MonthEnd(1)
+            last_friday = next_month_end
+            while last_friday.dayofweek != 4:
+                last_friday -= pd.Timedelta(days=1)
+            delta = (last_friday - t).days
+        return delta
+
+    # Vectorized: compute per unique date, then map
+    unique_dates = ts.dt.normalize().unique()
+    expiry_map = {d: _days_to_expiry(d) for d in unique_dates}
+    df['cal_days_to_monthly_expiry'] = ts.dt.normalize().map(expiry_map).astype(float)
+    # Normalize to 0-1 range (max ~30 days)
+    df['cal_days_to_monthly_expiry'] = df['cal_days_to_monthly_expiry'] / 30.0
+
+    n_new = 9
+    print(f"   ✅ Added {n_new} calendar features")
     return df
 
 
@@ -1575,6 +1646,7 @@ def main():
         df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
+    df = add_calendar_features(df)
     df = add_sentiment_features(df, project_root, news_mode=args.news_mode)
     if not args.no_derivatives:
         df = add_derivatives_features(df, project_root)

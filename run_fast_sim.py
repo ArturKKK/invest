@@ -261,6 +261,7 @@ def main():
             add_multi_horizon_targets, add_cross_asset_features,
             add_advanced_regime_features,
             add_derivatives_features, add_sentiment_features,
+            add_calendar_features,
         )
         from run_trading import add_12h_features
         from run_pipeline_xgboost import add_news_interaction_features
@@ -279,21 +280,23 @@ def main():
                 df.drop(columns=_overlap_cols, inplace=True, errors='ignore')
                 print(f"   Dropped {len(_overlap_cols)} overlapping cols from build_features")
 
-            print("   Enriching features (full pipeline: cross-asset, regime, 12h, sentiment, derivatives)...")
+            print("   Enriching features (full pipeline: cross-asset, regime, 12h, calendar, sentiment, derivatives)...")
             df = add_multi_horizon_targets(df)
             df = add_cross_asset_features(df)
             df = add_advanced_regime_features(df)
             df = add_12h_features(df)
+            df = add_calendar_features(df)
             df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
             df = add_news_interaction_features(df)
         else:
             # Pre-built features parquet — enrich all
-            print("   Enriching features (cross-asset, regime, 12h+v7, sentiment, derivatives)...")
+            print("   Enriching features (cross-asset, regime, 12h+v7, calendar, sentiment, derivatives)...")
             df = add_multi_horizon_targets(df)
             df = add_cross_asset_features(df)
             df = add_advanced_regime_features(df)
             df = add_12h_features(df)
+            df = add_calendar_features(df)
             df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
             df = add_news_interaction_features(df)
@@ -355,11 +358,13 @@ def main():
             df.drop(columns=_overlap_cols, inplace=True, errors='ignore')
             print(f"   Dropped {len(_overlap_cols)} overlapping cols from build_features")
 
-        print("   🔧 Enriching: targets, cross-asset, regime, 12h, sentiment, derivatives...")
+        print("   🔧 Enriching: targets, cross-asset, regime, 12h, calendar, sentiment, derivatives...")
         df = add_multi_horizon_targets(df)
         df = add_cross_asset_features(df)
         df = add_advanced_regime_features(df)
         df = add_12h_features(df)
+        from run_pipeline_v6 import add_calendar_features as _acf
+        df = _acf(df)
         df = add_sentiment_features(df, root, news_mode='all')
         df = add_derivatives_features(df, root)
         from run_pipeline_xgboost import add_news_interaction_features as _anif
@@ -492,6 +497,58 @@ def main():
                     print("   ⚠️  xgboost not installed, skipping XGBoost models")
                 except Exception as e:
                     print(f"   ⚠️  XGBoost load failed: {e}")
+
+        # MLP ensemble member
+        mlp_dir = None
+        for _md in ["results/production/mlp", "results_mlp_prod", "results_mlp"]:
+            _p = os.path.join(root, _md)
+            if os.path.isdir(_p) and any(f.endswith('.pt') for f in os.listdir(_p)):
+                mlp_dir = _p; break
+        if mlp_dir:
+            try:
+                import torch as _torch
+                from run_pipeline_mlp import AlphaMLP
+                fn_path = os.path.join(mlp_dir, 'feature_names.json')
+                if os.path.exists(fn_path):
+                    with open(fn_path) as _f:
+                        mf_g = json.load(_f)
+                    _pt_files = sorted([f for f in os.listdir(mlp_dir) if f.endswith('.pt')])
+                    if _pt_files:
+                        _mlp_models = []
+                        for _pf in _pt_files:
+                            ckpt = _torch.load(os.path.join(mlp_dir, _pf),
+                                               map_location='cpu', weights_only=False)
+                            cfg = ckpt['config']
+                            hdims = cfg.get('hidden_dims', (256, 128, 64))
+                            if isinstance(hdims, list):
+                                hdims = tuple(hdims)
+                            m = AlphaMLP(input_dim=ckpt['input_dim'],
+                                         hidden_dims=hdims,
+                                         dropout=cfg.get('dropout', 0.3))
+                            m.load_state_dict(ckpt['model_state_dict'])
+                            m.eval()
+                            _mlp_models.append(m)
+                        n_missing = sum(1 for c in mf_g if c not in df.columns)
+                        for c in [c for c in mf_g if c not in df.columns]:
+                            df[c] = 0.0
+                        class _MlpWrapper:
+                            def __init__(self, model, feat_names):
+                                self._m = model
+                                self._fn = feat_names
+                            def predict(self, X):
+                                import torch as __torch
+                                with __torch.no_grad():
+                                    t = __torch.FloatTensor(X)
+                                    return self._m(t).numpy()
+                        ms_wrapped = [_MlpWrapper(m, mf_g) for m in _mlp_models]
+                        model_groups.append((ms_wrapped, mf_g))
+                        model_group_labels.append('mlp')
+                        warn = f" ⚠️ {n_missing} features zero-filled" if n_missing > 3 else ""
+                        print(f"   mlp: {len(_mlp_models)} MLP models, {len(mf_g)} feats{warn}")
+            except ImportError:
+                print("   ⚠️  torch not installed, skipping MLP models")
+            except Exception as e:
+                print(f"   ⚠️  MLP load failed: {e}")
 
         if not model_groups:
             print("❌ no models for ensemble"); return

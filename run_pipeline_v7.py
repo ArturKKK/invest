@@ -119,6 +119,10 @@ REGIME_COLS = {
     'market_avg_funding', 'market_funding_skew',
     # v6: binary features that should NOT be ranked
     'is_asian_session',
+    # Calendar features (same for all coins at same timestamp)
+    'cal_hour_sin', 'cal_hour_cos', 'cal_dow_sin', 'cal_dow_cos',
+    'cal_is_us_session', 'cal_is_weekend',
+    'cal_days_to_monthly_expiry', 'cal_month_sin', 'cal_month_cos',
 }
 
 # Cost model for perpetual swaps — v7 (12h rebalance)
@@ -1143,6 +1147,8 @@ def main():
         df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
+    from run_pipeline_v6 import add_calendar_features
+    df = add_calendar_features(df)
     df = add_sentiment_features(df, project_root)
     if not args.no_derivatives:
         df = add_derivatives_features(df, project_root)

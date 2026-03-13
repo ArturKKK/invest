@@ -108,6 +108,10 @@ UNRANKED_COLS = {
     'market_avg_funding', 'market_funding_skew',
     # v6: binary features that should NOT be ranked
     'is_asian_session',
+    # Calendar features (same for all coins at same timestamp)
+    'cal_hour_sin', 'cal_hour_cos', 'cal_dow_sin', 'cal_dow_cos',
+    'cal_is_us_session', 'cal_is_weekend',
+    'cal_days_to_monthly_expiry', 'cal_month_sin', 'cal_month_cos',
     # News sentiment (market-level, should NOT be ranked cross-sectionally)
     'market_news_count_24h', 'market_news_sentiment_24h',
     'news_sentiment_24h', 'news_sentiment_7d', 'news_sentiment_momentum',
@@ -125,11 +129,15 @@ DEFAULT_RISK = {
     'n_short': 10,
     'vol_target': 0.008,
     'vol_lookback': 48,
-    'kelly_frac': 0.3,
+    'kelly_frac': 0.8,
     'dd_stop': -0.15,
     'dd_resume': -0.06,
     'confidence_threshold': 0.0,
 }
+
+# ── Partial rebalance settings ──
+REBALANCE_THRESHOLD = 0.12  # 12% — don't resize if |target-live|/target < this
+LIMIT_ORDER_WAIT = 5        # seconds to wait for limit fill before market fallback
 
 
 # ============================================================
@@ -631,6 +639,58 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
         except Exception as e:
             print(f"   ⚠️  XGBoost load failed: {e}")
 
+    # MLP
+    mlp_dir = None
+    for _md in ["results/production/mlp", "results_mlp_prod", "results_mlp"]:
+        _p = os.path.join(root, _md)
+        if os.path.isdir(_p) and any(f.endswith('.pt') for f in os.listdir(_p)):
+            mlp_dir = _p; break
+    if mlp_dir:
+        try:
+            import torch as _torch
+            from run_pipeline_mlp import AlphaMLP
+            fn_path = os.path.join(mlp_dir, 'feature_names.json')
+            if os.path.exists(fn_path):
+                with open(fn_path) as _f:
+                    mf_g = json.load(_f)
+                _pt_files = sorted([f for f in os.listdir(mlp_dir) if f.endswith('.pt')])
+                if _pt_files:
+                    _mlp_models = []
+                    for _pf in _pt_files:
+                        ckpt = _torch.load(os.path.join(mlp_dir, _pf),
+                                           map_location='cpu', weights_only=False)
+                        cfg = ckpt['config']
+                        hdims = cfg.get('hidden_dims', (256, 128, 64))
+                        if isinstance(hdims, list):
+                            hdims = tuple(hdims)
+                        m = AlphaMLP(input_dim=ckpt['input_dim'],
+                                     hidden_dims=hdims,
+                                     dropout=cfg.get('dropout', 0.3))
+                        m.load_state_dict(ckpt['model_state_dict'])
+                        m.eval()
+                        _mlp_models.append(m)
+                    n_missing = sum(1 for c in mf_g if c not in latest.columns)
+                    for c in [c for c in mf_g if c not in latest.columns]:
+                        latest[c] = 0.0
+                    class _MlpWrapper:
+                        def __init__(self, model, feat_names):
+                            self._m = model
+                            self._fn = feat_names
+                        def predict(self, X):
+                            import torch as __torch
+                            with __torch.no_grad():
+                                t = __torch.FloatTensor(X)
+                                return self._m(t).numpy()
+                    ms_wrapped = [_MlpWrapper(m, mf_g) for m in _mlp_models]
+                    model_groups.append((ms_wrapped, mf_g))
+                    model_group_labels.append('mlp')
+                    warn = f" ⚠️ {n_missing} zero-filled" if n_missing > 3 else ""
+                    print(f"   mlp: {len(_mlp_models)} MLP, {len(mf_g)} feats{warn}")
+        except ImportError:
+            print("   ⚠️  torch not installed, skipping MLP")
+        except Exception as e:
+            print(f"   ⚠️  MLP load failed: {e}")
+
     if not model_groups:
         print("   ❌ No production models found")
         return None
@@ -753,8 +813,16 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
         arch_parts.append("deriv-gate")
     print(f"   🏗️  Architecture: {' + '.join(arch_parts)}")
 
-    return latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
+    # Build model info for dashboard
+    group_counts = {}
+    for i, (ms, _) in enumerate(model_groups):
+        group_counts[model_group_labels[i]] = len(ms)
+    model_info = {'n_models': n_models, 'groups': group_counts}
+
+    result = latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
         'score', ascending=False).reset_index(drop=True)
+    result.attrs['model_info'] = model_info
+    return result
 
 
 # ============================================================
@@ -1112,6 +1180,352 @@ def execute(exchange, positions, dry_run=True, leverage=1):
 
 
 # ============================================================
+# PARTIAL REBALANCE + LIMIT ORDERS
+# ============================================================
+
+def _convert_usd_to_contracts(exchange, markets, okx_sym, usd_amount):
+    """Convert USD notional to contracts. Returns (contracts, ticker_info)."""
+    market = None
+    for sym, m in markets.items():
+        if m.get('id') == okx_sym:
+            market = m
+            break
+    if not market:
+        return usd_amount, None
+
+    ct_val = float(market.get('contractSize', 1))
+    try:
+        ticker = exchange.fetch_ticker(market['symbol'])
+        price = ticker['last']
+        bid = ticker.get('bid', price)
+        ask = ticker.get('ask', price)
+    except Exception:
+        return usd_amount, None
+
+    if price <= 0 or ct_val <= 0:
+        return usd_amount, None
+
+    contracts = usd_amount / (ct_val * price)
+    precision = market.get('precision', {}).get('amount', 0)
+    if isinstance(precision, (int, float)) and precision > 0:
+        contracts = round(int(contracts / precision) * precision, 10)
+    else:
+        contracts = int(contracts)
+    contracts = max(contracts, precision if isinstance(precision, (int, float)) else 1)
+    return contracts, {'last': price, 'bid': bid, 'ask': ask}
+
+
+def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
+                         params, use_limit=True, timeout=LIMIT_ORDER_WAIT):
+    """Place limit order at bid/ask for maker fee; fall back to market if not filled."""
+    import time as _time
+
+    if not use_limit or ticker_info is None:
+        return exchange.create_order(symbol=symbol, type='market', side=side,
+                                     amount=amount, params=params)
+
+    # Limit price: bid for buys (sit on book), ask for sells
+    limit_price = ticker_info['bid'] if side == 'buy' else ticker_info['ask']
+    if not limit_price or limit_price <= 0:
+        return exchange.create_order(symbol=symbol, type='market', side=side,
+                                     amount=amount, params=params)
+
+    try:
+        order = exchange.create_order(
+            symbol=symbol, type='limit', side=side,
+            amount=amount, price=limit_price, params=params
+        )
+        order_id = order['id']
+
+        # Poll for fill
+        start = _time.time()
+        while _time.time() - start < timeout:
+            _time.sleep(1.5)
+            try:
+                check = exchange.fetch_order(order_id, symbol)
+                if check['status'] == 'closed':  # filled
+                    return check
+                if check['status'] == 'canceled':
+                    break
+            except Exception:
+                pass
+
+        # Cancel unfilled order
+        try:
+            exchange.cancel_order(order_id, symbol)
+        except Exception:
+            pass
+
+        # Check final state (may have filled or partially filled during cancel)
+        filled_amount = 0
+        try:
+            check = exchange.fetch_order(order_id, symbol)
+            if check['status'] == 'closed':
+                return check
+            filled_amount = float(check.get('filled', 0))
+        except Exception:
+            pass
+
+        # Market fallback for remaining amount only
+        remaining = amount - filled_amount
+        if remaining <= 0:
+            # Fully filled during cancel race
+            return check
+        print(f"         ⏩ Limit {'partially ' if filled_amount > 0 else ''}filled for {symbol}"
+              f" ({filled_amount}/{amount}), market for remaining {remaining}")
+        return exchange.create_order(symbol=symbol, type='market', side=side,
+                                     amount=remaining, params=params)
+    except Exception:
+        # Limit order placement failed — market fallback
+        return exchange.create_order(symbol=symbol, type='market', side=side,
+                                     amount=amount, params=params)
+
+
+def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
+                        use_limit=True):
+    """
+    Partial rebalance: diff live vs target, execute minimal changes.
+
+    Returns (results, actions) where:
+      results: list of execution dicts
+      actions: dict with 'closed', 'kept', 'resized', 'opened' sets
+               and 'pnl_snapshot' dict of {(symbol, side): upnl}
+    """
+    import time as _time
+    results = []
+    actions = {
+        'closed': set(), 'kept': set(), 'resized': set(), 'opened': set(),
+        'pnl_snapshot': {},
+    }
+
+    if dry_run or not exchange:
+        for pos in target_positions:
+            okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'])
+            if not okx_sym:
+                continue
+            side = 'buy' if pos['side'] == 'long' else 'sell'
+            print(f"      [DRY] {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
+                  f"(score: {pos['score']:+.3f})")
+            results.append({**pos, 'status': 'dry_run'})
+        return results, actions
+
+    # ── 1. Load markets & fetch live positions ──
+    try:
+        exchange.load_markets()
+    except Exception as e:
+        print(f"      ⚠️  load_markets: {e}")
+    markets = exchange.markets
+
+    live_map = {}  # (our_symbol, side) -> {notional, contracts, upnl}
+    pnl_snapshot = {}  # (clean_symbol, side) -> upnl  (for dashboard)
+    try:
+        live_positions = exchange.fetch_positions()
+        for p in live_positions:
+            if float(p.get('contracts', 0)) > 0:
+                our_sym = p['symbol'].replace('/USDT:USDT', '/USDT')
+                key = (our_sym, p['side'])
+                live_map[key] = {
+                    'notional': abs(float(p.get('notional', 0))),
+                    'contracts': float(p.get('contracts', 0)),
+                    'upnl': float(p.get('unrealizedPnl', 0)),
+                }
+                sym_clean = our_sym.replace('/USDT', '')
+                pnl_snapshot[(sym_clean, p['side'])] = float(p.get('unrealizedPnl', 0))
+    except Exception as e:
+        print(f"      ⚠️  Fetch positions failed: {e}")
+        print(f"      ⚠️  Falling back to full close → open")
+        close_all(exchange)
+        total_usd = sum(p['usd'] for p in target_positions)
+        wait_for_margin(exchange, total_usd / leverage)
+        results = execute(exchange, target_positions, dry_run=False, leverage=leverage)
+        actions['opened'] = {(p['symbol'], p['side']) for p in target_positions}
+        return results, actions
+
+    actions['pnl_snapshot'] = pnl_snapshot
+
+    # ── 2. Build target map ──
+    target_map = {}
+    for pos in target_positions:
+        key = (pos['symbol'], pos['side'])
+        target_map[key] = pos
+
+    # ── 3. Classify positions ──
+    to_close = []    # (key, live_info)
+    to_resize = []   # (key, live_info, target_pos, delta_usd)
+    to_open = []     # target_pos
+    kept = []        # key
+
+    for key, live_info in live_map.items():
+        if key in target_map:
+            target_usd = target_map[key]['usd']
+            live_not = live_info['notional']
+            diff_pct = abs(target_usd - live_not) / target_usd if target_usd > 5 else 1.0
+            if diff_pct > REBALANCE_THRESHOLD:
+                delta_usd = target_usd - live_not
+                to_resize.append((key, live_info, target_map[key], delta_usd))
+                print(f"      🔄 RESIZE {key[0]:<12s} {key[1]:<5s}: "
+                      f"${live_not:>7.0f} → ${target_usd:>7.0f} ({diff_pct:>5.0%})")
+            else:
+                kept.append(key)
+                print(f"      ✊ KEEP   {key[0]:<12s} {key[1]:<5s}: "
+                      f"${live_not:>7.0f} ≈ ${target_usd:>7.0f} ({diff_pct:>5.0%})")
+        else:
+            to_close.append((key, live_info))
+            print(f"      🗑️  CLOSE  {key[0]:<12s} {key[1]:<5s}: ${live_info['notional']:>7.0f}")
+
+    for key, pos in target_map.items():
+        if key not in live_map:
+            to_open.append(pos)
+            print(f"      🆕 OPEN   {key[0]:<12s} {key[1]:<5s}: ${pos['usd']:>7.0f}")
+
+    # Summary
+    n_orders = len(to_close) + len(to_resize) + len(to_open)
+    n_orders_old = len(live_map) + len(target_map)
+    savings_pct = (1 - n_orders / max(n_orders_old, 1)) * 100
+    print(f"\n      📊 Rebalance: {len(kept)} keep, {len(to_resize)} resize, "
+          f"{len(to_close)} close, {len(to_open)} open")
+    print(f"      💰 Orders: {n_orders} vs {n_orders_old} full rebalance "
+          f"(saved {savings_pct:.0f}%)")
+
+    actions['kept'] = set(kept)
+
+    # ── 4. Close removed positions ──
+    if to_close:
+        print(f"\n      📤 Closing {len(to_close)} removed positions...")
+    for key, live_info in to_close:
+        sym, side = key
+        close_side = 'sell' if side == 'long' else 'buy'
+        okx_sym = SYMBOLS_TO_OKX.get(sym)
+        if not okx_sym:
+            continue
+        try:
+            _, ticker_info = _convert_usd_to_contracts(exchange, markets, okx_sym, 0)
+            order = _limit_with_fallback(
+                exchange, okx_sym, close_side, live_info['contracts'], ticker_info,
+                params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True},
+                use_limit=use_limit
+            )
+            print(f"      ✅ Closed {side} {sym} → {order.get('id', '?')}")
+            actions['closed'].add(key)
+            results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
+                            'status': 'closed', 'order_id': order.get('id')})
+        except Exception as e:
+            print(f"      ⚠️  Close {sym}: {str(e)[:120]}")
+            results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
+                            'status': 'error', 'error': str(e)})
+
+    # ── 5. Wait for margin if we freed some and need to open/resize ──
+    if to_close and (to_open or any(d > 0 for _, _, _, d in to_resize)):
+        need_usd = sum(pos['usd'] for pos in to_open) / leverage
+        need_usd += sum(max(d, 0) for _, _, _, d in to_resize) / leverage
+        if need_usd > 0:
+            wait_for_margin(exchange, need_usd)
+
+    # ── 6. Resize positions ──
+    if to_resize:
+        print(f"\n      🔄 Resizing {len(to_resize)} positions...")
+    for key, live_info, target_pos, delta_usd in to_resize:
+        sym, side = key
+        okx_sym = SYMBOLS_TO_OKX.get(sym)
+        if not okx_sym:
+            continue
+        try:
+            abs_delta = abs(delta_usd)
+            contracts_delta, ticker_info = _convert_usd_to_contracts(
+                exchange, markets, okx_sym, abs_delta)
+            if contracts_delta == 0 or contracts_delta is None:
+                print(f"      ⏭️  Skip resize {sym}: delta too small")
+                actions['kept'].add(key)
+                continue
+            if delta_usd > 0:
+                order_side = 'buy' if side == 'long' else 'sell'
+                params = {'tdMode': 'isolated', 'posSide': 'net'}
+                tag = '↑'
+            else:
+                order_side = 'sell' if side == 'long' else 'buy'
+                params = {'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True}
+                tag = '↓'
+            order = _limit_with_fallback(
+                exchange, okx_sym, order_side, contracts_delta, ticker_info,
+                params=params, use_limit=use_limit
+            )
+            print(f"      ✅ {tag} {side} {sym}: ${abs_delta:.0f} ({contracts_delta} cts) → {order.get('id', '?')}")
+            actions['resized'].add(key)
+            results.append({**target_pos, 'status': 'resized', 'order_id': order.get('id')})
+        except Exception as e:
+            print(f"      ⚠️  Resize {sym}: {str(e)[:120]}")
+            results.append({**target_pos, 'status': 'error', 'error': str(e)})
+
+    # ── 7. Open new positions (with retry sweeps) ──
+    if to_open:
+        print(f"\n      📥 Opening {len(to_open)} new positions...")
+    failed = []
+    for pos in to_open:
+        okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'])
+        if not okx_sym:
+            continue
+        order_side = 'buy' if pos['side'] == 'long' else 'sell'
+        try:
+            exchange.set_leverage(leverage, okx_sym, params={'mgnMode': 'isolated'})
+        except Exception:
+            pass
+        try:
+            contracts, ticker_info = _convert_usd_to_contracts(
+                exchange, markets, okx_sym, pos['usd'])
+            order = _limit_with_fallback(
+                exchange, okx_sym, order_side, contracts, ticker_info,
+                params={'tdMode': 'isolated', 'posSide': 'net'},
+                use_limit=use_limit
+            )
+            print(f"      ✅ {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
+                  f"({contracts} cts) → {order.get('id', '?')}")
+            actions['opened'].add((pos['symbol'], pos['side']))
+            results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+        except Exception as e:
+            if '51008' in str(e):
+                failed.append(pos)
+            else:
+                print(f"      ❌ {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {e}")
+                results.append({**pos, 'status': 'error', 'error': str(e)})
+
+    # Retry sweeps for margin (51008)
+    for sweep in range(2):
+        if not failed:
+            break
+        print(f"      ⏳ {len(failed)} orders need margin — waiting 10s (sweep {sweep + 1})...")
+        _time.sleep(10)
+        still_failed = []
+        for pos in failed:
+            okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'])
+            order_side = 'buy' if pos['side'] == 'long' else 'sell'
+            try:
+                contracts, ticker_info = _convert_usd_to_contracts(
+                    exchange, markets, okx_sym, pos['usd'])
+                order = _limit_with_fallback(
+                    exchange, okx_sym, order_side, contracts, ticker_info,
+                    params={'tdMode': 'isolated', 'posSide': 'net'},
+                    use_limit=use_limit
+                )
+                print(f"      🔄 {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {order.get('id', '?')}")
+                actions['opened'].add((pos['symbol'], pos['side']))
+                results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+            except Exception as e:
+                if '51008' in str(e):
+                    still_failed.append(pos)
+                else:
+                    print(f"      ❌ {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {e}")
+                    results.append({**pos, 'status': 'error', 'error': str(e)})
+        failed = still_failed
+
+    for pos in failed:
+        okx_sym = SYMBOLS_TO_OKX.get(pos['symbol'], pos['symbol'])
+        print(f"      ❌ ${pos['usd']:>7.0f} {okx_sym} → insufficient balance after retries")
+        results.append({**pos, 'status': 'error', 'error': '51008 after retries'})
+
+    return results, actions
+
+
+# ============================================================
 # STATE MANAGEMENT
 # ============================================================
 
@@ -1137,6 +1551,15 @@ def update_dashboard(exchange, positions, signals, state, results, root,
     dashboard_dir = os.path.join(root, 'dashboard', 'data')
     os.makedirs(dashboard_dir, exist_ok=True)
     now = datetime.now(timezone.utc)
+
+    # ── Model info from signals ──
+    model_info = None
+    if signals is not None and hasattr(signals, 'attrs'):
+        model_info = signals.attrs.get('model_info')
+    if model_info:
+        state['model_info'] = model_info
+    else:
+        model_info = state.get('model_info')
 
     # Fetch live positions & balance from exchange
     live_positions = []
@@ -1186,6 +1609,18 @@ def update_dashboard(exchange, positions, signals, state, results, root,
                 pos['score'] = round(float(score_map[sym][0]), 4)
                 pos['confidence'] = round(float(score_map[sym][1]), 3) if pd.notna(score_map[sym][1]) else 0
 
+    # ── Detect closed trades in real-time ──
+    # Compare open dash_trades against live exchange positions
+    dash_trades = state.get('dash_trades', [])
+    live_syms = {(p['symbol'], p['side']) for p in live_positions}
+    for t in dash_trades:
+        if t.get('closed') is None and (t['symbol'], t['side']) not in live_syms:
+            # Position no longer exists on exchange — mark as closed
+            # Try to get PnL from the trade's last known state
+            t['closed'] = now.isoformat()
+            # PnL stays 0 if we can't determine it (already snapshotted at cycle start)
+    state['dash_trades'] = dash_trades
+
     # Build signals list for dashboard
     dash_signals = []
     if signals is not None:
@@ -1226,13 +1661,24 @@ def update_dashboard(exchange, positions, signals, state, results, root,
     dash_trades = dash_trades[-100:]
     state['dash_trades'] = dash_trades
 
-    # Win rate from cycle PnLs
-    cycle_pnls = state.get('cycle_pnls', [])
-    n_wins = sum(1 for p in cycle_pnls if p > 0)
-    win_rate = n_wins / len(cycle_pnls) if cycle_pnls else 0
+    # Win rate from closed trades (actual realized PnL per trade)
+    closed_trades = [t for t in dash_trades if t.get('closed') is not None and t.get('pnl', 0) != 0]
+    n_wins = sum(1 for t in closed_trades if t['pnl'] > 0)
+    win_rate = n_wins / len(closed_trades) if closed_trades else 0
     max_dd = min((e.get('dd_pct', 0) for e in eq_history), default=0)
 
-    n_models = 20  # max: 5 v6 + 5 v7 + 5 CB + 5 XGB (XGB optional)
+    # Build models string from actual loaded groups
+    if model_info:
+        n_models = model_info['n_models']
+        parts = []
+        label_map = {'v6': 'LGB v6', 'v7': 'LGB v7', 'cb': 'CB', 'xgb': 'XGB'}
+        for lbl, cnt in model_info['groups'].items():
+            parts.append(f'{label_map.get(lbl, lbl)}×{cnt}')
+        models_str = f"{n_models} ({' + '.join(parts)})"
+    else:
+        n_models = 20
+        models_str = f'{n_models} (LGB v6×5 + v7×5 + CB×5 + XGB×5)'
+
     dashboard_data = {
         'updated': now.isoformat(),
         'mode': mode,
@@ -1249,10 +1695,10 @@ def update_dashboard(exchange, positions, signals, state, results, root,
         'trades': dash_trades[-30:],
         'signals': dash_signals,
         'equity_history': eq_history,
-        'models': f'{n_models} (LGB v6×5 + v7×5 + CB×5 + XGB×5 if avail)',
+        'models': models_str,
         'rebal_hours': HORIZON,
         'min_score': 0,
-        'edge_boost': False,
+        'edge_boost': True,
         'cycle': state.get('n_cycles', 0),
         'next_rebal': next_rebal_str,
     }
@@ -1377,6 +1823,8 @@ def main():
         df = add_cross_asset_features(df)
         df = add_advanced_regime_features(df)
         df = add_12h_features(df)
+        from run_pipeline_v6 import add_calendar_features
+        df = add_calendar_features(df)
         df = add_sentiment_features(df, root, news_mode='all')
 
         # Patch derivatives parquet with real-time data before feature build
@@ -1446,50 +1894,43 @@ def main():
                 print(f"   {pos['symbol']:<15} {pos['side']:<6} ${pos['usd']:>7.0f} "
                       f"{pos['score']:>+8.3f}")
 
-        # 6. Execute
+        # 6. Execute (partial rebalance + limit orders)
         if args.mode == 'signal' or not positions:
             results = execute(None, positions, dry_run=True, leverage=risk_cfg['leverage'])
         else:
-            # Snapshot UPnL before closing — update dash_trades with realized PnL
+            print(f"\n🔄 Partial rebalance (threshold={REBALANCE_THRESHOLD:.0%})...")
+            results, actions = rebalance_positions(
+                exchange, positions, leverage=risk_cfg['leverage'],
+                dry_run=False, use_limit=True
+            )
+
+            # PnL snapshot was captured inside rebalance_positions
+            pnl_snapshot = actions.get('pnl_snapshot', {})
+
+            # Record cycle PnL as DELTA vs previous snapshot (not cumulative UPnL)
+            if pnl_snapshot:
+                current_total = sum(pnl_snapshot.values())
+                prev_total = state.get('prev_upnl_total', 0)
+                cycle_delta = current_total - prev_total
+                state['prev_upnl_total'] = round(current_total, 4)
+
+                cycle_pnls = state.get('cycle_pnls', [])
+                cycle_pnls.append(round(cycle_delta, 2))
+                cycle_pnls = cycle_pnls[-200:]
+                state['cycle_pnls'] = cycle_pnls
+                print(f"   📊 Cycle PnL: ${cycle_delta:+.2f} (UPnL total: ${current_total:+.2f}, "
+                      f"win rate: {sum(1 for p in cycle_pnls if p > 0)}/{len(cycle_pnls)})")
+
+            # Mark only closed positions in dash_trades
             dash_trades = state.get('dash_trades', [])
-            if exchange and dash_trades:
-                try:
-                    live_pos = exchange.fetch_positions()
-                    pnl_map = {}  # symbol -> {side, upnl}
-                    for p in live_pos:
-                        if float(p.get('contracts', 0)) > 0:
-                            sym = p['symbol'].replace('/USDT:USDT', '')
-                            pnl_map[sym] = {
-                                'side': p['side'],
-                                'upnl': float(p.get('unrealizedPnl', 0)),
-                            }
-                    # Mark matching open trades as closed
-                    for t in dash_trades:
-                        if t.get('closed') is None and t['symbol'] in pnl_map:
-                            info = pnl_map[t['symbol']]
-                            if t['side'] == info['side']:
-                                t['pnl'] = round(info['upnl'], 2)
-                                t['closed'] = now.isoformat()
-                    state['dash_trades'] = dash_trades
-                    # Record cycle PnL for win-rate calculation
-                    cycle_total = sum(info['upnl'] for info in pnl_map.values())
-                    cycle_pnls = state.get('cycle_pnls', [])
-                    cycle_pnls.append(round(cycle_total, 2))
-                    cycle_pnls = cycle_pnls[-200:]  # keep last 200 cycles
-                    state['cycle_pnls'] = cycle_pnls
-                    print(f"   📊 Cycle PnL: ${cycle_total:+.2f} (win rate: {sum(1 for p in cycle_pnls if p > 0)}/{len(cycle_pnls)})")
-                except Exception as e:
-                    print(f"   ⚠️  PnL snapshot: {e}")
-
-            print(f"\n📤 Closing existing positions...")
-            close_all(exchange)
-
-            # Wait for margin to be freed before opening new positions
-            total_usd = sum(p['usd'] for p in positions)
-            wait_for_margin(exchange, total_usd / risk_cfg['leverage'])
-
-            print(f"\n📥 Opening new positions...")
-            results = execute(exchange, positions, dry_run=False, leverage=risk_cfg['leverage'])
+            closed_keys = {(s.replace('/USDT', ''), side)
+                           for s, side in actions.get('closed', set())}
+            for t in dash_trades:
+                key = (t['symbol'], t['side'])
+                if t.get('closed') is None and key in closed_keys:
+                    t['pnl'] = round(pnl_snapshot.get(key, 0), 2)
+                    t['closed'] = now.isoformat()
+            state['dash_trades'] = dash_trades
 
         # 7. Log
         log = {
@@ -1507,7 +1948,6 @@ def main():
         with open(log_path, 'w') as f:
             json.dump(log, f, indent=2, default=str)
 
-        save_state(state, state_path)
         print(f"\n   📝 Log: {os.path.basename(log_path)}")
 
         # 8. Telegram alerts
@@ -1518,12 +1958,16 @@ def main():
         except Exception as e:
             print(f"   ⚠️  Telegram alert error: {e}")
 
-        # 9. Dashboard update
+        # 9. Dashboard update (modifies state['dash_trades'] etc.)
         try:
             update_dashboard(exchange, positions, signals, state, results, root,
                              args.capital, risk_cfg['leverage'], args.mode)
         except Exception as e:
             print(f"   ⚠️  Dashboard update error: {e}")
+
+        # 10. Persist state AFTER dashboard so dash_trades are saved
+        state['n_cycles'] = state.get('n_cycles', 0) + 1
+        save_state(state, state_path)
 
     # Run
     last_signals = None
