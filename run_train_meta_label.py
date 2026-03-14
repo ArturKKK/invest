@@ -370,8 +370,9 @@ def main():
     rebal_timestamps = rebal_timestamps[::REBAL_H]
     print(f"   {len(rebal_timestamps)} rebalance timestamps ({REBAL_H}h intervals)")
 
+    # All costs in notional-return terms (leverage cancels: L*ret vs L*cost)
     cost_roundtrip = args.cost_bps / 10000  # e.g. 8bps = 0.0008
-    funding_per_step = FUNDING_PER_8H * (REBAL_H / 8.0) * args.leverage
+    funding_per_step = FUNDING_PER_8H * (REBAL_H / 8.0)  # 0.00015 per 12h step
 
     meta_rows = []
     for ti, ts in enumerate(rebal_timestamps):
@@ -404,9 +405,10 @@ def main():
 
             signed_ret = direction * raw_ret
 
-            # Net return after costs (round-trip entry+exit + funding)
-            # signed_ret is unlevered coin return; scale by leverage for PnL on capital
-            net_ret = signed_ret * args.leverage - cost_roundtrip - funding_per_step
+            # Net return after costs (all in notional-return terms)
+            # Leverage cancels: notional*ret vs notional*cost → sign test independent of L
+            # Break-even: ret > cost_roundtrip + funding = 9.5 bps (matches run_fast_sim.py)
+            net_ret = signed_ret - cost_roundtrip - funding_per_step
 
             # Binary target: 1 if profitable, 0 if not
             y_label = 1 if net_ret > 0 else 0
