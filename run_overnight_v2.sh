@@ -180,6 +180,8 @@ python run_train_meta_label.py \
   --cost-bps 8 \
   --leverage 3 \
   --train-end $TRAIN_END \
+  --oos-start 2026-02-01 \
+  --meta-split 2026-02-18 \
   --output-dir $RESULTS_DIR/meta_label \
   2>&1 | tee $RESULTS_DIR/exp_c1_meta_label_train.log
 

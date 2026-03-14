@@ -292,11 +292,11 @@ def main():
     parser.add_argument('--sweep', action='store_true',
                         help='Sweep thresholds 0.50-0.70 and report results')
     parser.add_argument('--train-end', type=str, default='2026-02-01',
-                        help='L0 models train cutoff (default: 2026-02-01)')
-    parser.add_argument('--oos-start', type=str, default='2025-12-09',
-                        help='OOS start date for meta-label (after L0 train + purge)')
-    parser.add_argument('--meta-split', type=str, default='2026-02-01',
-                        help='Meta train/test split date')
+                        help='L0 models train cutoff — also used as default oos-start')
+    parser.add_argument('--oos-start', type=str, default=None,
+                        help='OOS start date for meta-label (default: same as --train-end to avoid leakage)')
+    parser.add_argument('--meta-split', type=str, default=None,
+                        help='Meta train/test split date (default: midpoint of OOS window)')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Output directory (default: results/meta_label)')
     args = parser.parse_args()
@@ -345,6 +345,9 @@ def main():
     print(f"   Enriched: {df.shape}")
 
     # ── 3. Filter to OOS period ──
+    # Default oos_start = train_end (no in-sample L0 predictions → no leakage)
+    if args.oos_start is None:
+        args.oos_start = args.train_end
     oos_start = pd.Timestamp(args.oos_start, tz='UTC')
     df = df[df['timestamp'] >= oos_start].copy()
     print(f"\n🔪 OOS period: {df['timestamp'].min()} → {df['timestamp'].max()}")
@@ -402,7 +405,8 @@ def main():
             signed_ret = direction * raw_ret
 
             # Net return after costs (round-trip entry+exit + funding)
-            net_ret = signed_ret - cost_roundtrip - funding_per_step
+            # signed_ret is unlevered coin return; scale by leverage for PnL on capital
+            net_ret = signed_ret * args.leverage - cost_roundtrip - funding_per_step
 
             # Binary target: 1 if profitable, 0 if not
             y_label = 1 if net_ret > 0 else 0
@@ -430,6 +434,11 @@ def main():
     print(f"   Positive trades: {meta_df['y_label'].sum():,} / {len(meta_df):,}")
 
     # ── 6. Train/test split ──
+    # Default meta_split = midpoint of OOS window
+    if args.meta_split is None:
+        ts_range = df['timestamp'].agg(['min', 'max'])
+        args.meta_split = str((ts_range['min'] + (ts_range['max'] - ts_range['min']) / 2).date())
+        print(f"   Auto meta-split: {args.meta_split}")
     cutoff = pd.Timestamp(args.meta_split, tz='UTC')
     meta_train = meta_df[meta_df['timestamp'] < cutoff].copy()
     meta_test = meta_df[meta_df['timestamp'] >= cutoff].copy()
