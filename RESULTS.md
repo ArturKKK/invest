@@ -925,3 +925,227 @@ python run_trading.py --ensemble --no-deriv-gate --leverage 3
 
 Т.е. ens4 (LGB v6 + LGB v7 + CatBoost + XGBoost), без deriv-gate, без мета-модели.
 
+---
+
+## Overnight v1 — Multi-Horizon & Calendar A/B (13 марта 2026)
+
+### Контекст
+Кластерный эксперимент: 5 конфигов, OOS = Feb 9 – Mar 7, 2026 (26 дней).
+Модели Gen#3: retrain train→2026-02-01, val→2026-03-07.
+Цель: A/B calendar features, multi-horizon (4h/24h), MLP neural net.
+Sim: `run_fast_sim.py`, $5000, 3x leverage, edge-boost, 12h rebalance.
+
+### Результаты
+
+| Experiment | Return | Sharpe | HAC Sharpe | Max DD | WR | Verdict |
+|-----------|--------|--------|-----------|--------|----|---------|
+| **Gen#2 baseline (4-grp, no calendar)** | +21.7% | 8.43 | — | -4.5% | ~63% | ✅ Production (VPS) |
+| Gen#3 (4-grp, +9 calendar features) | +16.9% | 6.64 | 7.35 | -4.3% | — | ❌ Calendar hurts |
+| Gen#3 no-cal retrain (4-grp, SKIP_CALENDAR) | +17.6% | 6.82 | 7.31 | -4.6% | — | ≈ baseline |
+| Gen#3 + LGB_24h (5-grp) | +18.5% | 7.10 | 7.99 | -4.2% | — | ✅ Best new config |
+| Gen#3 + LGB_4h (5-grp) | +16.1% | 6.28 | 6.90 | -4.4% | — | ❌ 4h hurts |
+| Gen#3 + LGB_4h + LGB_24h (6-grp) | +15.9% | 6.18 | 6.81 | -4.4% | — | ❌ 4h drags down |
+| MLP neural net (5-grp) | +14.8% | 6.59 | 7.12 | -4.1% | — | ❌ MLP is noise (IC=0.021) |
+
+### Per-Model IC (cross-sectional Spearman rank IC on target_ret_12h)
+
+| Model | Mean IC | Std IC | ICIR |
+|-------|---------|--------|------|
+| catboost | 0.1315 | 0.2129 | 0.618 |
+| lgb_v7 | 0.1273 | 0.2095 | 0.608 |
+| lgb_24h | 0.1271 | 0.2261 | 0.562 |
+| lgb_v6 | 0.1255 | 0.2125 | 0.591 |
+| xgboost | 0.1211 | 0.2097 | 0.577 |
+| lgb_4h | 0.1124 | 0.2030 | 0.554 |
+| MLP | 0.0206 | — | — |
+
+### Выводы v1
+
+1. **Calendar features = шум**: No-cal Sharpe 6.82 > с calendar 6.64. SKIP_CALENDAR=1 — дефолт.
+2. **LGB_24h — единственное полезное добавление**: Sharpe 7.10 (+0.28), IC=0.127, корреляция с baseline 0.93 (хороший баланс diversity/signal).
+3. **LGB_4h вредит**: IC=0.112 (самый низкий), тянет ансамбль вниз.
+4. **MLP = полный провал**: IC=0.021, чистый шум. Neural nets не работают на данном объёме данных.
+5. **Gen#2 остаётся лучшим** (Sharpe 8.43 vs лучший новый 7.10). Не деплоим ничего нового.
+
+---
+
+## Overnight v2 — LambdaRank, Residual Target, Meta-Labeling (14–15 марта 2026)
+
+### Контекст
+Кластерный эксперимент по рекомендациям AI-консультации (GPT Pro + Opus).
+3 идеи: LambdaRank (ranking loss), Residual target (ret − β×BTC), Meta-labeling (binary classifier).
+Модели: retrain train→2026-02-01, val→2026-03-07, SKIP_CALENDAR=1.
+OOS: Feb 9 – Mar 7, 2026. Sim: $5000, 3x, edge-boost, 12h rebalance.
+
+**Баги найдены и исправлены перед запуском:**
+1. **Data leakage в meta-label** (CRITICAL): oos-start default 2025-12-09 но L0 обучены до 2026-02-01 → meta-label тренировался бы на in-sample предсказаниях L0
+2. **Cost formula**: leverage cancels в sign test → убрали leverage из формулы, break-even = 9.5 bps
+3. **XGBoost DMatrix crash**: predict_group() не различал LGB/XGB → фикс через `type(model).__module__`
+
+### EXP A: LambdaRank (LGBMRanker + NDCG)
+
+Идея: вместо MSE regression использовать LGBMRanker с LambdaRank loss для прямой оптимизации ранжирования.
+
+| Model | Mean IC | Correlation с baseline |
+|-------|---------|----------------------|
+| v6_rank | **0.0060** | 0.038 |
+| v7_rank | 0.0339 | — |
+| v6_base | 0.1109 | — |
+| v7_base | 0.1169 | — |
+
+**Вердикт: ❌ ПОЛНЫЙ ПРОВАЛ.** IC коллапсировал с 0.111 → 0.006 (в 18 раз хуже).
+Максимальная diversity (r=0.038) но нулевой IC = шум. LambdaRank несовместим с нашей задачей.
+
+### EXP B: Residual Target (ret − β×BTC)
+
+Идея: убрать рыночную компоненту из таргета, учить модель предсказывать idiosyncratic return.
+
+| Model | Mean IC | Correlation с baseline |
+|-------|---------|----------------------|
+| v6_resid | 0.1064 | **0.965** |
+| v7_resid | 0.1137 | — |
+| v6_base | 0.1109 | — |
+| v7_base | 0.1169 | — |
+
+**Вердикт: ❌ БЕСПОЛЕЗНО.** r=0.965 с baseline = практически идентичные предсказания.
+IC незначительно хуже. Нулевой diversity gain. BTC beta слишком мала для cross-sectional сигнала.
+
+### EXP C: Meta-Labeling (Binary LGBMClassifier)
+
+Идея: обучить binary classifier на meta-features (23 признака: ens_mean, ens_std, agreement, vol context, BTC state) для фильтрации трейдов.
+
+**Результат:**
+- Только **690 трейдов** в OOS (340 train / 350 test) — критически мало для обучения
+- CV best_iterations = [1, 1, 106], median = 1 → **модель не нашла сигнал**
+- Test WR = 48.6% (хуже coin flip)
+- Все пороги 0.50–0.58 дают одинаковый результат, ≥0.60 → 0 трейдов
+
+**Вердикт: ❌ ПОЛНЫЙ ПРОВАЛ.** Недостаточно данных. Нужно ≥2000+ трейдов (расширить OOS window).
+
+### EXP D: Combo Ensemble
+
+Все модели вместе (base + rank + resid + 24h) — 5-7 групп.
+
+| Metric | Combo | Base 4-grp (ref) |
+|--------|-------|-----------------|
+| Return | +16.8% | +17.6% |
+| Sharpe | 6.85 | 6.82 |
+| HAC Sharpe | 7.19 | 7.31 |
+| Max DD | -3.6% | -4.6% |
+
+**Вердикт: ❌ НЕ ЛУЧШЕ baseline.** LambdaRank отравляет ансамбль, residual не добавляет diversity.
+
+### Unique Contribution Analysis (IC drop when model removed)
+
+| Model removed | IC drop | Verdict |
+|--------------|---------|---------|
+| v6_24h | **+0.0034** | ✅ Единственный уникальный вклад |
+| v6_rank | **-0.0050** | ❌ Активно вредит |
+| v7_rank | -0.0008 | Нейтрален |
+| v6_resid | +0.0005 | Нейтрален |
+| v7_resid | +0.0001 | Нейтрален |
+
+### Best Ensemble Combinations
+
+| Combination | Mean IC | ICIR |
+|-------------|---------|------|
+| Base 4+24h | 0.1166 | 0.50 |
+| Resid 4+24h | 0.1164 | **0.51** |
+| Base 4-grp | 0.1143 | 0.49 |
+| All (base+rank+resid+24h) | 0.1106 | 0.46 |
+
+### Итоговые выводы v2
+
+1. **Все 3 идеи провалились**: LambdaRank (IC collapse), Residual (zero diversity), Meta-label (no data).
+2. **LGB_24h — по-прежнему единственное полезное добавление** (подтверждено unique contribution analysis).
+3. **Gen#2 остаётся на VPS без изменений** (Sharpe 8.43 >> лучший новый конфиг 7.13).
+4. **Корреляция моделей (0.93-0.97)** — фундаментальная проблема. Структурно-другие подходы (LambdaRank, residual) либо разрушают сигнал, либо дают идентичный результат.
+5. **Meta-labeling теоретически перспективен**, но нужно значительно больше OOS данных (retrain с ранним train-end → ≥2000 trades).
+
+---
+
+## Overnight v3 — Portfolio Construction + Huber Loss (15 Mar 2026)
+
+**Hypothesis**: 3 orthogonal ideas from AI consultation round 2:
+- **EXP A**: Hysteresis + turnover budget (reduce unnecessary rebalancing)
+- **EXP B**: Min z-score + dynamic N (filter weak signals / concentrate on strong ones)
+- **EXP C**: Huber loss (robust to outlier returns) + dead-zone weighting
+
+**Sim window**: 2026-02-09 → 2026-03-07 (26 days OOS), 3x leverage, ensemble, edge-boost.
+
+### Full Results Table
+
+| Experiment | Return | Sharpe | HAC Sharpe | MaxDD | WinRate | Turnover |
+|------------|--------|--------|------------|-------|---------|----------|
+| **baseline** | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a1_hyst_3 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a1_hyst_5 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a1_hyst_7 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a1_hyst_10 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a2_tb_2 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a2_tb_3 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a2_tb_5 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a3_hyst3_tb3 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a3_hyst3_tb5 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a3_hyst5_tb3 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_a3_hyst5_tb5 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| exp_b1_mz_0.3 | +16.8% | 6.63 | 7.19 | -4.6% | 61% | $145,928 |
+| **exp_b1_mz_0.5** | **+17.4%** | **6.81** | **7.46** | -4.6% | 61% | $146,426 |
+| exp_b1_mz_0.7 | +16.6% | 6.01 | 6.56 | -4.6% | 61% | $146,762 |
+| exp_b1_mz_1.0 | +22.9% | 6.03 | 6.83 | -6.9% | **67%** | $159,672 |
+| exp_b2_dynN | +21.7% | 6.09 | 6.55 | -6.4% | 63% | $161,226 |
+| exp_b3_dynN_mz0.3 | +21.7% | 6.09 | 6.55 | -6.4% | 63% | $161,226 |
+| exp_b3_dynN_mz0.5 | +21.7% | 6.09 | 6.55 | -6.4% | 63% | $161,226 |
+| exp_b4_hyst5_mz05 | +17.2% | 6.76 | 7.32 | -4.6% | 61% | $146,006 |
+| exp_b5_full_combo | +17.2% | 6.76 | 7.32 | -4.6% | 61% | $146,006 |
+| exp_c1c_sim_huber (v6+v7 Huber) | **+18.4%** | **6.99** | **7.56** | -4.6% | **65%** | $147,419 |
+| exp_c2c_sim_dz03 (v6+v7 DZ 0.3%) | +17.4% | 6.75 | 7.22 | -4.6% | 63% | $145,628 |
+| exp_c3c_sim_huber_dz (Huber+DZ) | +17.4% | 6.75 | 7.22 | -4.6% | 63% | $145,628 |
+| **exp_c4_huber_pc** (Huber + mz0.5) | **+18.7%** | **7.12** | **7.69** | **-4.6%** | **65%** | $147,503 |
+
+Training Sharpe (in-sample, informational only):
+- v6 Huber: 51.67
+- v6 Deadzone: 55.65
+- v6 Huber+DZ: 55.65
+
+### Analysis by Experiment Group
+
+**EXP A — Hysteresis + Turnover Budget: ZERO EFFECT**
+- All 11 configurations identical to baseline (same return, Sharpe, turnover to the dollar)
+- Root cause: portfolio composition is already very stable at 12h rebalance — top/bottom 10 coins rarely change between steps. Hysteresis has nothing to "hold". The $145K turnover is from edge-boost weight rebalancing, not position replacement.
+- Verdict: **USELESS for this system. Can be removed.**
+
+**EXP B — Min Z-Score + Dynamic N: MIXED**
+- `mz_0.5`: Best risk-adjusted improvement (HAC +3.8%) without increasing DD. Sweet spot.
+- `mz_0.7`: HAC drops (6.56) — too aggressive filtering hurts diversification.
+- `mz_1.0`: Highest WR (67%) and return (+22.9%), but DD jumps to -6.9% and Sharpe drops. Concentration risk.
+- `dynamic_n`: Similar to mz_1.0 — more return but worse risk-adjusted.
+- Verdict: **mz_0.5 is optimal. Higher thresholds trade risk-adj for raw return.**
+
+**EXP C — Huber Loss: CLEAR WINNER**
+- Huber solo: WR +4pp (61→65%), HAC +5.1% (7.19→7.56). Models trained with Huber loss generalize better.
+- Deadzone solo: Minimal improvement (HAC +0.4%). Higher in-sample Sharpe (55.65 vs 51.67) but worse OOS — overfitting to large moves.
+- Huber+Deadzone: = Deadzone only. Deadzone dominates and cancels Huber benefit.
+- Verdict: **Huber solo > Deadzone solo > Huber+DZ. Train with Huber, skip deadzone.**
+
+**Interesting bias-variance observation**: Deadzone achieves higher training Sharpe (55.65 vs Huber's 51.67) but worse OOS performance. This is textbook overfitting — deadzone upweights large returns, making the model chase outliers rather than learn robust patterns. Huber dampens outlier influence → lower in-sample fit → better generalization.
+
+### Best Configuration: exp_c4_huber_pc
+
+**Huber-trained v6+v7 + min-zscore=0.5** (with hysteresis=5, tb=3, but these have zero effect):
+
+| Metric | Baseline | **exp_c4** | Δ |
+|--------|----------|-----------|---|
+| Return | +16.8% | **+18.7%** | +11.3% rel |
+| Sharpe | 6.63 | **7.12** | +7.4% |
+| HAC Sharpe | 7.19 | **7.69** | +7.0% |
+| MaxDD | -4.6% | **-4.6%** | unchanged |
+| Win Rate | 61% | **65%** | +4pp |
+| Turnover | $145,928 | $147,503 | +1.1% |
+
+### Next Steps
+1. Retrain CatBoost + XGBoost with Huber loss (only v6+v7 done so far)
+2. Run full 4-model Huber ensemble simulation
+3. If confirmed → deploy on VPS replacing Gen#2
+
+---

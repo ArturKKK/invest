@@ -129,7 +129,8 @@ def run_optuna_hpo(X_train, y_train, X_val, y_val, val_dates, n_trials=50):
 # ============================================================
 
 def train_catboost(X_train, y_train, X_val, y_val,
-                   feat_names=None, custom_params=None, seed=42):
+                   feat_names=None, custom_params=None, seed=42,
+                   sample_weight=None):
     """Train a single CatBoost model."""
     base_params = {
         'iterations': 5000,
@@ -158,20 +159,23 @@ def train_catboost(X_train, y_train, X_val, y_val,
     base_params['random_seed'] = seed
 
     model = CatBoostRegressor(**base_params)
-    model.fit(
-        X_train, y_train,
+    fit_kwargs = dict(
         eval_set=(X_val, y_val),
         early_stopping_rounds=100,
         verbose=200,
     )
+    if sample_weight is not None:
+        fit_kwargs['sample_weight'] = sample_weight
+    model.fit(X_train, y_train, **fit_kwargs)
     return model
 
 
 def train_multi_seed(X_train, y_train, X_val, y_val, X_test,
-                     feat_names=None, params=None, seeds=None):
+                     feat_names=None, params=None, seeds=None,
+                     sample_weight=None):
     """Train CatBoost ensemble with multiple seeds."""
     seeds = seeds or SEEDS
-    print(f"\n   🌱 CatBoost multi-seed ensemble ({len(seeds)} seeds)...")
+    print(f"\n   \U0001f331 CatBoost multi-seed ensemble ({len(seeds)} seeds)...")
 
     all_preds = []
     all_models = []
@@ -179,7 +183,8 @@ def train_multi_seed(X_train, y_train, X_val, y_val, X_test,
         print(f"      Seed {seed} ({i+1}/{len(seeds)})...", end=" ")
         model = train_catboost(X_train, y_train, X_val, y_val,
                                feat_names=feat_names,
-                               custom_params=params, seed=seed)
+                               custom_params=params, seed=seed,
+                               sample_weight=sample_weight)
         preds = model.predict(X_test)
         all_preds.append(preds)
         all_models.append(model)
@@ -233,6 +238,12 @@ def main():
                         help='News feature scope: all, market-only, coin-only, none')
     parser.add_argument('--no-derivatives', action='store_true',
                         help='Skip loading Binance derivatives features (for clean A/B tests)')
+    parser.add_argument('--huber', action='store_true',
+                        help='Use Huber loss instead of RMSE (robust to outlier returns)')
+    parser.add_argument('--huber-delta', type=float, default=1.0,
+                        help='Huber loss delta parameter (default: 1.0)')
+    parser.add_argument('--deadzone-weight', type=float, default=0.0,
+                        help='Dead-zone sample weighting: downweight |ret| < τ%% samples (0=off)')
     args = parser.parse_args()
 
     if args.no_news:
@@ -377,6 +388,24 @@ def main():
 
         # --- Multi-seed ensemble ---
         X_pred = test[selected_feats] if has_test else val[selected_feats]
+
+        # --- Huber loss override ---
+        if args.huber:
+            if best_params is None:
+                best_params = {}
+            best_params['loss_function'] = f'Huber:delta={args.huber_delta}'
+            print(f"   \U0001f6e1\ufe0f  Huber loss enabled (delta={args.huber_delta})")
+
+        # --- Dead-zone sample weighting ---
+        sw = None
+        if args.deadzone_weight > 0:
+            tau = args.deadzone_weight / 100.0  # e.g. 0.3 → 0.003
+            raw_target = train[f'target_ret_{HORIZON}h']
+            sw = np.where(np.abs(raw_target) > tau, 1.0, 0.2)
+            pct_upweight = (sw > 0.5).mean() * 100
+            print(f"   \u2696\ufe0f  Dead-zone weighting: τ={args.deadzone_weight}%, "
+                  f"{pct_upweight:.0f}% samples full-weight")
+
         ensemble_pred, all_models = train_multi_seed(
             train[selected_feats], y_train,
             val[selected_feats], y_val,
@@ -384,6 +413,7 @@ def main():
             feat_names=selected_feats,
             params=best_params,
             seeds=SEEDS[:args.seeds],
+            sample_weight=sw,
         )
         if has_test:
             test['pred_cb'] = ensemble_pred
