@@ -44,6 +44,11 @@ cleanup() {
       mv "$bak" "$prod"
     fi
   done
+  # Restore DVOL file if hidden
+  if [ -f "data/sentiment/.deribit_dvol.parquet.bak_v8" ]; then
+    mv "data/sentiment/.deribit_dvol.parquet.bak_v8" "data/sentiment/deribit_dvol.parquet"
+    echo "📦 DVOL file restored from cleanup"
+  fi
   echo "✅ Restored."
 }
 trap cleanup EXIT
