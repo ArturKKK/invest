@@ -43,30 +43,26 @@ AV_TICKERS = {
     'vix': {
         'desc': 'VIX (CBOE Volatility Index)',
         'function': 'TIME_SERIES_DAILY',
-        'symbol': 'VIX',       # CBOE VIX on AV
-        'outputsize': 'full',
+        'symbol': 'VIXY',      # ProShares VIX Short-Term Futures ETF
         'cols': {'4. close': 'vix_close', '2. high': 'vix_high'},
     },
     'spx': {
         'desc': 'S&P 500 (SPY ETF)',
         'function': 'TIME_SERIES_DAILY',
         'symbol': 'SPY',       # SPY ETF as S&P proxy
-        'outputsize': 'full',
         'cols': {'4. close': 'spx_close'},
     },
     'dxy': {
         'desc': 'US Dollar Index (UUP ETF)',
         'function': 'TIME_SERIES_DAILY',
         'symbol': 'UUP',       # Invesco DB USD Index Bullish Fund
-        'outputsize': 'full',
         'cols': {'4. close': 'dxy_close'},
     },
     'gold': {
-        'desc': 'Gold spot price',
-        'function': 'GOLD_SILVER_HISTORY',
-        'symbol': 'GOLD',
-        'interval': 'daily',
-        'cols': {'close': 'gold_close'},
+        'desc': 'Gold (GLD ETF)',
+        'function': 'TIME_SERIES_DAILY',
+        'symbol': 'GLD',       # SPDR Gold Shares ETF
+        'cols': {'4. close': 'gold_close'},
     },
     'yield10y': {
         'desc': '10Y US Treasury Yield',
@@ -112,8 +108,6 @@ def download_av_time_series(api_key: str, ticker_cfg: dict, start_date: str) -> 
     # Add optional params
     if 'symbol' in ticker_cfg:
         params['symbol'] = ticker_cfg['symbol']
-    if 'outputsize' in ticker_cfg:
-        params['outputsize'] = ticker_cfg['outputsize']
     if 'interval' in ticker_cfg:
         params['interval'] = ticker_cfg['interval']
     if 'maturity' in ticker_cfg:
@@ -133,6 +127,9 @@ def download_av_time_series(api_key: str, ticker_cfg: dict, start_date: str) -> 
                     print(f"\n      Rate limited, waiting {wait}s...", end=' ')
                     time.sleep(wait)
                     continue
+                if 'premium' in msg.lower():
+                    print(f"\n      ❌ Premium feature required: {msg[:80]}")
+                    return pd.DataFrame()
                 print(f"\n      ⚠️ API note: {msg[:80]}...")
 
             if 'Error Message' in data:
