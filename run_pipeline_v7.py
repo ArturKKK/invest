@@ -126,7 +126,8 @@ REGIME_COLS = {
     # DVOL features (market-level implied vol, same for all coins)
     'dvol_btc', 'dvol_btc_change_12h', 'dvol_btc_change_24h',
     'dvol_btc_z_30d', 'dvol_btc_z_60d',
-    'dvol_eth', 'dvol_eth_change_24h',
+    'dvol_eth', 'dvol_eth_change_12h', 'dvol_eth_change_24h',
+    'dvol_eth_z_30d', 'dvol_eth_z_60d',
     'dvol_spread', 'dvol_term_ratio', 'dvol_vol_of_vol',
 }
 
