@@ -272,7 +272,7 @@ def main():
             add_multi_horizon_targets, add_cross_asset_features,
             add_advanced_regime_features,
             add_derivatives_features, add_sentiment_features,
-            add_calendar_features,
+            add_calendar_features, add_macro_features,
         )
         from run_trading import add_12h_features
         from run_pipeline_xgboost import add_news_interaction_features
@@ -291,23 +291,25 @@ def main():
                 df.drop(columns=_overlap_cols, inplace=True, errors='ignore')
                 print(f"   Dropped {len(_overlap_cols)} overlapping cols from build_features")
 
-            print("   Enriching features (full pipeline: cross-asset, regime, 12h, calendar, sentiment, derivatives)...")
+            print("   Enriching features (full pipeline: cross-asset, regime, 12h, calendar, macro, sentiment, derivatives)...")
             df = add_multi_horizon_targets(df)
             df = add_cross_asset_features(df)
             df = add_advanced_regime_features(df)
             df = add_12h_features(df)
             df = add_calendar_features(df)
+            df = add_macro_features(df, root)
             df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
             df = add_news_interaction_features(df)
         else:
             # Pre-built features parquet — enrich all
-            print("   Enriching features (cross-asset, regime, 12h+v7, calendar, sentiment, derivatives)...")
+            print("   Enriching features (cross-asset, regime, 12h+v7, calendar, macro, sentiment, derivatives)...")
             df = add_multi_horizon_targets(df)
             df = add_cross_asset_features(df)
             df = add_advanced_regime_features(df)
             df = add_12h_features(df)
             df = add_calendar_features(df)
+            df = add_macro_features(df, root)
             df = add_sentiment_features(df, root, news_mode='all')
             df = add_derivatives_features(df, root)
             df = add_news_interaction_features(df)
@@ -353,6 +355,7 @@ def main():
             add_multi_horizon_targets, add_cross_asset_features,
             add_advanced_regime_features,
             add_derivatives_features, add_sentiment_features,
+            add_macro_features,
         )
         from run_trading import add_12h_features
 
@@ -369,13 +372,14 @@ def main():
             df.drop(columns=_overlap_cols, inplace=True, errors='ignore')
             print(f"   Dropped {len(_overlap_cols)} overlapping cols from build_features")
 
-        print("   🔧 Enriching: targets, cross-asset, regime, 12h, calendar, sentiment, derivatives...")
+        print("   🔧 Enriching: targets, cross-asset, regime, 12h, calendar, macro, sentiment, derivatives...")
         df = add_multi_horizon_targets(df)
         df = add_cross_asset_features(df)
         df = add_advanced_regime_features(df)
         df = add_12h_features(df)
         from run_pipeline_v6 import add_calendar_features as _acf
         df = _acf(df)
+        df = add_macro_features(df, root)
         df = add_sentiment_features(df, root, news_mode='all')
         df = add_derivatives_features(df, root)
         from run_pipeline_xgboost import add_news_interaction_features as _anif

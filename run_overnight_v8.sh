@@ -103,7 +103,7 @@ echo "  STEP 1b: v7 Huber (+ macro, NO DVOL, no news)"
 python run_pipeline_v7.py \
   --production --skip-hpo \
   --train-end $TRAIN_END --val-end $VAL_END \
-  --huber \
+  --huber --news-mode none \
   --results results_v7_macroonly_prod \
   2>&1 | tee $RESULTS_DIR/v7_macroonly_train.log
 
@@ -158,7 +158,7 @@ if [ -f "$DVOL_FILE" ]; then
   python run_pipeline_v7.py \
     --production --skip-hpo \
     --train-end $TRAIN_END --val-end $VAL_END \
-    --huber \
+    --huber --news-mode none \
     --results results_v7_macro_prod \
     2>&1 | tee $RESULTS_DIR/v7_macro_dvol_train.log
 
