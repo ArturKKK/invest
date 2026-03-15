@@ -229,12 +229,15 @@ def main():
     # Ensure date is date type
     merged['date'] = pd.to_datetime(merged['date']).dt.date
 
-    # Merge with existing
+    # Merge with existing (combine_first to avoid overwriting good data
+    # when partial downloads only fetch some tickers)
     if os.path.exists(path) and not args.full:
         existing = pd.read_parquet(path)
         existing['date'] = pd.to_datetime(existing['date']).dt.date
-        combined = pd.concat([existing, merged], ignore_index=True)
-        combined = combined.drop_duplicates('date', keep='last')
+        existing = existing.set_index('date')
+        merged_idx = merged.set_index('date')
+        # New data takes priority where non-NaN; existing fills the rest
+        combined = merged_idx.combine_first(existing).reset_index()
         combined = combined.sort_values('date').reset_index(drop=True)
     else:
         combined = merged.sort_values('date').reset_index(drop=True)
