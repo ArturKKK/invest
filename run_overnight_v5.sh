@@ -1,6 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
+# Safety: restore production models even if script crashes
+cleanup() {
+  echo "🛡️ Cleanup: restoring production models..."
+  for suffix in v6 v7 catboost xgboost; do
+    bak="results_${suffix}_prod_bak_v5"
+    prod="results_${suffix}_prod"
+    if [ -d "$bak" ]; then
+      rm -rf "$prod"
+      mv "$bak" "$prod"
+    fi
+  done
+  echo "✅ Restored."
+}
+trap cleanup EXIT
+
 # ============================================================
 # OVERNIGHT RESEARCH v5 — v6 Huber WITHOUT news
 # ============================================================
@@ -76,11 +91,11 @@ cp -r results_catboost_huber_prod/* results_catboost_prod/
 cp -r results_xgboost_huber_prod/* results_xgboost_prod/
 
 echo "📊 Sim: 4-model Huber (v6 no-news)..."
-$SIM_BASE 2>&1 | tee $RESULTS_DIR/huber_4model_nonews.log
+$SIM_BASE 2>&1 | tee $RESULTS_DIR/huber_4model_nonews.log || true
 
 echo ""
 echo "📊 Sim: 4-model Huber (v6 no-news) + mz=0.5..."
-$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/huber_4model_nonews_mz05.log
+$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/huber_4model_nonews_mz05.log || true
 
 # ============================================================
 # STEP 3: Comparison — v6 WITH news (v4 result replication)
@@ -95,7 +110,7 @@ echo ""
 cp -r results_v6_huber_prod/* results_v6_prod/
 
 echo "📊 Sim: 4-model Huber (v6 with-news) + mz=0.5..."
-$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/huber_4model_withnews_mz05.log
+$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/huber_4model_withnews_mz05.log || true
 
 # ALWAYS restore production models
 echo ""
@@ -106,6 +121,8 @@ mv results_v7_prod_bak_v5 results_v7_prod
 mv results_catboost_prod_bak_v5 results_catboost_prod
 mv results_xgboost_prod_bak_v5 results_xgboost_prod
 echo "✅ Production models restored."
+# Clear trap since we restored manually
+trap - EXIT
 echo ""
 
 # ============================================================
