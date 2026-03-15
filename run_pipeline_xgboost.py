@@ -256,7 +256,8 @@ def train_xgboost(X_train, y_train, X_val, y_val,
         for k, v in custom_params.items():
             if k in base_params or k in ('learning_rate', 'max_depth', 'reg_lambda',
                                           'reg_alpha', 'subsample', 'colsample_bytree',
-                                          'min_child_weight', 'gamma', 'max_bin'):
+                                          'min_child_weight', 'gamma', 'max_bin',
+                                          'huber_slope', 'objective'):
                 base_params[k] = v
     base_params['random_state'] = seed
 
@@ -501,17 +502,7 @@ def main():
                 n_trials=args.hpo_trials
             )
 
-        # --- Feature selection (train a base model first) ---
-        model_base = train_xgboost(X_train, y_train, X_val, y_val,
-                                   feat_names=feat_cols,
-                                   custom_params=best_params)
-        selected_feats = feature_selection_xgb(model_base, feat_cols,
-                                               threshold_pct=20)
-
-        # --- Multi-seed ensemble ---
-        X_pred = test[selected_feats] if has_test else val[selected_feats]
-
-        # --- Huber loss override ---
+        # --- Huber loss override (BEFORE feature selection so base model uses it too) ---
         if args.huber:
             if best_params is None:
                 best_params = {}
@@ -528,6 +519,17 @@ def main():
             pct_upweight = (sw > 0.5).mean() * 100
             print(f"   \u2696\ufe0f  Dead-zone weighting: τ={args.deadzone_weight}%, "
                   f"{pct_upweight:.0f}% samples full-weight")
+
+        # --- Feature selection (train a base model first) ---
+        model_base = train_xgboost(X_train, y_train, X_val, y_val,
+                                   feat_names=feat_cols,
+                                   custom_params=best_params,
+                                   sample_weight=sw)
+        selected_feats = feature_selection_xgb(model_base, feat_cols,
+                                               threshold_pct=20)
+
+        # --- Multi-seed ensemble ---
+        X_pred = test[selected_feats] if has_test else val[selected_feats]
 
         ensemble_pred, all_models = train_multi_seed(
             train[selected_feats], y_train,
