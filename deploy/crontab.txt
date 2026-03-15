@@ -8,7 +8,7 @@
 
 PYTHON=/home/trader/invest/venv/bin/python
 ROOT=/home/trader/invest
-WRAP=$ROOT/deploy/cron_wrapper.sh
+WRAP=/home/trader/invest/deploy/cron_wrapper.sh
 
 # ── Data downloads ───────────────────────────────────────────
 
