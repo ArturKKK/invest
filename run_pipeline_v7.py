@@ -123,6 +123,11 @@ REGIME_COLS = {
     'cal_hour_sin', 'cal_hour_cos', 'cal_dow_sin', 'cal_dow_cos',
     'cal_is_us_session', 'cal_is_weekend',
     'cal_days_to_monthly_expiry', 'cal_month_sin', 'cal_month_cos',
+    # DVOL features (market-level implied vol, same for all coins)
+    'dvol_btc', 'dvol_btc_change_12h', 'dvol_btc_change_24h',
+    'dvol_btc_z_30d', 'dvol_btc_z_60d',
+    'dvol_eth', 'dvol_eth_change_24h',
+    'dvol_spread', 'dvol_term_ratio', 'dvol_vol_of_vol',
 }
 
 # Cost model for perpetual swaps — v7 (12h rebalance)

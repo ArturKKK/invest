@@ -136,6 +136,11 @@ REGIME_COLS = {
     # Binary flags (should NOT be ranked)
     'has_news_data',
     'news_coverage_ok', 'news_event',
+    # DVOL features (market-level implied vol, same for all coins)
+    'dvol_btc', 'dvol_btc_change_12h', 'dvol_btc_change_24h',
+    'dvol_btc_z_30d', 'dvol_btc_z_60d',
+    'dvol_eth', 'dvol_eth_change_24h',
+    'dvol_spread', 'dvol_term_ratio', 'dvol_vol_of_vol',
 }
 
 # Cost model for perpetual swaps — v6 (12h rebalance)
@@ -1007,6 +1012,60 @@ def add_derivatives_features(df, project_root):
         print(f"      Liquidations: {n_with:,} rows ({n_with/len(df)*100:.1f}%), {len(liq_cols)} features")
     else:
         print(f"      ⚠️  No liquidation data (run download_binance_futures.py)")
+
+    # ---- 10. Deribit DVOL — Implied Volatility Index (BTC + ETH) ----
+    dvol_path = os.path.join(sent_dir, 'deribit_dvol.parquet')
+    if os.path.exists(dvol_path):
+        dvol = pd.read_parquet(dvol_path)
+        dvol['timestamp'] = pd.to_datetime(dvol['timestamp'], utc=True).astype('datetime64[ns, UTC]')
+
+        # Pivot: separate BTC and ETH DVOL
+        dvol_feats = []
+        for ccy in ['BTC', 'ETH']:
+            d = dvol[dvol['currency'] == ccy][['timestamp', 'dvol_close']].copy()
+            d = d.drop_duplicates('timestamp', keep='last').sort_values('timestamp').set_index('timestamp')
+            col = f'dvol_{ccy.lower()}'
+            d = d.rename(columns={'dvol_close': col})
+
+            # Rolling features
+            d[f'{col}_change_12h'] = d[col].diff(12)
+            d[f'{col}_change_24h'] = d[col].diff(24)
+            ma30 = d[col].rolling(30 * 24, min_periods=168).mean()
+            std30 = d[col].rolling(30 * 24, min_periods=168).std() + 1e-10
+            d[f'{col}_z_30d'] = (d[col] - ma30) / std30
+            ma60 = d[col].rolling(60 * 24, min_periods=336).mean()
+            std60 = d[col].rolling(60 * 24, min_periods=336).std() + 1e-10
+            d[f'{col}_z_60d'] = (d[col] - ma60) / std60
+            dvol_feats.append(d)
+
+        # Merge BTC and ETH DVOL together
+        dvol_merged = dvol_feats[0].join(dvol_feats[1], how='outer').sort_index().ffill()
+
+        # Cross-currency features
+        dvol_merged['dvol_spread'] = dvol_merged['dvol_btc'] - dvol_merged['dvol_eth']
+        ma30_btc = dvol_merged['dvol_btc'].rolling(30 * 24, min_periods=168).mean()
+        dvol_merged['dvol_term_ratio'] = dvol_merged['dvol_btc'] / (ma30_btc + 1e-10)
+        dvol_merged['dvol_vol_of_vol'] = dvol_merged['dvol_btc'].rolling(7 * 24, min_periods=48).std()
+
+        # Merge into main df (market-level: same for all coins at same timestamp)
+        dvol_merged = dvol_merged.reset_index()
+        df['timestamp'] = df['timestamp'].astype('datetime64[ns, UTC]')
+        df = df.sort_values('timestamp')
+        dvol_merged = dvol_merged.sort_values('timestamp')
+        df = pd.merge_asof(
+            df, dvol_merged,
+            on='timestamp', direction='backward',
+            tolerance=pd.Timedelta('24h')
+        )
+
+        dvol_cols = [c for c in df.columns if c.startswith('dvol_')]
+        for col in dvol_cols:
+            df[col] = df[col].fillna(df[col].median() if df[col].notna().any() else 0)
+        n_added += len(dvol_cols)
+        print(f"      DVOL: {len(dvol_cols)} features (BTC range: "
+              f"{dvol['timestamp'].min():%Y-%m-%d} → {dvol['timestamp'].max():%Y-%m-%d})")
+    else:
+        print(f"      ⚠️  No DVOL data (run download_deribit_dvol.py)")
 
     print(f"   ✅ Derivatives features: +{n_added} features")
     return df
