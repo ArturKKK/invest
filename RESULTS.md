@@ -1267,10 +1267,44 @@ Current best config unchanged:
 - **mz=0.5** ✅
 - **HAC 8.14** — baseline for DVOL experiment (v7, running)
 
-### Pending: v7 experiment (DVOL features) — launched 15 Mar 2026
+### ~~Pending~~ Completed: v7 experiment (DVOL features) — 15 Mar 2026
 
 Added 13 DVOL features from Deribit (dvol_btc/eth level, change_12h/24h, z_30d/z_60d, spread, term_ratio, vol_of_vol).
 Script `run_overnight_v7.sh`: retrain all 4 models with DVOL, compare vs v4 baseline (HAC 8.14).
 **Hypothesis**: implied volatility adds orthogonal signal to realized-vol features.
+
+| Experiment | Return | Sharpe | HAC | MaxDD | WR | Notes |
+|---|---|---|---|---|---|---|
+| **v4-best (ref, no DVOL)** | **+18.8%** | **7.29** | **8.14** | **-4.5%** | **65%** | baseline |
+| DVOL + mz0.5 | +17.1% | 6.59 | 7.73 | -4.5% | 63% | DVOL hurt |
+| DVOL (no mz) | +15.8% | 6.20 | 6.94 | -4.5% | 63% | DVOL hurt more |
+
+**Verdict: DVOL HURT** ❌ — HAC −5.0% (7.73 vs 8.14), WR −2pp.
+13 additional implied-vol features → noise, models overfit to DVOL patterns that don't generalize.
+Train-time metrics (CB Sharpe 36.6, XGB Sharpe 46.5) were artifact of 4-period val, not confirmed in sim.
+
+**DVOL discarded.** Baseline HAC 8.14 remains best.
+
+### Pending: v8 experiment (macro features ± DVOL) — launched 15 Mar 2026
+
+Added ~38 FRED macro features (VIX, S&P500, DXY, Gold, 10Y Yield, HY Spread, Breakeven Inflation, Yield Curve, Fed Funds Rate + changes + z-scores + cross-interactions).
+Script `run_overnight_v8.sh`: macro-only (DVOL hidden) vs macro+DVOL vs v4-best baseline.
+**Hypothesis**: macro regime features (risk-on/off, rate environment) add orthogonal alpha — different signal type than DVOL.
+
+---
+
+## Experiment Results Master Table (15 Mar 2026)
+
+| Exp | Config | HAC | Sharpe | Return | MaxDD | WR | Verdict |
+|---|---|---|---|---|---|---|---|
+| v2 | LambdaRank / Residual / Meta-label | — | — | — | — | ~61% | all FAILED |
+| v3 | Huber v6+v7 + mz0.5 | 7.69 | — | — | — | 65% | good but 2-model only |
+| **v4** | **Huber 4-model + mz0.5** | **8.14** | **7.29** | **+18.8%** | **-4.5%** | **65%** | **BEST** |
+| v4 | Huber 4-model (no mz) | 8.08 | 7.09 | +18.3% | -4.5% | 65% | mz helps slightly |
+| v4 | RMSE 4-model baseline | 7.58 | 7.00 | +17.2% | -4.5% | 63% | Huber >> RMSE |
+| v5 | v6 news A/B (Huber) | 8.14 vs 7.11 | — | — | — | 65% vs 63% | news help v6 under Huber |
+| v6 | v7+news | 7.72 | 6.76 | +17.2% | -4.5% | 63% | news hurt v7 |
+| v7 | +DVOL (13 features) | 7.73 | 6.59 | +17.1% | -4.5% | 63% | DVOL hurt |
+| **v8** | **+macro (±DVOL)** | **?** | **?** | **?** | **?** | **?** | **running** |
 
 ---
