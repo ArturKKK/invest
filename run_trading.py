@@ -609,9 +609,11 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
     loaded_types = set()
 
     lgb_candidates = [
+        ("v6", "results_v6_huber_prod"),
         ("v6", "results/production/lgb_v6_no_news"),
         ("v6", "results_v6_prod"),
         ("v6", "results_v6"),
+        ("v7", "results_v7_huber_prod"),
         ("v7", "results/production/lgb_v7_no_news"),
         ("v7", "results_v7_prod"),
         ("v7", "results_v7"),
@@ -636,7 +638,7 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
 
     # CatBoost
     cb_dir = None
-    for _cb in ["results/production/catboost_with_news", "results_catboost_prod", "results_catboost"]:
+    for _cb in ["results_catboost_huber_prod", "results/production/catboost_with_news", "results_catboost_prod", "results_catboost"]:
         _p = os.path.join(root, _cb)
         if os.path.isdir(_p):
             cb_dir = _p
@@ -663,7 +665,7 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
 
     # XGBoost
     xgb_dir = None
-    for _xd in ["results/production/xgboost", "results_xgboost"]:
+    for _xd in ["results_xgboost_huber_prod", "results/production/xgboost", "results_xgboost_prod", "results_xgboost"]:
         _p = os.path.join(root, _xd)
         if os.path.isdir(_p) and any(f.endswith('.json') for f in os.listdir(_p)):
             xgb_dir = _p
@@ -986,6 +988,17 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
     after = len(signals)
     if before != after:
         print(f"   🚫 Filtered {before - after} blocked symbols ({after} tradeable)")
+
+    # Min z-score filter: skip weak signals (matches sim --min-zscore)
+    min_zs = risk_cfg.get('min_zscore', 0.0)
+    if min_zs > 0:
+        before_mz = len(signals)
+        strong = signals[(signals['score'] >= min_zs) | (signals['score'] <= -min_zs)]
+        if len(strong) >= 6:  # need at least 3L + 3S
+            signals = strong.copy()
+        n_dropped = before_mz - len(signals)
+        if n_dropped > 0:
+            print(f"   🔍 Min z-score {min_zs}: dropped {n_dropped} weak signals ({len(signals)} remain)")
 
     # Build positions
     signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
@@ -1789,6 +1802,9 @@ def main():
     parser.add_argument('--no-deriv-gate', action='store_true', help='Disable derivative risk gate')
     parser.add_argument('--no-meta', action='store_true', help='Disable meta-model (use simple mean ensemble)')
     parser.add_argument('--no-xgb', action='store_true', help='Exclude XGBoost from ensemble')
+    parser.add_argument('--min-zscore', type=float, default=0.0,
+                        help='Min |z-score| for position entry (e.g. 0.5). '
+                             'Filters out weak signals from portfolio.')
     args = parser.parse_args()
 
     root = os.path.dirname(os.path.abspath(__file__))
@@ -1815,6 +1831,8 @@ def main():
     if args.kelly is not None:
         risk_cfg['kelly_frac'] = args.kelly
     risk_cfg['leverage'] = args.leverage
+    if args.min_zscore > 0:
+        risk_cfg['min_zscore'] = args.min_zscore
 
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
@@ -1830,7 +1848,8 @@ def main():
     print(f"  Risk: kelly={risk_cfg['kelly_frac']:.0%}, "
           f"vol_target={risk_cfg['vol_target']*100:.1f}%, "
           f"DD_stop={risk_cfg['dd_stop']*100:.0f}%, "
-          f"leverage={risk_cfg['leverage']}x")
+          f"leverage={risk_cfg['leverage']}x, "
+          f"min_zscore={risk_cfg.get('min_zscore', 0.0)}")
     print("=" * 70)
 
     # Init exchange

@@ -10,7 +10,7 @@ Type=simple
 User=trader
 Group=trader
 WorkingDirectory=/home/trader/invest
-ExecStart=/home/trader/invest/venv/bin/python run_trading.py --mode paper --loop --capital 5000 --leverage 3 --no-deriv-gate --no-meta
+ExecStart=/home/trader/invest/venv/bin/python run_trading.py --mode paper --loop --capital 5000 --leverage 3 --no-deriv-gate --no-meta --min-zscore 0.5
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
