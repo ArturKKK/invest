@@ -1125,7 +1125,7 @@ def main():
 
         # ── Hysteresis: keep incumbents unless they fall below threshold ──
         if args.hysteresis > 0 and (held_L or held_S):
-            sym_to_rank_desc = {syms[i]: i for i in range(len(syms))}  # 0 = best long
+            sym_to_rank_desc = {syms[order_desc[i]]: i for i in range(len(order_desc))}  # 0 = best long
             sym_to_rank_asc = {syms[order_asc[i]]: i for i in range(len(order_asc))}  # 0 = best short
             keep_threshold = step_n_pos + args.hysteresis  # e.g. 10 + 5 = 15
 

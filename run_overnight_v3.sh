@@ -261,9 +261,9 @@ for logf in $RESULTS_DIR/*.log; do
   name=$(basename $logf .log)
   ret=$(grep -o 'Return:.*' $logf 2>/dev/null | head -1 | awk '{print $2}' || echo "—")
   sharpe=$(grep 'Sharpe:' $logf 2>/dev/null | grep -v HAC | head -1 | awk '{print $NF}' || echo "—")
-  hac=$(grep 'Sharpe HAC:' $logf 2>/dev/null | head -1 | awk '{print $NF}' || echo "—")
-  dd=$(grep 'Max DD:' $logf 2>/dev/null | head -1 | awk '{print $NF}' || echo "—")
-  wr=$(grep 'Win Rate:' $logf 2>/dev/null | head -1 | awk '{print $NF}' || echo "—")
+  hac=$(grep 'Sharpe HAC:' $logf 2>/dev/null | head -1 | awk '{print $3}' || echo "—")
+  dd=$(grep 'Max DD:' $logf 2>/dev/null | head -1 | awk '{print $3}' || echo "—")
+  wr=$(grep 'Win Rate:' $logf 2>/dev/null | head -1 | awk '{print $3}' || echo "—")
   turn=$(grep 'Turnover:' $logf 2>/dev/null | head -1 | awk '{print $2}' || echo "—")
   printf "%-45s %8s %8s %8s %8s %8s %10s\n" "$name" "$ret" "$sharpe" "$hac" "$dd" "$wr" "$turn"
 done

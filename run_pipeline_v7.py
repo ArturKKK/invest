@@ -1274,7 +1274,7 @@ def main():
             if best_params is None:
                 best_params = {}
             best_params['objective'] = 'huber'
-            best_params['huber_delta'] = args.huber_alpha
+            best_params['alpha'] = args.huber_alpha  # LightGBM Huber param name is 'alpha'
             print(f"   🛡️  Huber loss enabled (alpha={args.huber_alpha})")
 
         # --- Dead-zone sample weighting ---
