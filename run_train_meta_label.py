@@ -127,13 +127,15 @@ def predict_group(models, feats, df):
         if c not in df.columns:
             df[c] = 0.0
     X = df[feats].values
-    if hasattr(models[0], 'predict'):
-        return np.mean([m.predict(X) for m in models], axis=0)
-    else:
-        # XGBoost DMatrix
+
+    # Detect model type by class name (both LGB and XGB Boosters have .predict)
+    cls_name = type(models[0]).__module__  # 'lightgbm.basic' vs 'xgboost.core'
+    if 'xgboost' in cls_name:
         import xgboost as xgb_lib
         dm = xgb_lib.DMatrix(X, feature_names=feats)
         return np.mean([m.predict(dm) for m in models], axis=0)
+    else:
+        return np.mean([m.predict(X) for m in models], axis=0)
 
 
 def build_meta_label_features(snap_df, group_preds, n_pos=5):
