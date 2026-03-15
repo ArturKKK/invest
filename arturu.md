@@ -234,3 +234,117 @@ results/meta_stack/
 - [ ] Добавить REST API fallback для OI/taker данных (убирает 10 из 15 нулевых фичей)
 - [ ] Переобучить мета-модель с полноценным XGBoost (сейчас при обучении xgb мог быть другим)
 - [ ] Запустить 30-дневный A/B: сравнить все варианты мета-модели
+
+---
+
+## CoinGlass API — План покупки
+
+### Зачем
+Binance закрыл публичный endpoint `liquidationSnapshot` — исторические данные по ликвидациям больше не доступны бесплатно. CoinGlass — единственный агрегатор с полными историческими данными по ликвидациям.
+
+### План покупки
+1. **Зарегистрироваться**: https://www.coinglass.com/pricing
+2. **Тариф**: Hobbyist — **$29/мес** (100 req/min, все исторические endpoint'ы)
+3. **Оплата**: Stripe или крипто
+4. **API key** → Dashboard → API Management
+5. **Скачать данные** за 2+ лет для ~50 символов (~4 часа)
+6. **Отменить подписку через 1 месяц** — данные останутся локально
+
+```bash
+echo 'COINGLASS_API_KEY=your_key_here' >> .env
+```
+
+### Данные для скачивания
+
+#### 1. Ликвидации (приоритет #1)
+- **Endpoint**: `/api/futures/liquidation/history`
+- **Данные**: hourly liquidation volume (long + short), по символу
+- **Символы**: BTCUSDT, ETHUSDT + top-50 futures
+- **Фичи для модели**:
+  - `liq_long_vol_1h`, `liq_short_vol_1h` — объём ликвидаций
+  - `liq_ratio` = long / (long + short) — перекос
+  - `liq_total_zscore_24h` — z-score суммарных ликвидаций за 24ч
+  - Spike detector: аномально высокие ликвидации → вероятен разворот
+
+#### 2. Open Interest OHLC History
+- **Endpoint**: `/api/futures/openInterest/ohlc-history`
+- **Фичи**: OI change %, OI divergence vs price (price up + OI down = weak)
+
+#### 3. Funding Rate (aggregated, weighted)
+- **Endpoint**: `/api/futures/funding-rates-history`
+- **Фичи**: Дополняет наш funding rate с Binance — агрегат по всем биржам
+
+#### 4. Long/Short Ratio
+- **Endpoint**: `/api/futures/longShort/chart`
+- **Фичи**: Top trader long/short ratio — contrarian signal
+
+#### 5. Taker Buy/Sell Volume
+- **Endpoint**: `/api/futures/aggregated-taker-buy-sell-volume/history`
+- **Фичи**: Net taker buy ratio, taker flow imbalance
+
+#### 6. Exchange Balance & Netflow
+- **Endpoint**: `/api/bitcoin/exchange-balance-list`
+- **Фичи**: Netflow (outflow = bullish, inflow = bearish), whale accumulation
+
+#### 7. Coinbase Premium Index
+- **Endpoint**: `/api/index/coinbase-premium-index`
+- **Фичи**: US institutional demand proxy
+
+#### 8. Cumulative Volume Delta (CVD)
+- **Фичи**: Divergence CVD vs price
+
+### Стратегия скачивания
+```
+День 1: Ликвидации (50 символов × hourly × 2 года) — основной приоритет
+День 2: OI history + Funding rates  
+День 3: Long/Short ratio + Taker volume + Exchange balance
+```
+
+При 100 req/min: 50 символов × ~500 req = 25,000 req → 25,000 / 100 = ~4 часа.
+
+### Файловая структура
+```
+data/raw/coinglass/
+├── liquidations/       ← hourly parquet, по символам
+├── oi_history/         ← OI OHLC
+├── funding_rates/      ← weighted funding
+└── taker_volume/       ← buy/sell volume
+```
+
+### Код
+- Скачивание: `src/data/download_coinglass.py` (написать после покупки)
+- Pipeline wiring: `add_liquidation_features()` в run_pipeline_v6/v7.py
+
+---
+
+## Macro Data (Alpha Vantage)
+
+### Статус
+Yahoo Finance забанил IP (rate limit). Переписали `src/data/download_macro.py` на **Alpha Vantage** (бесплатный API, 25 req/day).
+
+### API key
+```bash
+# Получить: https://www.alphavantage.co/support/#api-key
+echo 'ALPHAVANTAGE_API_KEY=your_key_here' >> .env
+```
+
+### Данные
+| Тикер | Proxy | Что |
+|-------|-------|-----|
+| VIX | VIX (direct) | Implied volatility / fear gauge |
+| SPX | SPY ETF | S&P 500 |
+| DXY | UUP ETF | US Dollar Index |
+| Gold | AV GOLD endpoint | Золото |
+| 10Y Yield | AV TREASURY_YIELD | 10-летние трежерис |
+
+### Выход
+`data/sentiment/macro_daily.parquet`  
+Columns: `date, vix_close, vix_high, dxy_close, spx_close, gold_close, yield_10y_close`
+
+### Запуск
+```bash
+python src/data/download_macro.py --api-key YOUR_KEY --full
+```
+
+### Статус в pipeline
+**Ещё НЕ подключено** к pipeline. Только загрузчик. Нужно написать `add_macro_features()` и вставить в v6/v7.
