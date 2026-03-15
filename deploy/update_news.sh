@@ -12,7 +12,6 @@ echo "$(date -u '+%Y-%m-%d %H:%M UTC') — Starting news update..."
 python fetch_crypto_news.py \
     --days 3 \
     --source crypto \
-    --skip-political \
     --scorer vader \
     --workers 1
 

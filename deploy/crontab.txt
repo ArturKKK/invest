@@ -4,20 +4,32 @@
 #
 # Bot rebalances at 00:05 and 12:05 UTC (HORIZON=12h).
 # Data downloads run at XX:40 so fresh data is ready before each cycle.
+# All jobs wrapped in cron_wrapper.sh → sends ✅/❌ to Telegram.
 
 PYTHON=/home/trader/invest/venv/bin/python
 ROOT=/home/trader/invest
+WRAP=$ROOT/deploy/cron_wrapper.sh
+
+# ── Data downloads ───────────────────────────────────────────
 
 # News update every 6 hours
-0 */6 * * * $ROOT/deploy/update_news.sh >> $ROOT/logs/news_update.log 2>&1
+0 */6 * * * $WRAP news $ROOT/deploy/update_news.sh >> $ROOT/logs/news_update.log 2>&1
 
 # Derivatives data (Binance Futures: OI, funding, taker ratio, premium)
 # Runs at :40 before each 12h cycle (23:40 → 00:05 cycle, 11:40 → 12:05 cycle)
 # Plus 5:40, 17:40 for extra freshness
-40 5,11,17,23 * * * cd $ROOT && $PYTHON src/data/download_binance_futures.py --start "$(date -u -d '3 days ago' +\%Y-\%m-\%d)" >> $ROOT/logs/deriv_update.log 2>&1
+40 5,11,17,23 * * * $WRAP deriv bash -c "cd $ROOT && $PYTHON src/data/download_binance_futures.py --start \"\$(date -u -d '3 days ago' +\%Y-\%m-\%d)\"" >> $ROOT/logs/deriv_update.log 2>&1
 
 # OKX sentiment data (funding rates, fear & greed) every 6 hours
-35 5,11,17,23 * * * cd $ROOT && $PYTHON src/data/download_sentiment.py >> $ROOT/logs/sentiment_update.log 2>&1
+35 5,11,17,23 * * * $WRAP sentiment bash -c "cd $ROOT && $PYTHON src/data/download_sentiment.py" >> $ROOT/logs/sentiment_update.log 2>&1
+
+# Macro / cross-market data (FRED) — daily at 06:00 UTC (after US market close)
+0 6 * * * $WRAP macro $ROOT/deploy/update_macro.sh >> $ROOT/logs/macro_update.log 2>&1
+
+# Deribit DVOL (implied vol) — every 6 hours
+30 */6 * * * $WRAP dvol $ROOT/deploy/update_dvol.sh >> $ROOT/logs/dvol_update.log 2>&1
+
+# ── Maintenance ──────────────────────────────────────────────
 
 # Log rotation — keep last 7 days
 0 3 * * * find $ROOT/logs -name "*.log" -mtime +7 -delete
