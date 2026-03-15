@@ -1245,10 +1245,32 @@ Sim period (Feb 9 – Mar 7) overlaps with validation window (Dec 9 – Mar 7).
 Validation used ONLY for early stopping (not gradient updates) → quasi-OOS.
 This is standard practice for LGB/CatBoost/XGBoost — early stopping ≠ training.
 
-### Pending experiment: v6 (v7 + news)
-v7's `add_sentiment_features()` does NOT load crypto_news.parquet (only FNG, funding, LSR).
-Modified `run_pipeline_v7.py` to optionally use v6's news-aware function when `--news-mode != none`.
-Script `run_overnight_v6.sh` created: retrain v7 Huber + news, run 4-model sim.
+### ~~Pending~~ Completed: v6 experiment (v7 + news) — 15 Mar 2026
+
 **Hypothesis**: if news help v6 (+14.5% HAC), they may help v7 too.
+Modified `run_pipeline_v7.py` to use v6's news-aware `add_sentiment_features` when `--news-mode != none`.
+
+| Experiment | Return | Sharpe | HAC | MaxDD | WR | Notes |
+|---|---|---|---|---|---|---|
+| **v7 no-news + mz0.5 (ref)** | **+18.8%** | **7.29** | **8.14** | **-4.5%** | **65%** | baseline |
+| v7+news | +16.6% | 6.56 | 7.40 | -4.5% | 63% | news hurt |
+| v7+news + mz0.5 | +17.2% | 6.76 | 7.72 | -4.5% | 63% | news hurt |
+| v7 no-news + mz0.5 (control) | +18.8% | 7.29 | 8.14 | -4.5% | 65% | ✅ matches ref |
+
+**Verdict: News HURT v7** ❌ — HAC −5.2%, WR −2pp. Control matches ref 1:1, experiment fair.
+v7 stays WITHOUT news. v6 keeps news (v5 showed +14.5% HAC for v6).
+
+Current best config unchanged:
+- **v6**: Huber + news ✅
+- **v7**: Huber, NO news ✅
+- **CB/XGB**: Huber ✅
+- **mz=0.5** ✅
+- **HAC 8.14** — baseline for DVOL experiment (v7, running)
+
+### Pending: v7 experiment (DVOL features) — launched 15 Mar 2026
+
+Added 13 DVOL features from Deribit (dvol_btc/eth level, change_12h/24h, z_30d/z_60d, spread, term_ratio, vol_of_vol).
+Script `run_overnight_v7.sh`: retrain all 4 models with DVOL, compare vs v4 baseline (HAC 8.14).
+**Hypothesis**: implied volatility adds orthogonal signal to realized-vol features.
 
 ---
