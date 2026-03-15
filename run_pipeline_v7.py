@@ -1286,11 +1286,18 @@ def main():
             if raw_col in train.columns:
                 raw_target = train[raw_col]
             else:
-                raw_target = train['target_rank']  # fallback
-            sw = np.where(np.abs(raw_target) > tau, 1.0, 0.2)
-            pct_upweight = (sw > 0.5).mean() * 100
-            print(f"   ⚖️  Dead-zone weighting: τ={args.deadzone_weight}%, "
-                  f"{pct_upweight:.0f}% samples full-weight")
+                print(f"   ⚠️  Dead-zone: '{raw_col}' not found, falling back to "
+                      f"'target_ret_blended' (target_rank would be a no-op)")
+                if 'target_ret_blended' in train.columns:
+                    raw_target = train['target_ret_blended']
+                else:
+                    print(f"   ❌  Dead-zone: no raw return column found, SKIPPING deadzone")
+                    raw_target = None
+            if raw_target is not None:
+                sw = np.where(np.abs(raw_target) > tau, 1.0, 0.2)
+                pct_upweight = (sw > 0.5).mean() * 100
+                print(f"   ⚖️  Dead-zone weighting: τ={args.deadzone_weight}%, "
+                      f"{pct_upweight:.0f}% samples full-weight")
 
         ranker_kwargs = {}
         if args.lambdarank:

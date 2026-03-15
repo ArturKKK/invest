@@ -18,6 +18,30 @@ set -euo pipefail
 TRAIN_END="2026-02-01"
 VAL_END="2026-03-07"
 
+# --- Safe model swap: backup, run sim, ALWAYS restore ---
+# Usage: safe_sim_with_models <v6_src_dir> <v7_src_dir> <sim_args...>
+safe_sim_with_models() {
+  local v6_src="$1"; shift
+  local v7_src="$1"; shift
+  # Backup
+  cp -r results_v6_prod results_v6_prod_bak_v3
+  cp -r results_v7_prod results_v7_prod_bak_v3
+  # Swap in experiment models
+  cp -r "${v6_src}"/* results_v6_prod/
+  cp -r "${v7_src}"/* results_v7_prod/
+  # Run sim — capture exit code, don't let set -e kill us
+  local rc=0
+  $SIM_BASE "$@" 2>&1 || rc=$?
+  # ALWAYS restore
+  rm -rf results_v6_prod results_v7_prod
+  mv results_v6_prod_bak_v3 results_v6_prod
+  mv results_v7_prod_bak_v3 results_v7_prod
+  if [[ $rc -ne 0 ]]; then
+    echo "⚠️  Sim exited with code $rc (models restored safely)"
+  fi
+  return $rc
+}
+
 # Base sim command — same as production config
 SIM_BASE="python run_fast_sim.py --data data/features/crypto_features_1h.parquet \
   --days 120 --start-date 2026-02-09 --end-date 2026-03-07 \
@@ -157,17 +181,7 @@ python run_pipeline_v7.py \
 # Sim with Huber models
 echo ""
 echo "📊 C1c: Sim with Huber v6+v7..."
-cp -r results_v6_prod results_v6_prod_bak_v3
-cp -r results_v7_prod results_v7_prod_bak_v3
-cp -r results_v6_huber_prod/* results_v6_prod/
-cp -r results_v7_huber_prod/* results_v7_prod/
-
-$SIM_BASE 2>&1 | tee $RESULTS_DIR/exp_c1c_sim_huber.log
-
-# Restore
-rm -rf results_v6_prod results_v7_prod
-mv results_v6_prod_bak_v3 results_v6_prod
-mv results_v7_prod_bak_v3 results_v7_prod
+safe_sim_with_models results_v6_huber_prod results_v7_huber_prod | tee $RESULTS_DIR/exp_c1c_sim_huber.log
 
 # C2: Dead-zone weighting (τ=0.3%)
 echo ""
@@ -188,16 +202,7 @@ python run_pipeline_v7.py \
 
 echo ""
 echo "📊 C2c: Sim with deadzone v6+v7..."
-cp -r results_v6_prod results_v6_prod_bak_v3
-cp -r results_v7_prod results_v7_prod_bak_v3
-cp -r results_v6_dz03_prod/* results_v6_prod/
-cp -r results_v7_dz03_prod/* results_v7_prod/
-
-$SIM_BASE 2>&1 | tee $RESULTS_DIR/exp_c2c_sim_dz03.log
-
-rm -rf results_v6_prod results_v7_prod
-mv results_v6_prod_bak_v3 results_v6_prod
-mv results_v7_prod_bak_v3 results_v7_prod
+safe_sim_with_models results_v6_dz03_prod results_v7_dz03_prod | tee $RESULTS_DIR/exp_c2c_sim_dz03.log
 
 # C3: Huber + dead-zone combo
 echo ""
@@ -218,31 +223,14 @@ python run_pipeline_v7.py \
 
 echo ""
 echo "📊 C3c: Sim with Huber+deadzone v6+v7..."
-cp -r results_v6_prod results_v6_prod_bak_v3
-cp -r results_v7_prod results_v7_prod_bak_v3
-cp -r results_v6_huber_dz_prod/* results_v6_prod/
-cp -r results_v7_huber_dz_prod/* results_v7_prod/
-
-$SIM_BASE 2>&1 | tee $RESULTS_DIR/exp_c3c_sim_huber_dz.log
-
-rm -rf results_v6_prod results_v7_prod
-mv results_v6_prod_bak_v3 results_v6_prod
-mv results_v7_prod_bak_v3 results_v7_prod
+safe_sim_with_models results_v6_huber_dz_prod results_v7_huber_dz_prod | tee $RESULTS_DIR/exp_c3c_sim_huber_dz.log
 
 # C4: Best portfolio params from A+B + Huber (if Huber helps)
 echo ""
 echo "📊 C4: Huber + hysteresis=5 + turnover-budget=3 + min-zscore=0.5..."
-cp -r results_v6_prod results_v6_prod_bak_v3
-cp -r results_v7_prod results_v7_prod_bak_v3
-cp -r results_v6_huber_prod/* results_v6_prod/
-cp -r results_v7_huber_prod/* results_v7_prod/
-
-$SIM_BASE --hysteresis 5 --turnover-budget 3 --min-zscore 0.5 \
-  2>&1 | tee $RESULTS_DIR/exp_c4_huber_pc.log
-
-rm -rf results_v6_prod results_v7_prod
-mv results_v6_prod_bak_v3 results_v6_prod
-mv results_v7_prod_bak_v3 results_v7_prod
+safe_sim_with_models results_v6_huber_prod results_v7_huber_prod \
+  --hysteresis 5 --turnover-budget 3 --min-zscore 0.5 \
+  | tee $RESULTS_DIR/exp_c4_huber_pc.log
 
 echo "✅ EXP C done."
 
