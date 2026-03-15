@@ -2,34 +2,22 @@
 set -euo pipefail
 
 # ============================================================
-# OVERNIGHT RESEARCH v8 — Macro + DVOL (Full Feature Set)
+# OVERNIGHT RESEARCH v8 — Macro Features (± DVOL)
 # ============================================================
-# Adds FRED macro features (~38 cols) ON TOP of existing DVOL features.
-# Data needed on cluster:
+# v7 showed DVOL HURT (HAC 7.73 vs 8.14 baseline).
+# This tests FRED macro features (~38 cols) in isolation and combined.
+#
+# Data needed:
 #   - data/sentiment/macro_daily.parquet  (75 KB, 9 FRED series)
-#   - data/sentiment/deribit_dvol.parquet (already from v7)
+#   - data/sentiment/deribit_dvol.parquet (for Sim B only)
 #
-# Macro features (add_macro_features in v6):
-#   Raw:     vix_close, spx_close, dxy_close, gold_close, yield_10y_close,
-#            hy_spread, breakeven_10y, yield_curve_10y2y, fed_funds_rate
-#   Changes: *_chg_1d/5d/20d (7 series × 3 = 21)
-#   Z-scores: vix_close_z20d, hy_spread_z20d, breakeven_10y_z20d,
-#             yield_curve_10y2y_z20d
-#   Cross:   risk_aversion, real_rate, risk_on_off_ratio, real_rate_chg_5d
+# Experiment design (all with Huber, 4-model ensemble):
+#   A: macro-only (NO DVOL) + mz0.5        ← key test: does macro help?
+#   B: macro + DVOL + mz0.5                ← does macro rescue DVOL?
+#   C: v4-best reference (HAC 8.14)         ← baseline
 #
-# All macro+DVOL → REGIME_COLS (market-level, not CS-ranked).
-# CB/XGB import add_macro_features from v6 → all 4 models get macro.
-#
-# Experiment design:
-#   A: 4-model Huber + macro + DVOL + mz0.5      (full feature set)
-#   B: 4-model Huber + macro + DVOL (no mz)       (check mz impact)
-#   C: v4-best reference (no macro, no DVOL)       (HAC 8.14 baseline)
-#   D: v7 DVOL-only reference                      (isolate macro delta)
-#
-# Compare A vs C → total macro+DVOL improvement
-# Compare A vs D → marginal macro improvement over DVOL
-#
-# Expected runtime: ~50 min (4 retrains + 4 sims)
+# Key comparison: A vs C → macro-only improvement
+# Expected runtime: ~45 min (8 retrains + 3 sims)
 # ============================================================
 
 TRAIN_END="2026-02-01"
@@ -62,80 +50,147 @@ trap cleanup EXIT
 
 # ── Pre-flight checks ──
 echo "============================================================"
-echo "  OVERNIGHT RESEARCH v8 — Macro + DVOL"
+echo "  OVERNIGHT RESEARCH v8 — Macro Features (± DVOL)"
 echo "  Started: $(date)"
 echo "============================================================"
 echo ""
 
 MACRO_FILE="data/sentiment/macro_daily.parquet"
-DVOL_FILE="data/sentiment/deribit_dvol.parquet"
 if [ ! -f "$MACRO_FILE" ]; then
-  echo "❌ Missing $MACRO_FILE — run: scp macro_daily.parquet to cluster"
+  echo "❌ Missing $MACRO_FILE — scp it to cluster first"
   exit 1
 fi
-if [ ! -f "$DVOL_FILE" ]; then
-  echo "❌ Missing $DVOL_FILE — should exist from v7"
-  exit 1
-fi
-echo "✅ Data files present: macro + DVOL"
+echo "✅ Macro data present"
 echo ""
 
 # ============================================================
-# STEP 1: Retrain all 4 models with macro + DVOL
+# STEP 1: Retrain all 4 models — macro-only (no DVOL)
 # ============================================================
+# --no-derivatives skips add_derivatives_features() entirely
+# (which includes DVOL). Macro is added by add_macro_features()
+# which runs BEFORE derivatives. So macro-only = keep derivatives
+# but DVOL file simply absent → DVOL block skipped gracefully.
+#
+# IMPORTANT: derivatives (OI, taker, basis etc.) are valuable —
+# we only want to skip DVOL. Since DVOL is loaded from a separate
+# file inside add_derivatives_features(), we keep derivatives ON
+# but ensure deribit_dvol.parquet is temporarily hidden.
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  STEP 1a: v6 Huber retrain (+ macro, + DVOL, + news)"
+echo "  STEP 1: Retrain 4 models — macro only (DVOL hidden)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Hide DVOL file temporarily
+DVOL_FILE="data/sentiment/deribit_dvol.parquet"
+DVOL_HIDDEN="data/sentiment/.deribit_dvol.parquet.bak_v8"
+if [ -f "$DVOL_FILE" ]; then
+  mv "$DVOL_FILE" "$DVOL_HIDDEN"
+  echo "📦 DVOL file hidden for macro-only retrains"
+fi
+
+echo ""
+echo "  STEP 1a: v6 Huber (+ macro, NO DVOL, + news)"
 python run_pipeline_v6.py \
   --production --skip-hpo \
   --train-end $TRAIN_END --val-end $VAL_END \
   --news-mode all \
   --huber \
-  --results results_v6_macro_prod \
-  2>&1 | tee $RESULTS_DIR/v6_macro_train.log
+  --results results_v6_macroonly_prod \
+  2>&1 | tee $RESULTS_DIR/v6_macroonly_train.log
 
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  STEP 1b: v7 Huber retrain (+ macro, + DVOL, no news)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  STEP 1b: v7 Huber (+ macro, NO DVOL, no news)"
 python run_pipeline_v7.py \
   --production --skip-hpo \
   --train-end $TRAIN_END --val-end $VAL_END \
   --huber \
-  --results results_v7_macro_prod \
-  2>&1 | tee $RESULTS_DIR/v7_macro_train.log
+  --results results_v7_macroonly_prod \
+  2>&1 | tee $RESULTS_DIR/v7_macroonly_train.log
 
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  STEP 1c: CatBoost Huber retrain (+ macro, + DVOL)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  STEP 1c: CatBoost Huber (+ macro, NO DVOL) [GPU]"
 python run_pipeline_catboost.py \
   --production --skip-hpo \
   --train-end $TRAIN_END --val-end $VAL_END \
-  --huber \
-  --results results_catboost_macro_prod \
-  2>&1 | tee $RESULTS_DIR/cb_macro_train.log
+  --huber --gpu \
+  --results results_catboost_macroonly_prod \
+  2>&1 | tee $RESULTS_DIR/cb_macroonly_train.log
 
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  STEP 1d: XGBoost Huber retrain (+ macro, + DVOL)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  STEP 1d: XGBoost Huber (+ macro, NO DVOL) [GPU]"
 python run_pipeline_xgboost.py \
   --production --skip-hpo \
   --train-end $TRAIN_END --val-end $VAL_END \
-  --huber --huber-slope 1.0 \
-  --results results_xgboost_macro_prod \
-  2>&1 | tee $RESULTS_DIR/xgb_macro_train.log
+  --huber --huber-slope 1.0 --gpu \
+  --results results_xgboost_macroonly_prod \
+  2>&1 | tee $RESULTS_DIR/xgb_macroonly_train.log
+
+# Restore DVOL file
+if [ -f "$DVOL_HIDDEN" ]; then
+  mv "$DVOL_HIDDEN" "$DVOL_FILE"
+  echo ""
+  echo "📦 DVOL file restored"
+fi
 
 echo ""
 
 # ============================================================
-# STEP 2: Sim with macro+DVOL models
+# STEP 2: Retrain all 4 models — macro + DVOL
+# ============================================================
+
+if [ -f "$DVOL_FILE" ]; then
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  STEP 2: Retrain 4 models — macro + DVOL"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  echo ""
+  echo "  STEP 2a: v6 Huber (+ macro, + DVOL, + news)"
+  python run_pipeline_v6.py \
+    --production --skip-hpo \
+    --train-end $TRAIN_END --val-end $VAL_END \
+    --news-mode all \
+    --huber \
+    --results results_v6_macro_prod \
+    2>&1 | tee $RESULTS_DIR/v6_macro_dvol_train.log
+
+  echo ""
+  echo "  STEP 2b: v7 Huber (+ macro, + DVOL, no news)"
+  python run_pipeline_v7.py \
+    --production --skip-hpo \
+    --train-end $TRAIN_END --val-end $VAL_END \
+    --huber \
+    --results results_v7_macro_prod \
+    2>&1 | tee $RESULTS_DIR/v7_macro_dvol_train.log
+
+  echo ""
+  echo "  STEP 2c: CatBoost Huber (+ macro, + DVOL) [GPU]"
+  python run_pipeline_catboost.py \
+    --production --skip-hpo \
+    --train-end $TRAIN_END --val-end $VAL_END \
+    --huber --gpu \
+    --results results_catboost_macro_prod \
+    2>&1 | tee $RESULTS_DIR/cb_macro_dvol_train.log
+
+  echo ""
+  echo "  STEP 2d: XGBoost Huber (+ macro, + DVOL) [GPU]"
+  python run_pipeline_xgboost.py \
+    --production --skip-hpo \
+    --train-end $TRAIN_END --val-end $VAL_END \
+    --huber --huber-slope 1.0 --gpu \
+    --results results_xgboost_macro_prod \
+    2>&1 | tee $RESULTS_DIR/xgb_macro_dvol_train.log
+else
+  echo "⚠️  No DVOL data — skipping macro+DVOL retrains (Step 2)"
+fi
+
+echo ""
+
+# ============================================================
+# STEP 3: Sims
 # ============================================================
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  STEP 2: 4-model Huber + macro + DVOL sims"
+echo "  STEP 3: Simulations"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Backup production models
@@ -145,54 +200,43 @@ cp -r results_v7_prod results_v7_prod_bak_v8exp
 cp -r results_catboost_prod results_catboost_prod_bak_v8exp
 cp -r results_xgboost_prod results_xgboost_prod_bak_v8exp
 
-# Swap in macro+DVOL models
-echo "🔄 Swapping in macro+DVOL models..."
-cp -r results_v6_macro_prod/* results_v6_prod/
-cp -r results_v7_macro_prod/* results_v7_prod/
-cp -r results_catboost_macro_prod/* results_catboost_prod/
-cp -r results_xgboost_macro_prod/* results_xgboost_prod/
-
-echo "📊 Sim A: 4-model macro+DVOL + mz=0.5..."
-$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/macro_dvol_4model_mz05.log || true
-
+# ── Sim A: macro-only (no DVOL) + mz0.5 ──
 echo ""
-echo "📊 Sim B: 4-model macro+DVOL (no mz)..."
-$SIM_BASE 2>&1 | tee $RESULTS_DIR/macro_dvol_4model.log || true
+echo "🔄 Swapping in macro-only models..."
+cp -r results_v6_macroonly_prod/* results_v6_prod/
+cp -r results_v7_macroonly_prod/* results_v7_prod/
+cp -r results_catboost_macroonly_prod/* results_catboost_prod/
+cp -r results_xgboost_macroonly_prod/* results_xgboost_prod/
 
-# ============================================================
-# STEP 3: Reference sims
-# ============================================================
+echo "📊 Sim A: macro-only (no DVOL) + mz=0.5..."
+$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/macro_only_4model_mz05.log || true
 
+# ── Sim B: macro + DVOL + mz0.5 ──
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  STEP 3: Reference sims"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [ -d "results_v6_macro_prod" ] && [ -d "results_v7_macro_prod" ] && \
+   [ -d "results_catboost_macro_prod" ] && [ -d "results_xgboost_macro_prod" ]; then
+  echo "🔄 Swapping in macro+DVOL models..."
+  cp -r results_v6_macro_prod/* results_v6_prod/
+  cp -r results_v7_macro_prod/* results_v7_prod/
+  cp -r results_catboost_macro_prod/* results_catboost_prod/
+  cp -r results_xgboost_macro_prod/* results_xgboost_prod/
 
-# ── Sim C: v4-best (no macro, no DVOL) ──
-echo "🔄 Swapping in v4 Huber models (no macro, no DVOL)..."
+  echo "📊 Sim B: macro + DVOL + mz=0.5..."
+  $SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/macro_dvol_4model_mz05.log || true
+else
+  echo "⚠️  Skipping Sim B — macro+DVOL models not found"
+fi
+
+# ── Sim C: v4-best reference ──
+echo ""
+echo "🔄 Swapping in v4 Huber models (baseline)..."
 cp -r results_v6_huber_prod/* results_v6_prod/
 cp -r results_v7_huber_prod/* results_v7_prod/
 cp -r results_catboost_huber_prod/* results_catboost_prod/
 cp -r results_xgboost_huber_prod/* results_xgboost_prod/
 
 echo "📊 Sim C: v4-best (no macro, no DVOL) + mz=0.5 [baseline]..."
-$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/v4_ref_nomacro_nodvol_mz05.log || true
-
-# ── Sim D: DVOL-only (from v7, no macro) ──
-echo ""
-if [ -d "results_v6_dvol_prod" ] && [ -d "results_v7_dvol_prod" ] && \
-   [ -d "results_catboost_dvol_prod" ] && [ -d "results_xgboost_dvol_prod" ]; then
-  echo "🔄 Swapping in DVOL-only models (v7, no macro)..."
-  cp -r results_v6_dvol_prod/* results_v6_prod/
-  cp -r results_v7_dvol_prod/* results_v7_prod/
-  cp -r results_catboost_dvol_prod/* results_catboost_prod/
-  cp -r results_xgboost_dvol_prod/* results_xgboost_prod/
-
-  echo "📊 Sim D: DVOL-only (v7) + mz=0.5 [DVOL baseline]..."
-  $SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/dvol_only_4model_mz05_ref.log || true
-else
-  echo "⚠️  Skipping Sim D — DVOL-only models not found (run v7 first)"
-fi
+$SIM_BASE --min-zscore 0.5 2>&1 | tee $RESULTS_DIR/v4_ref_mz05.log || true
 
 # ============================================================
 # STEP 4: Restore and Summary
@@ -216,15 +260,17 @@ echo "============================================================"
 echo "  OVERNIGHT v8 COMPLETE — $(date)"
 echo "============================================================"
 echo ""
-echo "Results (all with 4-model Huber ensemble):"
-echo "  A: macro_dvol_4model_mz05.log         (macro + DVOL + mz=0.5)"
-echo "  B: macro_dvol_4model.log               (macro + DVOL, no mz)"
-echo "  C: v4_ref_nomacro_nodvol_mz05.log     (v4-best baseline, HAC 8.14)"
-echo "  D: dvol_only_4model_mz05_ref.log       (DVOL-only from v7)"
+echo "Results (all 4-model Huber, mz=0.5):"
+echo "  A: macro_only_4model_mz05.log     (macro, NO DVOL)     ← KEY TEST"
+echo "  B: macro_dvol_4model_mz05.log     (macro + DVOL)"
+echo "  C: v4_ref_mz05.log                (baseline HAC 8.14)"
 echo ""
-echo "Key comparisons:"
-echo "  A vs C → total improvement from macro + DVOL"
-echo "  A vs D → marginal improvement from macro alone"
-echo "  D vs C → DVOL-only improvement (should match v7 results)"
+echo "Key comparison: A vs C → does macro help?"
+echo "  If A > C → macro adds alpha, ship it"
+echo "  If A ≈ C → macro neutral, skip"
+echo "  If A < C → macro hurts (like DVOL did)"
+echo ""
+echo "Secondary: B vs A → does DVOL add anything on top of macro?"
+echo "  v7 showed DVOL alone hurts (HAC 7.73 vs 8.14)"
 echo ""
 echo "Logs in: $RESULTS_DIR/"
