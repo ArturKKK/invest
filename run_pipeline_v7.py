@@ -1161,17 +1161,19 @@ def main():
     df = add_12h_features(df)
     from run_pipeline_v6 import add_calendar_features
     df = add_calendar_features(df)
-    # Always call v7's own add_sentiment_features (FNG, funding, v7-specific: dispersion, beta, etc.)
-    df = add_sentiment_features(df, project_root)
-    # News support: v7's own add_sentiment_features has no news.
-    # When --news-mode is not 'none', additionally load news from v6's version.
+    # News support: v7's add_sentiment_features has NO news loading code.
+    # v6's add_sentiment_features is a SUPERSET of v7's (same FNG/funding/LSR/synthetic
+    # code, plus news). The v7-unique features (cum_funding, funding_cs_rank) are in
+    # add_12h_features, already called above — NOT in add_sentiment_features.
+    # IMPORTANT: cannot call BOTH — pd.merge creates _x/_y suffix columns on second call
+    # (fng_value_x, funding_rate_x, etc.) causing KeyError downstream.
     _news_mode = 'none' if args.no_news else getattr(args, 'news_mode', 'none')
     if _news_mode != 'none':
         from run_pipeline_v6 import add_sentiment_features as add_sentiment_features_v6
-        # v6's add_sentiment will add FNG/funding again but pandas merge overwrites the same cols.
-        # The key addition is news features (coin-level + market-level).
         df = add_sentiment_features_v6(df, project_root, news_mode=_news_mode)
-        print(f"   📰 v7+news: news features added from v6 pipeline (mode={_news_mode})")
+        print(f"   📰 v7+news: used v6 sentiment function (mode={_news_mode})")
+    else:
+        df = add_sentiment_features(df, project_root)
     if not args.no_derivatives:
         df = add_derivatives_features(df, project_root)
     else:
