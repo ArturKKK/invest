@@ -49,6 +49,7 @@ echo ""
 echo "📊 Training CatBoost with Huber loss..."
 python run_pipeline_catboost.py \
   --production --skip-hpo --gpu \
+  --train-end 2026-02-01 --val-end 2026-03-07 \
   --huber \
   --results results_catboost_huber_prod \
   2>&1 | tee $RESULTS_DIR/catboost_huber_train.log
@@ -65,6 +66,7 @@ echo ""
 echo "📊 Training XGBoost with Pseudo-Huber loss..."
 python run_pipeline_xgboost.py \
   --production --skip-hpo --gpu \
+  --train-end 2026-02-01 --val-end 2026-03-07 \
   --huber \
   --results results_xgboost_huber_prod \
   2>&1 | tee $RESULTS_DIR/xgboost_huber_train.log
