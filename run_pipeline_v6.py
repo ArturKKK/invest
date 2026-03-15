@@ -142,6 +142,12 @@ REGIME_COLS = {
     'dvol_eth', 'dvol_eth_change_12h', 'dvol_eth_change_24h',
     'dvol_eth_z_30d', 'dvol_eth_z_60d',
     'dvol_spread', 'dvol_term_ratio', 'dvol_vol_of_vol',
+    # Macro / cross-market features (market-level, same for all coins)
+    'vix_close', 'spx_close', 'dxy_close', 'gold_close',
+    'yield_10y_close', 'hy_spread', 'breakeven_10y',
+    'yield_curve_10y2y', 'fed_funds_rate',
+    'vix_close_z20d', 'hy_spread_z20d', 'breakeven_10y_z20d',
+    'yield_curve_10y2y_z20d', 'risk_aversion', 'real_rate',
 }
 
 # Cost model for perpetual swaps — v6 (12h rebalance)
@@ -449,6 +455,89 @@ def add_12h_features(df):
 
     n_new = 10  # approximate count of new features
     print(f"   ✅ Added ~{n_new} features for 12h holding period")
+    return df
+
+
+def add_macro_features(df, project_root):
+    """
+    Add macro / cross-market features from FRED data.
+
+    Source: data/sentiment/macro_daily.parquet (from download_macro.py)
+    Raw columns: vix_close, spx_close, dxy_close, gold_close, yield_10y_close,
+                 hy_spread, breakeven_10y, yield_curve_10y2y, fed_funds_rate
+
+    Derived features:
+      - Raw levels (daily, ffilled to hourly) — market-level, not ranked
+      - Changes (1d, 5d, 20d) — capture regime shifts
+      - Z-scores (20d rolling) — normalized magnitude
+      - Cross-interactions (vix×hy_spread, spx×gold correlation)
+    """
+    print("   🏛️ Adding macro features...")
+    sent_dir = os.path.join(project_root, 'data', 'sentiment')
+    macro_path = os.path.join(sent_dir, 'macro_daily.parquet')
+
+    if not os.path.exists(macro_path):
+        print(f"      ⚠️  No macro data at {macro_path}, skipping")
+        return df
+
+    macro = pd.read_parquet(macro_path)
+    macro['date'] = pd.to_datetime(macro['date']).dt.date
+
+    # Merge on date (daily → hourly via left join, then ffill)
+    df['_macro_date'] = df['timestamp'].dt.date
+    df = df.merge(macro, left_on='_macro_date', right_on='date', how='left', suffixes=('', '_macro'))
+    df.drop(columns=['date', '_macro_date'], inplace=True, errors='ignore')
+
+    # Raw macro columns from parquet
+    raw_cols = ['vix_close', 'spx_close', 'dxy_close', 'gold_close',
+                'yield_10y_close', 'hy_spread', 'breakeven_10y',
+                'yield_curve_10y2y', 'fed_funds_rate']
+
+    # Forward-fill and backfill (weekends / early data gaps)
+    for col in raw_cols:
+        if col in df.columns:
+            df[col] = df[col].ffill().bfill()
+
+    n_before = len(df.columns)
+
+    # ── Derived features ──────────────────────────────────────
+    # Changes: 1d (24h), 5d (120h), 20d (480h)
+    change_cols = ['vix_close', 'spx_close', 'dxy_close', 'gold_close',
+                   'hy_spread', 'breakeven_10y', 'yield_curve_10y2y']
+    for col in change_cols:
+        if col not in df.columns:
+            continue
+        # Use first symbol to compute (same for all symbols since market-level)
+        for hours, suffix in [(24, '1d'), (120, '5d'), (480, '20d')]:
+            df[f'{col}_chg_{suffix}'] = df.groupby('symbol')[col].transform(
+                lambda x: x.pct_change(hours))
+
+    # Z-scores: 20-day rolling (480h)
+    zscore_cols = ['vix_close', 'hy_spread', 'breakeven_10y', 'yield_curve_10y2y']
+    for col in zscore_cols:
+        if col not in df.columns:
+            continue
+        mean = df.groupby('symbol')[col].transform(lambda x: x.rolling(480, min_periods=120).mean())
+        std = df.groupby('symbol')[col].transform(lambda x: x.rolling(480, min_periods=120).std())
+        df[f'{col}_z20d'] = (df[col] - mean) / (std + 1e-10)
+
+    # Cross-interactions
+    if 'vix_close' in df.columns and 'hy_spread' in df.columns:
+        df['risk_aversion'] = df['vix_close_z20d'] + df['hy_spread_z20d']  # combined risk-off
+    if 'spx_close' in df.columns and 'gold_close' in df.columns:
+        df['risk_on_off_ratio'] = df.groupby('symbol').apply(
+            lambda g: g['spx_close'].pct_change(24).rolling(120).corr(
+                g['gold_close'].pct_change(24))
+        ).reset_index(level=0, drop=True)
+    if 'yield_10y_close' in df.columns and 'breakeven_10y' in df.columns:
+        df['real_rate'] = df['yield_10y_close'] - df['breakeven_10y']
+        df['real_rate_chg_5d'] = df.groupby('symbol')['real_rate'].transform(
+            lambda x: x.diff(120))
+
+    n_after = len(df.columns)
+    n_new = n_after - n_before
+    print(f"      Macro raw: {len([c for c in raw_cols if c in df.columns])} cols, "
+          f"derived: {n_new}, total new: {n_new + len([c for c in raw_cols if c in df.columns])}")
     return df
 
 
@@ -1733,6 +1822,7 @@ def main():
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_calendar_features(df)
+    df = add_macro_features(df, project_root)
     df = add_sentiment_features(df, project_root, news_mode=args.news_mode)
     if not args.no_derivatives:
         df = add_derivatives_features(df, project_root)

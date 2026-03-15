@@ -121,6 +121,12 @@ UNRANKED_COLS = {
     'political_news_volume_zscore',
     # Binary flags (should NOT be ranked)
     'has_news_data', 'news_coverage_ok', 'news_event',
+    # Macro / cross-market features (market-level, same for all coins)
+    'vix_close', 'spx_close', 'dxy_close', 'gold_close',
+    'yield_10y_close', 'hy_spread', 'breakeven_10y',
+    'yield_curve_10y2y', 'fed_funds_rate',
+    'vix_close_z20d', 'hy_spread_z20d', 'breakeven_10y_z20d',
+    'yield_curve_10y2y_z20d', 'risk_aversion', 'real_rate',
 }
 
 # Default risk config (overridden by optimal_config.json)
@@ -354,6 +360,46 @@ def build_features(df):
 
     # Clean up
     df.drop(columns=['btc_close', 'eth_close', 'btc_r'], inplace=True, errors='ignore')
+
+    # ── Macro / cross-market features (from FRED) ──
+    macro_path = os.path.join(root, 'data', 'sentiment', 'macro_daily.parquet')
+    if os.path.exists(macro_path):
+        macro = pd.read_parquet(macro_path)
+        macro['date'] = pd.to_datetime(macro['date']).dt.date
+        df['date'] = df['timestamp'].dt.date
+        df = df.merge(macro, on='date', how='left')
+        df.drop(columns=['date'], inplace=True, errors='ignore')
+
+        raw_cols = ['vix_close', 'spx_close', 'dxy_close', 'gold_close',
+                    'yield_10y_close', 'hy_spread', 'breakeven_10y',
+                    'yield_curve_10y2y', 'fed_funds_rate']
+        for col in raw_cols:
+            if col in df.columns:
+                df[col] = df[col].ffill().bfill()
+
+        # Changes
+        change_cols = ['vix_close', 'spx_close', 'dxy_close', 'gold_close',
+                       'hy_spread', 'breakeven_10y', 'yield_curve_10y2y']
+        for col in change_cols:
+            if col not in df.columns:
+                continue
+            for hours, suffix in [(24, '1d'), (120, '5d'), (480, '20d')]:
+                df[f'{col}_chg_{suffix}'] = df.groupby('symbol')[col].transform(
+                    lambda x: x.pct_change(hours))
+
+        # Z-scores
+        for col in ['vix_close', 'hy_spread', 'breakeven_10y', 'yield_curve_10y2y']:
+            if col not in df.columns:
+                continue
+            mean = df.groupby('symbol')[col].transform(lambda x: x.rolling(480, min_periods=120).mean())
+            std = df.groupby('symbol')[col].transform(lambda x: x.rolling(480, min_periods=120).std())
+            df[f'{col}_z20d'] = (df[col] - mean) / (std + 1e-10)
+
+        # Cross-interactions
+        if 'vix_close_z20d' in df.columns and 'hy_spread_z20d' in df.columns:
+            df['risk_aversion'] = df['vix_close_z20d'] + df['hy_spread_z20d']
+        if 'yield_10y_close' in df.columns and 'breakeven_10y' in df.columns:
+            df['real_rate'] = df['yield_10y_close'] - df['breakeven_10y']
 
     # Replace inf/nan
     for col in df.select_dtypes(include=[np.number]).columns:

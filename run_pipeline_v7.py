@@ -129,6 +129,12 @@ REGIME_COLS = {
     'dvol_eth', 'dvol_eth_change_12h', 'dvol_eth_change_24h',
     'dvol_eth_z_30d', 'dvol_eth_z_60d',
     'dvol_spread', 'dvol_term_ratio', 'dvol_vol_of_vol',
+    # Macro / cross-market features (market-level, same for all coins)
+    'vix_close', 'spx_close', 'dxy_close', 'gold_close',
+    'yield_10y_close', 'hy_spread', 'breakeven_10y',
+    'yield_curve_10y2y', 'fed_funds_rate',
+    'vix_close_z20d', 'hy_spread_z20d', 'breakeven_10y_z20d',
+    'yield_curve_10y2y_z20d', 'risk_aversion', 'real_rate',
 }
 
 # Cost model for perpetual swaps — v7 (12h rebalance)
@@ -1165,8 +1171,9 @@ def main():
         df = add_residual_targets(df, beta_window=168)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
-    from run_pipeline_v6 import add_calendar_features
+    from run_pipeline_v6 import add_calendar_features, add_macro_features
     df = add_calendar_features(df)
+    df = add_macro_features(df, project_root)
     # News support: v7's add_sentiment_features has NO news loading code.
     # v6's add_sentiment_features is a SUPERSET of v7's (same FNG/funding/LSR/synthetic
     # code, plus news). The v7-unique features (cum_funding, funding_cs_rank) are in
