@@ -174,6 +174,17 @@ def main():
                          "Higher = more concentration on strong signals.")
     ap.add_argument("--no-ddstop", action="store_true",
                     help="Disable drawdown stop completely (for diagnostic runs).")
+    ap.add_argument("--hysteresis", type=int, default=0,
+                    help="Position hysteresis: keep position until rank drops below N+hysteresis. "
+                         "E.g. --hysteresis 5: enter top-10, keep until rank > 15. 0=off.")
+    ap.add_argument("--turnover-budget", type=int, default=0,
+                    help="Max replacements per side per rebalance (e.g. 3-5). 0=unlimited.")
+    ap.add_argument("--min-zscore", type=float, default=0.0,
+                    help="Min |z-score| to open a position. Implements dynamic N: "
+                         "only trade coins with |z| > threshold. 0=off (fixed N).")
+    ap.add_argument("--dynamic-n", action="store_true",
+                    help="Dynamic N: vary positions per side based on cross-sectional dispersion. "
+                         "Low dispersion → fewer positions (min 3), high → up to N.")
     ap.add_argument("--meta-model", type=str, default=None, nargs='?', const='auto',
                     help="Use meta-model stacking instead of simple mean. "
                          "Pass path to meta_model.pkl or 'auto' to find in results/meta_stack/")
@@ -1035,31 +1046,65 @@ def main():
                 step_leverage = max(1.0, step_leverage * 0.3)  # reduce to 30% of planned lev
                 event_reduce_count += 1
 
+        # ── Dynamic N: adjust positions per side based on dispersion ──
+        if args.dynamic_n:
+            score_z = (scores - np.mean(scores)) / (np.std(scores) + 1e-10)
+            disp = np.std(score_z)
+            # Low dispersion → fewer positions, high → up to n_pos
+            # disp typical range: 0.7-1.5. Thresholds tuned empirically.
+            if disp < 0.85:
+                step_n_pos = max(3, n_pos // 2)  # min 3 per side
+            elif disp < 1.0:
+                step_n_pos = max(5, int(n_pos * 0.7))
+            else:
+                step_n_pos = n_pos
+        else:
+            step_n_pos = n_pos
+
+        # ── Min z-score filter: skip weak signals ──
+        if args.min_zscore > 0:
+            score_z = (scores - np.mean(scores)) / (np.std(scores) + 1e-10)
+
         if min_edge > 0:
             # Select only positions with sufficient edge
             long_idx = []
             for idx in order_desc:
                 if edges[idx] >= min_edge:
+                    # Min z-score filter
+                    if args.min_zscore > 0:
+                        if score_z[idx] < args.min_zscore:
+                            continue
                     long_idx.append(idx)
-                if len(long_idx) >= n_pos:
+                if len(long_idx) >= step_n_pos:
                     break
             short_idx = []
             for idx in order_asc:
                 if edges[idx] <= -min_edge:
+                    # Min z-score filter
+                    if args.min_zscore > 0:
+                        if score_z[idx] > -args.min_zscore:
+                            continue
                     # Skip OKX-blocked symbols when --short-blocked is on
                     if args.short_blocked and _OKX_BLOCKED and syms[idx] in _OKX_BLOCKED:
                         continue
                     short_idx.append(idx)
-                if len(short_idx) >= n_pos:
+                if len(short_idx) >= step_n_pos:
                     break
             new_L = set(syms[long_idx]) if long_idx else set()
             new_S = set(syms[short_idx]) if short_idx else set()
             nl = len(long_idx)
         else:
             n = len(syms)
-            nl = min(n_pos, n // 3)
-            new_L = set(syms[order_desc[:nl]])
-            new_S = set(syms[order_asc[:nl]])
+            nl = min(step_n_pos, n // 3)
+            if args.min_zscore > 0:
+                score_z_loc = (scores - np.mean(scores)) / (np.std(scores) + 1e-10)
+                cand_L = [i for i in order_desc if score_z_loc[i] >= args.min_zscore]
+                cand_S = [i for i in order_asc if score_z_loc[i] <= -args.min_zscore]
+                new_L = set(syms[cand_L[:nl]])
+                new_S = set(syms[cand_S[:nl]])
+            else:
+                new_L = set(syms[order_desc[:nl]])
+                new_S = set(syms[order_asc[:nl]])
 
         # ── Short-blocked filter: skip OKX-restricted symbols for shorts ──
         if args.short_blocked and _OKX_BLOCKED:
@@ -1077,6 +1122,66 @@ def main():
                     if min_edge > 0 and edges[idx] > -min_edge:
                         continue
                     new_S.add(syms[idx])
+
+        # ── Hysteresis: keep incumbents unless they fall below threshold ──
+        if args.hysteresis > 0 and (held_L or held_S):
+            sym_to_rank_desc = {syms[i]: i for i in range(len(syms))}  # 0 = best long
+            sym_to_rank_asc = {syms[order_asc[i]]: i for i in range(len(order_asc))}  # 0 = best short
+            keep_threshold = step_n_pos + args.hysteresis  # e.g. 10 + 5 = 15
+
+            # Longs: keep incumbent if rank < keep_threshold, even if not in new top-N
+            sticky_L = set()
+            for s in held_L:
+                if s in sym_to_rank_desc and sym_to_rank_desc[s] < keep_threshold:
+                    sticky_L.add(s)
+            # Merge: incumbents that still qualify + new entries
+            merged_L = sticky_L | new_L
+            # If too many, trim worst by score
+            if len(merged_L) > step_n_pos:
+                sym_list = list(syms)
+                ranked = sorted(merged_L, key=lambda s: -scores[sym_list.index(s)])
+                merged_L = set(ranked[:step_n_pos])
+
+            # Shorts: symmetric
+            sticky_S = set()
+            for s in held_S:
+                if s in sym_to_rank_asc and sym_to_rank_asc[s] < keep_threshold:
+                    sticky_S.add(s)
+            merged_S = sticky_S | new_S
+            if len(merged_S) > step_n_pos:
+                ranked = sorted(merged_S, key=lambda s: scores[list(syms).index(s)])
+                merged_S = set(ranked[:step_n_pos])
+
+            new_L = merged_L
+            new_S = merged_S
+
+        # ── Turnover budget: cap replacements per side ──
+        if args.turnover_budget > 0 and (held_L or held_S):
+            budget = args.turnover_budget
+
+            # Longs: limit exits
+            exits_L = set(held_L) - new_L
+            enters_L = new_L - set(held_L)
+            if len(exits_L) > budget:
+                # Keep the best-scoring exits (they're least bad)
+                exits_sorted = sorted(exits_L, key=lambda s: -scores[list(syms).index(s)])
+                forced_keep = set(exits_sorted[:len(exits_L) - budget])
+                new_L = new_L | forced_keep
+                # If too many now, drop worst new entries
+                if len(new_L) > step_n_pos:
+                    ranked = sorted(new_L, key=lambda s: -scores[list(syms).index(s)])
+                    new_L = set(ranked[:step_n_pos])
+
+            # Shorts: symmetric
+            exits_S = set(held_S) - new_S
+            enters_S = new_S - set(held_S)
+            if len(exits_S) > budget:
+                exits_sorted = sorted(exits_S, key=lambda s: scores[list(syms).index(s)])
+                forced_keep = set(exits_sorted[:len(exits_S) - budget])
+                new_S = new_S | forced_keep
+                if len(new_S) > step_n_pos:
+                    ranked = sorted(new_S, key=lambda s: scores[list(syms).index(s)])
+                    new_S = set(ranked[:step_n_pos])
 
         if len(new_L) == 0 and len(new_S) == 0:
             # No positions pass the edge filter — skip step

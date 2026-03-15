@@ -721,7 +721,8 @@ def run_optuna_hpo(X_train, y_train, X_val, y_val, val_dates, n_trials=50):
 # TRAINING
 # ============================================================
 
-def train_lgbm(X_train, y_train, X_val, y_val, custom_params=None, seed=42):
+def train_lgbm(X_train, y_train, X_val, y_val, custom_params=None, seed=42,
+               sample_weight=None):
     base_params = {
         'objective': 'regression',
         'metric': 'mse',
@@ -745,11 +746,13 @@ def train_lgbm(X_train, y_train, X_val, y_val, custom_params=None, seed=42):
     base_params['random_state'] = seed
 
     model = lgb.LGBMRegressor(**base_params)
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        callbacks=[lgb.early_stopping(100), lgb.log_evaluation(200)],
-    )
+    fit_kwargs = {
+        'eval_set': [(X_val, y_val)],
+        'callbacks': [lgb.early_stopping(100), lgb.log_evaluation(200)],
+    }
+    if sample_weight is not None:
+        fit_kwargs['sample_weight'] = sample_weight
+    model.fit(X_train, y_train, **fit_kwargs)
     return model
 
 
@@ -820,7 +823,8 @@ def _compute_groups(df_subset):
 
 def train_multi_seed(X_train, y_train, X_val, y_val, X_test,
                      params=None, seeds=None,
-                     use_ranker=False, train_groups=None, val_groups=None):
+                     use_ranker=False, train_groups=None, val_groups=None,
+                     sample_weight=None):
     seeds = seeds or SEEDS
     print(f"\n   🌱 Multi-seed ensemble ({len(seeds)} seeds)"
           f"{'[LambdaRank]' if use_ranker else ''}...")
@@ -835,7 +839,8 @@ def train_multi_seed(X_train, y_train, X_val, y_val, X_test,
                                       custom_params=params, seed=seed)
         else:
             model = train_lgbm(X_train, y_train, X_val, y_val,
-                               custom_params=params, seed=seed)
+                               custom_params=params, seed=seed,
+                               sample_weight=sample_weight)
         preds = model.predict(X_test)
         all_preds.append(preds)
         all_models.append(model)
@@ -1104,6 +1109,13 @@ def main():
                         help='Hybrid normalization: CS-rank + TS-zscore for spike features')
     parser.add_argument('--lambdarank', action='store_true',
                         help='Use LambdaRank (LGBMRanker) instead of LGBMRegressor')
+    parser.add_argument('--huber', action='store_true',
+                        help='Use Huber loss instead of MSE (robust to outlier returns)')
+    parser.add_argument('--huber-alpha', type=float, default=0.9,
+                        help='Huber loss alpha parameter (0.5-0.99, higher = closer to MSE)')
+    parser.add_argument('--deadzone-weight', type=float, default=0.0,
+                        help='Dead-zone sample weighting: down-weight |ret| < threshold. '
+                             'Value is threshold in %% (e.g. 0.3 = 0.3%%). 0=off.')
     parser.add_argument('--null-importance', action='store_true',
                         help='Use null-importance feature selection instead of gain-based')
     parser.add_argument('--no-news', action='store_true',
@@ -1257,6 +1269,29 @@ def main():
         # --- Multi-seed ensemble ---
         X_pred = test[selected_feats] if has_test else val[selected_feats]
 
+        # --- Huber loss override ---
+        if args.huber:
+            if best_params is None:
+                best_params = {}
+            best_params['objective'] = 'huber'
+            best_params['huber_delta'] = args.huber_alpha
+            print(f"   🛡️  Huber loss enabled (alpha={args.huber_alpha})")
+
+        # --- Dead-zone sample weighting ---
+        sw = None
+        if args.deadzone_weight > 0:
+            tau = args.deadzone_weight / 100.0  # e.g. 0.3 → 0.003
+            # v7 uses blended target, find raw return column
+            raw_col = f'target_ret_{HORIZON}h'
+            if raw_col in train.columns:
+                raw_target = train[raw_col]
+            else:
+                raw_target = train['target_rank']  # fallback
+            sw = np.where(np.abs(raw_target) > tau, 1.0, 0.2)
+            pct_upweight = (sw > 0.5).mean() * 100
+            print(f"   ⚖️  Dead-zone weighting: τ={args.deadzone_weight}%, "
+                  f"{pct_upweight:.0f}% samples full-weight")
+
         ranker_kwargs = {}
         if args.lambdarank:
             ranker_kwargs['use_ranker'] = True
@@ -1269,6 +1304,7 @@ def main():
             X_pred,
             params=best_params,
             seeds=SEEDS[:args.seeds],
+            sample_weight=sw,
             **ranker_kwargs,
         )
         if has_test:
