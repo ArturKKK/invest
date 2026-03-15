@@ -63,6 +63,26 @@ FRED_SERIES = {
         'desc': '10-Year Treasury Yield',
         'col': 'yield_10y_close',
     },
+    'hy_spread': {
+        'series_id': 'BAMLH0A0HYM2',
+        'desc': 'High Yield Credit Spread (ICE BofA)',
+        'col': 'hy_spread',
+    },
+    'breakeven10y': {
+        'series_id': 'T10YIE',
+        'desc': '10Y Breakeven Inflation Rate',
+        'col': 'breakeven_10y',
+    },
+    'yield_curve': {
+        'series_id': 'T10Y2Y',
+        'desc': 'Yield Curve (10Y minus 2Y)',
+        'col': 'yield_curve_10y2y',
+    },
+    'fed_rate': {
+        'series_id': 'DFF',
+        'desc': 'Federal Funds Effective Rate',
+        'col': 'fed_funds_rate',
+    },
 }
 
 
