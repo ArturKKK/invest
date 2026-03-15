@@ -127,6 +127,16 @@ UNRANKED_COLS = {
     'yield_curve_10y2y', 'fed_funds_rate',
     'vix_close_z20d', 'hy_spread_z20d', 'breakeven_10y_z20d',
     'yield_curve_10y2y_z20d', 'risk_aversion', 'real_rate',
+    # Macro changes (1d/5d/20d) — market-level, not ranked
+    'vix_close_chg_1d', 'vix_close_chg_5d', 'vix_close_chg_20d',
+    'spx_close_chg_1d', 'spx_close_chg_5d', 'spx_close_chg_20d',
+    'dxy_close_chg_1d', 'dxy_close_chg_5d', 'dxy_close_chg_20d',
+    'gold_close_chg_1d', 'gold_close_chg_5d', 'gold_close_chg_20d',
+    'hy_spread_chg_1d', 'hy_spread_chg_5d', 'hy_spread_chg_20d',
+    'breakeven_10y_chg_1d', 'breakeven_10y_chg_5d', 'breakeven_10y_chg_20d',
+    'yield_curve_10y2y_chg_1d', 'yield_curve_10y2y_chg_5d', 'yield_curve_10y2y_chg_20d',
+    # Macro cross-interactions
+    'risk_on_off_ratio', 'real_rate_chg_5d',
 }
 
 # Default risk config (overridden by optimal_config.json)
@@ -398,8 +408,15 @@ def build_features(df):
         # Cross-interactions
         if 'vix_close_z20d' in df.columns and 'hy_spread_z20d' in df.columns:
             df['risk_aversion'] = df['vix_close_z20d'] + df['hy_spread_z20d']
+        if 'spx_close' in df.columns and 'gold_close' in df.columns:
+            df['risk_on_off_ratio'] = df.groupby('symbol').apply(
+                lambda g: g['spx_close'].pct_change(24).rolling(120).corr(
+                    g['gold_close'].pct_change(24))
+            ).reset_index(level=0, drop=True)
         if 'yield_10y_close' in df.columns and 'breakeven_10y' in df.columns:
             df['real_rate'] = df['yield_10y_close'] - df['breakeven_10y']
+            df['real_rate_chg_5d'] = df.groupby('symbol')['real_rate'].transform(
+                lambda x: x.diff(120))
 
     # Replace inf/nan
     for col in df.select_dtypes(include=[np.number]).columns:

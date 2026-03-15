@@ -135,6 +135,16 @@ REGIME_COLS = {
     'yield_curve_10y2y', 'fed_funds_rate',
     'vix_close_z20d', 'hy_spread_z20d', 'breakeven_10y_z20d',
     'yield_curve_10y2y_z20d', 'risk_aversion', 'real_rate',
+    # Macro changes (1d/5d/20d) — market-level, not ranked
+    'vix_close_chg_1d', 'vix_close_chg_5d', 'vix_close_chg_20d',
+    'spx_close_chg_1d', 'spx_close_chg_5d', 'spx_close_chg_20d',
+    'dxy_close_chg_1d', 'dxy_close_chg_5d', 'dxy_close_chg_20d',
+    'gold_close_chg_1d', 'gold_close_chg_5d', 'gold_close_chg_20d',
+    'hy_spread_chg_1d', 'hy_spread_chg_5d', 'hy_spread_chg_20d',
+    'breakeven_10y_chg_1d', 'breakeven_10y_chg_5d', 'breakeven_10y_chg_20d',
+    'yield_curve_10y2y_chg_1d', 'yield_curve_10y2y_chg_5d', 'yield_curve_10y2y_chg_20d',
+    # Macro cross-interactions
+    'risk_on_off_ratio', 'real_rate_chg_5d',
 }
 
 # Cost model for perpetual swaps — v7 (12h rebalance)
