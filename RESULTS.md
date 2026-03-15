@@ -1285,15 +1285,32 @@ Train-time metrics (CB Sharpe 36.6, XGB Sharpe 46.5) were artifact of 4-period v
 
 **DVOL discarded.** Baseline HAC 8.14 remains best.
 
-### Pending: v8 experiment (macro features ± DVOL) — launched 15 Mar 2026
+### ~~Pending~~ Completed: v8 experiment (macro features ± DVOL) — 15-16 Mar 2026
 
 Added ~38 FRED macro features (VIX, S&P500, DXY, Gold, 10Y Yield, HY Spread, Breakeven Inflation, Yield Curve, Fed Funds Rate + changes + z-scores + cross-interactions).
 Script `run_overnight_v8.sh`: macro-only (DVOL hidden) vs macro+DVOL vs v4-best baseline.
-**Hypothesis**: macro regime features (risk-on/off, rate environment) add orthogonal alpha — different signal type than DVOL.
+
+**Results** (51-step sim, 2026-02-09 → 2026-03-07):
+
+| Config | HAC | Sharpe | Return | MaxDD | WR | Feats (v6) |
+|---|---|---|---|---|---|---|
+| **A: Macro only (no DVOL)** | 7.64 | 7.01 | +17.8% | -5.2% | 61% | 190 |
+| **B: Macro + DVOL** | **8.36** | **7.39** | +18.8% | -4.5% | 63% | 200 |
+| **C: v4 baseline** | 8.14 | 7.29 | +18.8% | -4.5% | 65% | 160 |
+
+**Key findings:**
+1. **Macro alone HURTS**: A vs C → HAC −6.1% (7.64 vs 8.14), WR −4pp, DD worse (−5.2% vs −4.5%).
+2. **Macro+DVOL slightly beats baseline**: B vs C → HAC +2.7% (8.36 vs 8.14). BUT:
+   - WR dropped (63% vs 65%), feats grew 25% (160→200)
+   - Each component alone is negative — synergy may be val-period artifact
+   - Δ +0.22 HAC too small for 51-step window to be statistically reliable
+3. **Pattern**: both DVOL-alone (v7) and macro-alone (v8A) hurt individually. Combined they happen to help on this window, but fragility is high.
+
+**Verdict: MACRO DISCARDED** ❌ — improvement too small and fragile. Baseline HAC 8.14 remains best.
 
 ---
 
-## Experiment Results Master Table (15 Mar 2026)
+## Experiment Results Master Table (16 Mar 2026)
 
 | Exp | Config | HAC | Sharpe | Return | MaxDD | WR | Verdict |
 |---|---|---|---|---|---|---|---|
@@ -1305,6 +1322,7 @@ Script `run_overnight_v8.sh`: macro-only (DVOL hidden) vs macro+DVOL vs v4-best 
 | v5 | v6 news A/B (Huber) | 8.14 vs 7.11 | — | — | — | 65% vs 63% | news help v6 under Huber |
 | v6 | v7+news | 7.72 | 6.76 | +17.2% | -4.5% | 63% | news hurt v7 |
 | v7 | +DVOL (13 features) | 7.73 | 6.59 | +17.1% | -4.5% | 63% | DVOL hurt |
-| **v8** | **+macro (±DVOL)** | **?** | **?** | **?** | **?** | **?** | **running** |
+| v8A | +macro only | 7.64 | 7.01 | +17.8% | -5.2% | 61% | macro hurt |
+| v8B | +macro +DVOL | 8.36 | 7.39 | +18.8% | -4.5% | 63% | +2.7% but fragile |
 
 ---
