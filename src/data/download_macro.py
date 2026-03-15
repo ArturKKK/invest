@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """Download macro / cross-market data for regime features.
 
-Sources (via Alpha Vantage free API):
-  - VIX — equity implied volatility / fear gauge
-  - DXY — US Dollar Index (via UUP ETF proxy)
-  - SPX — S&P 500 (via SPY ETF)
-  - Gold — Gold spot price
-  - 10Y Yield — US 10-Year Treasury yield
+Sources (via FRED API — Federal Reserve Economic Data):
+  - VIX  (VIXCLS)          — CBOE Volatility Index, daily close
+  - SPX  (SP500)            — S&P 500 index
+  - DXY  (DTWEXBGS)         — Trade-Weighted USD Index (Broad, Goods & Services)
+  - Gold (GOLDAMGBD228NLBM) — Gold fixing price, London Bullion Market (USD/troy oz)
+  - 10Y  (DGS10)            — 10-Year Treasury Constant Maturity Rate
 
-Alpha Vantage: free key, 25 req/day (standard), 75 req/min (premium).
-  Get key: https://www.alphavantage.co/support/#api-key
+FRED API: completely free, 120 req/min, no daily limit.
+  Get key: https://fred.stlouisfed.org/docs/api/api_key.html
 
 Daily frequency — forward-filled to hourly in pipeline.
 
 Output: data/sentiment/macro_daily.parquet
-Columns: date, vix_close, vix_high, dxy_close, spx_close, gold_close, yield_10y_close
+Columns: date, vix_close, spx_close, dxy_close, gold_close, yield_10y_close
 
 Incremental: loads existing, appends new dates, dedup.
 """
 
 import os
 import sys
-import time
 import argparse
 from datetime import datetime, timedelta, timezone
 
@@ -34,49 +33,42 @@ OUTPUT_FILE = 'macro_daily.parquet'
 
 DEFAULT_START = '2020-01-01'
 
-# ── Alpha Vantage endpoints ──────────────────────────────────────
+# ── FRED series ──────────────────────────────────────────────────
 
-AV_BASE = 'https://www.alphavantage.co/query'
+FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations'
 
-# Each ticker: AV function + params + column mapping
-AV_TICKERS = {
+FRED_SERIES = {
     'vix': {
+        'series_id': 'VIXCLS',
         'desc': 'VIX (CBOE Volatility Index)',
-        'function': 'TIME_SERIES_DAILY',
-        'symbol': 'VIXY',      # ProShares VIX Short-Term Futures ETF
-        'cols': {'4. close': 'vix_close', '2. high': 'vix_high'},
+        'col': 'vix_close',
     },
     'spx': {
-        'desc': 'S&P 500 (SPY ETF)',
-        'function': 'TIME_SERIES_DAILY',
-        'symbol': 'SPY',       # SPY ETF as S&P proxy
-        'cols': {'4. close': 'spx_close'},
+        'series_id': 'SP500',
+        'desc': 'S&P 500',
+        'col': 'spx_close',
     },
     'dxy': {
-        'desc': 'US Dollar Index (UUP ETF)',
-        'function': 'TIME_SERIES_DAILY',
-        'symbol': 'UUP',       # Invesco DB USD Index Bullish Fund
-        'cols': {'4. close': 'dxy_close'},
+        'series_id': 'DTWEXBGS',
+        'desc': 'US Dollar Index (Trade-Weighted)',
+        'col': 'dxy_close',
     },
     'gold': {
-        'desc': 'Gold (GLD ETF)',
-        'function': 'TIME_SERIES_DAILY',
-        'symbol': 'GLD',       # SPDR Gold Shares ETF
-        'cols': {'4. close': 'gold_close'},
+        'series_id': 'NASDAQQGLDI',
+        'desc': 'Gold (NASDAQ Gold FLOWS Index)',
+        'col': 'gold_close',
     },
     'yield10y': {
-        'desc': '10Y US Treasury Yield',
-        'function': 'TREASURY_YIELD',
-        'interval': 'daily',
-        'maturity': '10year',
-        'cols': {'value': 'yield_10y_close'},
+        'series_id': 'DGS10',
+        'desc': '10-Year Treasury Yield',
+        'col': 'yield_10y_close',
     },
 }
 
 
 def get_api_key(key_arg: str = None) -> str:
-    """Get Alpha Vantage API key from arg, env, or .env file."""
-    key = key_arg or os.environ.get('ALPHAVANTAGE_API_KEY') or os.environ.get('AV_API_KEY')
+    """Get FRED API key from arg, env, or .env file."""
+    key = key_arg or os.environ.get('FRED_API_KEY')
     if key:
         return key
 
@@ -86,120 +78,58 @@ def get_api_key(key_arg: str = None) -> str:
         with open(env_path) as f:
             for line in f:
                 line = line.strip()
-                if line.startswith('ALPHAVANTAGE_API_KEY=') or line.startswith('AV_API_KEY='):
+                if line.startswith('FRED_API_KEY='):
                     return line.split('=', 1)[1].strip().strip('"').strip("'")
 
-    print("   ❌ No Alpha Vantage API key found!")
-    print("      Get a FREE key: https://www.alphavantage.co/support/#api-key")
+    print("   ❌ No FRED API key found!")
+    print("      Get a FREE key: https://fred.stlouisfed.org/docs/api/api_key.html")
     print("      Then either:")
     print("        --api-key YOUR_KEY")
-    print("        export ALPHAVANTAGE_API_KEY=YOUR_KEY")
-    print("        echo 'ALPHAVANTAGE_API_KEY=YOUR_KEY' >> .env")
+    print("        export FRED_API_KEY=YOUR_KEY")
+    print("        echo 'FRED_API_KEY=YOUR_KEY' >> .env")
     sys.exit(1)
 
 
-def download_av_time_series(api_key: str, ticker_cfg: dict, start_date: str) -> pd.DataFrame:
-    """Download daily data from Alpha Vantage."""
+def download_fred_series(api_key: str, series_id: str, col_name: str,
+                         start_date: str, end_date: str) -> pd.DataFrame:
+    """Download a single FRED series as DataFrame with columns [date, col_name]."""
     params = {
-        'function': ticker_cfg['function'],
-        'apikey': api_key,
+        'series_id': series_id,
+        'api_key': api_key,
+        'file_type': 'json',
+        'observation_start': start_date,
+        'observation_end': end_date,
+        'sort_order': 'asc',
     }
-
-    # Add optional params
-    if 'symbol' in ticker_cfg:
-        params['symbol'] = ticker_cfg['symbol']
-    if 'interval' in ticker_cfg:
-        params['interval'] = ticker_cfg['interval']
-    if 'maturity' in ticker_cfg:
-        params['maturity'] = ticker_cfg['maturity']
 
     for attempt in range(3):
         try:
-            resp = requests.get(AV_BASE, params=params, timeout=30)
+            resp = requests.get(FRED_BASE, params=params, timeout=30)
             resp.raise_for_status()
             data = resp.json()
 
-            # Check for rate limit / error messages
-            if 'Note' in data or 'Information' in data:
-                msg = data.get('Note', data.get('Information', ''))
-                if 'call frequency' in msg.lower() or 'rate limit' in msg.lower():
-                    wait = 65
-                    print(f"\n      Rate limited, waiting {wait}s...", end=' ')
-                    time.sleep(wait)
-                    continue
-                if 'premium' in msg.lower():
-                    print(f"\n      ❌ Premium feature required: {msg[:80]}")
-                    return pd.DataFrame()
-                print(f"\n      ⚠️ API note: {msg[:80]}...")
-
-            if 'Error Message' in data:
-                print(f"\n      ❌ API error: {data['Error Message'][:80]}")
+            if 'error_code' in data:
+                print(f"\n      ❌ FRED error: {data.get('error_message', 'unknown')[:80]}")
                 return pd.DataFrame()
 
-            # Parse based on function type
-            func = ticker_cfg['function']
-
-            if func == 'TIME_SERIES_DAILY':
-                ts_key = 'Time Series (Daily)'
-                if ts_key not in data:
-                    print(f"\n      ❌ No '{ts_key}' in response. Keys: {list(data.keys())[:5]}")
-                    return pd.DataFrame()
-                ts = data[ts_key]
-                df = pd.DataFrame.from_dict(ts, orient='index')
-                df.index = pd.to_datetime(df.index)
-                df = df.sort_index()
-                for col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-
-            elif func == 'TREASURY_YIELD':
-                if 'data' not in data:
-                    print(f"\n      ❌ No 'data' in response. Keys: {list(data.keys())[:5]}")
-                    return pd.DataFrame()
-                records = data['data']
-                df = pd.DataFrame(records)
-                df['date'] = pd.to_datetime(df['date'])
-                df = df.set_index('date').sort_index()
-                df['value'] = pd.to_numeric(df['value'], errors='coerce')
-
-            elif func == 'GOLD_SILVER_HISTORY':
-                if 'data' not in data:
-                    print(f"\n      ❌ No 'data' in response. Keys: {list(data.keys())[:5]}")
-                    return pd.DataFrame()
-                records = data['data']
-                df = pd.DataFrame(records)
-                df['date'] = pd.to_datetime(df['date'])
-                df = df.set_index('date').sort_index()
-                df['close'] = pd.to_numeric(df['close'], errors='coerce')
-
-            else:
-                print(f"\n      ❌ Unknown function: {func}")
+            observations = data.get('observations', [])
+            if not observations:
+                print(f"\n      ❌ No observations returned")
                 return pd.DataFrame()
 
-            # Filter by start date
-            start_ts = pd.Timestamp(start_date)
-            df = df[df.index >= start_ts]
-
-            # Rename columns
-            col_map = ticker_cfg['cols']
-            rename = {}
-            for src, dst in col_map.items():
-                if src in df.columns:
-                    rename[src] = dst
-            df = df.rename(columns=rename)
-
-            # Keep only mapped columns
-            keep = [c for c in col_map.values() if c in df.columns]
-            if not keep:
-                print(f"\n      ❌ No matching columns. Available: {list(df.columns)[:10]}")
-                return pd.DataFrame()
-
-            df = df[keep]
-            df.index.name = 'date'
-            return df.reset_index()
+            df = pd.DataFrame(observations)
+            df['date'] = pd.to_datetime(df['date'])
+            # FRED uses '.' for missing values
+            df['value'] = pd.to_numeric(df['value'], errors='coerce')
+            df = df[['date', 'value']].rename(columns={'value': col_name})
+            df = df.dropna(subset=[col_name])
+            df = df.sort_values('date').reset_index(drop=True)
+            return df
 
         except Exception as e:
             if attempt < 2:
-                wait = 10 * (attempt + 1)
+                import time
+                wait = 5 * (attempt + 1)
                 print(f"\n      Retry {attempt+1}/3: {e}, waiting {wait}s...", end=' ')
                 time.sleep(wait)
             else:
@@ -209,17 +139,17 @@ def download_av_time_series(api_key: str, ticker_cfg: dict, start_date: str) -> 
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Download macro/cross-market data (Alpha Vantage)')
+    parser = argparse.ArgumentParser(description='Download macro/cross-market data (FRED API)')
     parser.add_argument('--start', type=str, default=None,
                        help=f'Start date (default: {DEFAULT_START} or resume)')
     parser.add_argument('--full', action='store_true',
                        help='Force full re-download')
     parser.add_argument('--api-key', type=str, default=None,
-                       help='Alpha Vantage API key (or set ALPHAVANTAGE_API_KEY env)')
+                       help='FRED API key (or set FRED_API_KEY env)')
     args = parser.parse_args()
 
     print("=" * 60)
-    print("  Macro / Cross-Market Data Downloader (Alpha Vantage)")
+    print("  Macro / Cross-Market Data Downloader (FRED)")
     print("=" * 60)
 
     api_key = get_api_key(args.api_key)
@@ -243,32 +173,31 @@ def main():
 
     end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     print(f"   End:   {end_date}")
-    print(f"\n   ⚠️  Free tier: 25 req/day. We need {len(AV_TICKERS)} requests.")
+    print(f"\n   ℹ️  FRED API: free, 120 req/min, full history.")
     print()
 
-    # Download each ticker
+    # Download each series
     all_data = {}
-    for i, (prefix, cfg) in enumerate(AV_TICKERS.items()):
-        if i > 0:
-            time.sleep(13)  # ~5 req/min on free tier = 12s between calls
+    for i, (prefix, cfg) in enumerate(FRED_SERIES.items()):
+        series_id = cfg['series_id']
         desc = cfg['desc']
-        print(f"   📊 [{i+1}/{len(AV_TICKERS)}] {desc}...", end=' ')
+        col = cfg['col']
+        print(f"   📊 [{i+1}/{len(FRED_SERIES)}] {desc} ({series_id})...", end=' ')
 
-        df = download_av_time_series(api_key, cfg, start_date)
+        df = download_fred_series(api_key, series_id, col, start_date, end_date)
         if df.empty:
             print("❌ no data")
             continue
 
         all_data[prefix] = df
-        cols = [c for c in df.columns if c != 'date']
         print(f"✅ {len(df):,} days ({df['date'].iloc[0].strftime('%Y-%m-%d')} → "
-              f"{df['date'].iloc[-1].strftime('%Y-%m-%d')}) cols={cols}")
+              f"{df['date'].iloc[-1].strftime('%Y-%m-%d')})")
 
     if not all_data:
         print("\n   ❌ No data downloaded!")
         return
 
-    # Merge all tickers on date
+    # Merge all series on date
     merged = None
     for prefix, df in all_data.items():
         if merged is None:
