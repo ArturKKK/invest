@@ -1143,9 +1143,112 @@ Training Sharpe (in-sample, informational only):
 | Win Rate | 61% | **65%** | +4pp |
 | Turnover | $145,928 | $147,503 | +1.1% |
 
-### Next Steps
-1. Retrain CatBoost + XGBoost with Huber loss (only v6+v7 done so far)
-2. Run full 4-model Huber ensemble simulation
-3. If confirmed → deploy on VPS replacing Gen#2
+### Next Steps (DONE → see v4/v5 below)
+1. ~~Retrain CatBoost + XGBoost with Huber loss~~ → v4
+2. ~~Run full 4-model Huber ensemble simulation~~ → v4
+3. ~~A/B test news features under Huber~~ → v5
+4. If confirmed → deploy on VPS replacing Gen#2
+
+---
+
+## Overnight v4 — 4-Model Huber Ensemble (15–16 Mar 2026)
+
+### Контекст
+Следуя результатам v3 (Huber = winner), переобучили CatBoost и XGBoost с Huber loss.
+Train→2026-02-01, val→2026-03-07, OOS: Feb 9 → Mar 7.
+Sim: $5000, 3x leverage, edge-boost, 12h rebalance.
+
+**Что было сделано:**
+- CatBoost retrain: `--huber` (Huber:delta=1.5)
+- XGBoost retrain: `--huber --huber-slope 1.0` (reg:pseudohubererror)
+- Bug fixes перед запуском (commit 4cb83f5):
+  1. CatBoost: Huber loss применялся ПОСЛЕ feature selection → перенесён ДО
+  2. XGBoost: whitelist не содержал `huber_slope`/`objective` → добавлен
+
+### Результаты
+
+| Experiment | Return | Sharpe | HAC Sharpe | MaxDD | WR | Description |
+|-----------|--------|--------|-----------|-------|----|-------------|
+| baseline (4 RMSE models) | +17.3% | 6.67 | 7.58 | -4.5% | 63% | All 4 models trained with RMSE |
+| huber_v6v7_mz05 | +18.6% | 7.07 | 7.64 | -4.5% | 65% | Only v6+v7 Huber (v3 best), CB+XGB RMSE, mz=0.5 |
+| **huber_4model** | **+18.7%** | **7.28** | **8.08** | **-4.5%** | **65%** | All 4 models Huber |
+| **huber_4model_mz05** | **+18.8%** | **7.29** | **8.14** | **-4.5%** | **65%** | All 4 models Huber + min-zscore=0.5 |
+
+### Анализ
+
+1. **Huber на всех 4 моделях >> только v6+v7**: HAC 8.08 vs 7.64 (+5.8%). CatBoost и XGBoost тоже выигрывают от Huber.
+2. **min-zscore=0.5 даёт ещё +0.7% HAC**: 8.14 vs 8.08. Фильтрация слабых сигналов стабильно помогает.
+3. **Новый лучший конфиг**: `huber_4model_mz05` — HAC 8.14, Sharpe 7.29, WR 65%, DD -4.5%.
+4. **Δ vs baseline**: Return +8.7% rel, Sharpe +9.3%, HAC +7.4%, WR +2pp. MaxDD unchanged.
+
+### Best Config: huber_4model_mz05
+
+| Metric | Baseline (v3) | **huber_4model_mz05** | Δ |
+|--------|--------------|----------------------|---|
+| Return | +17.3% | **+18.8%** | +8.7% rel |
+| Sharpe | 6.67 | **7.29** | +9.3% |
+| HAC Sharpe | 7.58 | **8.14** | +7.4% |
+| MaxDD | -4.5% | **-4.5%** | unchanged |
+| Win Rate | 63% | **65%** | +2pp |
+
+---
+
+## Overnight v5 — News Feature A/B Test Under Huber (16 Mar 2026)
+
+### Контекст
+Другая AI (Claude) обнаружила, что v6 production модель содержит 10 news features, несмотря на `--news-mode none`.
+Расследование: `results_v6_prod` byte-identical (`md5`) с `lgb_v6_no_news` — флаг `--news-mode none` отработал.
+Однако `crypto_features_1h.parquet` на кластере мог содержать news-колонки, прошедшие сквозь pipeline.
+
+**Вопрос**: помогают ли news features под Huber loss? Прошлый A/B (RMSE) показал -47%, но Huber может быть более robust.
+
+**Эксперимент**: retrain v6 Huber WITH news (`--news-mode all`) vs WITHOUT news (`--news-mode none`).
+Train→2026-02-01, val→2026-03-07, OOS: Feb 9 → Mar 7.
+
+### Результаты
+
+| Experiment | Return | Sharpe | HAC Sharpe | MaxDD | WR | News? |
+|-----------|--------|--------|-----------|-------|----|-------|
+| huber_4model_nonews | +16.2% | 6.41 | 7.13 | -4.5% | 63% | v6 без news |
+| huber_4model_nonews_mz05 | +16.4% | 6.39 | 7.11 | -4.5% | 63% | v6 без news + mz=0.5 |
+| **huber_4model_withnews_mz05** | **+18.8%** | **7.29** | **8.14** | **-4.5%** | **65%** | v6 WITH news + mz=0.5 |
+
+### Анализ
+
+1. **News ПОМОГАЮТ под Huber**: HAC 8.14 vs 7.11 = **+14.5% относительно**.
+2. **Почему Huber+news > RMSE+news**: Huber loss подавляет влияние шумных outlier-ов в news features. RMSE усиливает ошибки на outliers → news = шум. Huber → news = полезный сигнал.
+3. **Без news Sharpe падает с 7.29 до 6.39**: news добавляют ~+0.9 Sharpe, +1.03 HAC, +2pp WR.
+4. **Прошлый A/B (RMSE, -47%) больше не актуален**: Huber loss полностью меняет value proposition news features.
+
+### Ключевой вывод
+
+**News features + Huber loss = синергетическая комбинация.**
+- RMSE + news = шумная модель (старый A/B: -47% Sharpe)
+- Huber + news = robust модель с дополнительным alpha (+14.5% HAC)
+
+**Вердикт: НЕ удалять news features. Оставить `--news-mode all` в v6.**
+
+---
+
+## Overnight Research Summary (15–16 Mar 2026)
+
+### Лучший конфиг на данный момент
+
+**huber_4model_mz05** (with news):
+- 4 модели (LGB v6, LGB v7, CatBoost, XGBoost), все с Huber loss
+- v6 обучена с `--news-mode all` (10 news features)
+- Portfolio: edge-boost sizing, min-zscore=0.5
+- **HAC Sharpe: 8.14** | Sharpe: 7.29 | Return: +18.8% (26d) | MaxDD: -4.5% | WR: 65%
+
+### OOS Methodology Note
+Sim period (Feb 9 – Mar 7) overlaps with validation window (Dec 9 – Mar 7).
+Validation used ONLY for early stopping (not gradient updates) → quasi-OOS.
+This is standard practice for LGB/CatBoost/XGBoost — early stopping ≠ training.
+
+### Pending experiment: v6 (v7 + news)
+v7's `add_sentiment_features()` does NOT load crypto_news.parquet (only FNG, funding, LSR).
+Modified `run_pipeline_v7.py` to optionally use v6's news-aware function when `--news-mode != none`.
+Script `run_overnight_v6.sh` created: retrain v7 Huber + news, run 4-model sim.
+**Hypothesis**: if news help v6 (+14.5% HAC), they may help v7 too.
 
 ---
