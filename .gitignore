@@ -53,6 +53,29 @@ results_xgboost/
 results_xgboost_prod/
 models_archive/
 
+# Production model dirs (deployed via model_registry, NOT tracked in git)
+results_v6_huber_prod/
+results_v7_huber_prod/
+results_catboost_huber_prod/
+results_xgboost_huber_prod/
+results_v6_4h_prod/
+results_v6_24h_prod/
+results_v7_dvol_prod/
+
+# Versioned model snapshots & backups
+results_*_v10/
+results_*_gen4_bak/
+results_v9_*/
+
+# Overnight experiment results & logs
+overnight_*/
+overnight_*.log
+
+# VPS-specific (generated at runtime, never commit)
+logs/
+trading_logs/*.log
+dashboard/data/
+
 # Temp files
 _bench*
 _ab_*
@@ -65,3 +88,4 @@ _close_all_positions.py
 _tune_ridge.py
 run_pipeline_ridge.py
 temp.md
+test.md

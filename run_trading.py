@@ -1962,9 +1962,23 @@ def main():
             return
         last_signals = signals
 
-        # 5. Portfolio
-        print(f"\n💼 Portfolio construction...")
-        positions = construct_portfolio(signals, args.capital, risk_cfg, state,
+        # 5. Portfolio — trade from FULL equity (compound growth)
+        # Refresh equity from exchange before sizing
+        trading_capital = state.get('equity', args.capital)
+        if exchange:
+            try:
+                bal = exchange.fetch_balance()
+                total_usdt = float(bal.get('USDT', {}).get('total', 0))
+                exch_pos = exchange.fetch_positions()
+                upnl = sum(float(p.get('unrealizedPnl', 0))
+                           for p in exch_pos if float(p.get('contracts', 0)) > 0)
+                trading_capital = total_usdt + upnl
+                state['equity'] = trading_capital
+                state['peak'] = max(state.get('peak', args.capital), trading_capital)
+            except Exception as e:
+                print(f"   ⚠️  Balance refresh failed: {e}")
+        print(f"\n💼 Portfolio construction (equity=${trading_capital:,.0f})...")
+        positions = construct_portfolio(signals, trading_capital, risk_cfg, state,
                                           leverage=risk_cfg['leverage'])
 
         if not positions:

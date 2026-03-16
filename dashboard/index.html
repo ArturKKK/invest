@@ -513,29 +513,37 @@
                 ordersSection.classList.add('hidden');
             }
 
-            // ── Trades ──
+            // ── Trades (sorted by most recent event: closed or opened) ──
             const tradesList = document.getElementById('trades-list');
-            const trades = d.trades || [];
+            const trades = (d.trades || []).slice().sort((a, b) => {
+                const ta = new Date(a.closed || a.opened || 0).getTime();
+                const tb = new Date(b.closed || b.opened || 0).getTime();
+                return tb - ta;  // newest first
+            });
             if (trades.length === 0) {
                 tradesList.innerHTML = '<div class="text-dark-500 text-sm">No trades yet</div>';
             } else {
                 tradesList.innerHTML = trades.slice(0, 30).map(t => {
-                    const isWin = (t.pnl || 0) >= 0;
+                    const isClosed = !!t.closed;
+                    const isWin = isClosed ? (t.pnl || 0) >= 0 : true;
                     const scoreStr = t.score ? (t.score >= 0 ? '+' : '') + t.score.toFixed(2) : '';
                     const scoreColor = t.score > 0 ? 'text-profit' : t.score < 0 ? 'text-loss' : 'text-dark-400';
+                    const statusLabel = isClosed ? 'closed' : 'open';
+                    const statusColor = isClosed ? (isWin ? 'text-profit' : 'text-loss') : 'text-dark-400';
+                    const eventTime = isClosed ? t.closed : t.opened;
                     return `
                     <div class="flex items-center justify-between py-2 px-3 rounded-lg position-row transition-colors text-sm">
                         <div class="flex items-center gap-3">
-                            <span class="w-2 h-2 rounded-full ${isWin ? 'bg-profit' : 'bg-loss'}"></span>
+                            <span class="w-2 h-2 rounded-full ${isClosed ? (isWin ? 'bg-profit' : 'bg-loss') : 'bg-dark-400'}"></span>
                             <span class="badge ${t.side === 'long' ? 'long-badge' : 'short-badge'}">${t.side || '?'}</span>
                             <span class="text-white font-medium">${t.symbol}</span>
                             ${scoreStr ? `<span class="font-mono text-xs ${scoreColor}">${scoreStr}</span>` : ''}
                         </div>
                         <div class="flex items-center gap-4">
-                            <span class="font-mono w-20 text-right ${isWin ? 'text-profit' : 'text-loss'}">
-                                $${(t.pnl || 0) >= 0 ? '+' : ''}${(t.pnl || 0).toFixed(2)}
+                            <span class="font-mono w-20 text-right ${isClosed ? (isWin ? 'text-profit' : 'text-loss') : 'text-dark-400'}">
+                                ${isClosed ? '$' + ((t.pnl || 0) >= 0 ? '+' : '') + (t.pnl || 0).toFixed(2) : statusLabel}
                             </span>
-                            <span class="text-dark-500 text-xs w-16 text-right">${t.closed ? timeAgo(t.closed) : '—'}</span>
+                            <span class="text-dark-500 text-xs w-16 text-right">${eventTime ? timeAgo(eventTime) : '—'}</span>
                         </div>
                     </div>`;
                 }).join('');

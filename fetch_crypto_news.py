@@ -909,12 +909,16 @@ def map_news_to_coins(news_items, symbols=SYMBOLS):
 
 
 # ─── Build Sentiment Features ────────────────────────────────────
-def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
+def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS, feature_days=0):
     """
     Build per-coin, per-hour sentiment features from mapped news.
     
     Expects items to have pre-computed 'sentiment_score' field
     (from prescore_all_news). Falls back to VADER if missing.
+    
+    Args:
+      feature_days: if >0, only build features for last N days (+ 31d warmup
+                    for rolling windows). Dramatically reduces RAM usage.
     
     Features per coin per hour:
       - news_count_1h: raw count in this hour
@@ -937,6 +941,17 @@ def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
       - political_sentiment_shock: |24h - 7d| political sentiment (sudden shift)
       - political_news_volume_zscore: z-score of political news volume
     """
+    # If feature_days set, compute cutoffs for filtering events and output
+    WARMUP_DAYS = 31  # 30d for z-score rolling + 1d buffer
+    if feature_days > 0:
+        _now = pd.Timestamp.now(tz="UTC").floor("h")
+        event_cutoff = _now - pd.Timedelta(days=feature_days + WARMUP_DAYS)
+        output_cutoff = _now - pd.Timedelta(days=feature_days)
+        print(f"   📊 Incremental mode: features for last {feature_days}d "
+              f"(events from {event_cutoff.date()}, output from {output_cutoff.date()})")
+    else:
+        event_cutoff = None
+        output_cutoff = None
     # Fallback VADER analyzer only if some items lack pre-computed scores
     _vader = None
     def _get_score(item):
@@ -962,6 +977,10 @@ def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
         
         # Round to hour
         hour_ts = pd.Timestamp(ts, unit="s", tz="UTC").floor("h")
+        
+        # Skip old events in incremental mode
+        if event_cutoff is not None and hour_ts < event_cutoff:
+            continue
         
         # Get pre-computed or fallback sentiment
         sentiment = _get_score(item)
@@ -1043,6 +1062,9 @@ def build_news_features(mapped_news, political_unmapped=None, symbols=SYMBOLS):
         news_volume_zscore = (news_count_24h - count_30d_mean) / count_30d_std
         
         for i, h in enumerate(hourly_range):
+            # In incremental mode, only output rows after warmup period
+            if output_cutoff is not None and h < output_cutoff:
+                continue
             all_rows.append({
                 "timestamp": h,
                 "symbol": f"{sym}/USDT",
@@ -1240,6 +1262,9 @@ def main():
                        help="Parallel download workers (default: 4, use 1 for sequential)")
     parser.add_argument("--fill-gaps", action="store_true",
                        help="Detect and fill internal gaps in existing raw news data")
+    parser.add_argument("--feature-days", type=int, default=0,
+                       help="Only build features for last N days (0=all). "
+                            "Saves RAM for incremental updates on low-memory machines.")
     args = parser.parse_args()
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -1382,6 +1407,15 @@ def main():
         news_items = raw_df.to_dict("records")
         print(f"📂 Loaded {len(news_items):,} raw news items")
     
+    # ─── Filter items early in incremental mode (saves scoring/mapping RAM) ──
+    if args.feature_days > 0:
+        warmup = 31
+        cutoff_ts = int((datetime.now() - timedelta(days=args.feature_days + warmup)).timestamp())
+        before = len(news_items)
+        news_items = [item for item in news_items if item.get("published_on", 0) >= cutoff_ts]
+        print(f"   📊 Incremental: filtered {before:,} → {len(news_items):,} items "
+              f"(last {args.feature_days + warmup} days)")
+    
     # ─── Score all news with selected scorer ─────────────────────
     news_items = prescore_all_news(news_items, scorer=args.scorer)
     
@@ -1391,11 +1425,21 @@ def main():
     
     # ─── Build features ──────────────────────────────────────────
     print("\n🛠️  Building features...")
-    features_df = build_news_features(mapped, political_unmapped=political_unmapped)
+    features_df = build_news_features(mapped, political_unmapped=political_unmapped,
+                                      feature_days=args.feature_days)
     
     if features_df.empty:
         print("❌ No features generated!")
         sys.exit(1)
+    
+    # ─── Merge with existing features in incremental mode ────────
+    if args.feature_days > 0 and os.path.exists(OUTPUT_PATH):
+        existing_df = pd.read_parquet(OUTPUT_PATH)
+        new_min_ts = features_df["timestamp"].min()
+        old_part = existing_df[existing_df["timestamp"] < new_min_ts]
+        features_df = pd.concat([old_part, features_df], ignore_index=True)
+        print(f"   📎 Merged: {len(old_part):,} old + {len(features_df) - len(old_part):,} new "
+              f"= {len(features_df):,} total rows")
     
     # ─── Save ─────────────────────────────────────────────────────
     features_df.to_parquet(OUTPUT_PATH, index=False)
