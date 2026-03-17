@@ -78,25 +78,47 @@ WALK_FORWARD_WINDOWS = [
         'test_end': '2025-06-30',
     },
     {
-        'name': 'W3 (→latest)',
+        'name': 'W3 (→2025-12)',
         'train_end': '2024-06-29',
         'val_start': '2024-07-07',
         'val_end': '2025-06-29',
         'test_start': '2025-07-01',
-        'test_end': '2026-12-31',
+        'test_end': '2025-12-31',
+    },
+]
+
+# v11 RESEARCH windows — proper long-range OOS evaluation
+# R1: train→2024, val 9mo (2025-Q1..Q3), TRUE OOS test on 2025-Q4 (3 months)
+# R2: train→2025-H1, val 6mo (2025-H2), TRUE OOS test on 2026 (~2.5 months of real data)
+# Note: R2 train_end < R1 test_start → no meta-leakage between windows
+RESEARCH_WINDOWS = [
+    {
+        'name': 'R1 (train→2024, test 2025-Q4)',
+        'train_end': '2024-12-31',
+        'val_start': '2025-01-08',
+        'val_end': '2025-09-30',
+        'test_start': '2025-10-01',
+        'test_end': '2025-12-31',
+    },
+    {
+        'name': 'R2 (train→2025-H1, test 2026)',
+        'train_end': '2025-06-30',
+        'val_start': '2025-07-08',
+        'val_end': '2025-12-31',
+        'test_start': '2026-01-01',
+        'test_end': '2026-03-17',     # capped to actual data end
     },
 ]
 
 # PRODUCTION mode — maximum training data, no held-out test set
 # Models trained here go directly to live trading.
-# Default: train on ~5+ years, validate on last ~3 months.
-# Updated 2026-03-13: extended window to use all available data.
+# Updated 2026-03-17: train end shifted to include all 2025 data.
 PRODUCTION_WINDOW = {
     'name': 'PROD (max data)',
-    'train_end': '2025-12-01',
-    'val_start': '2025-12-09',
-    'val_end': '2026-03-07',
-    'test_start': '2026-03-07',   # may have 0 test rows — that's OK
+    'train_end': '2025-12-31',
+    'val_start': '2026-01-08',
+    'val_end': '2026-03-17',
+    'test_start': '2026-03-17',   # may have 0 test rows — that's OK
     'test_end': '2026-12-31',
 }
 
@@ -1784,6 +1806,11 @@ def main():
                              'coin-only, none (same as --no-news)')
     parser.add_argument('--no-derivatives', action='store_true',
                         help='Skip loading Binance derivatives features (for clean A/B tests)')
+    parser.add_argument('--research', action='store_true',
+                        help='Research mode: 2 windows (train→2024 test 2025-Q4, '
+                             'train→2025 test 2026). Proper long-range OOS.')
+    parser.add_argument('--gpu', action='store_true',
+                        help='Use GPU for LightGBM training (requires lightgbm built with GPU support)')
     parser.add_argument('--horizon', type=int, default=None,
                         help='Override target horizon in hours (default: 12). '
                              'E.g. --horizon 4 trains on target_ret_4h')
@@ -1803,6 +1830,8 @@ def main():
     data_dir = args.data or os.path.join(project_root, 'data', 'features')
     if args.production:
         results_dir = args.results or os.path.join(project_root, 'results_v6_prod')
+    elif args.research:
+        results_dir = args.results or os.path.join(project_root, 'results_v6_research')
     else:
         results_dir = args.results or os.path.join(project_root, 'results_v6')
     os.makedirs(results_dir, exist_ok=True)
@@ -1879,6 +1908,11 @@ def main():
         print(f"   Train: start → {prod_win['train_end']}")
         print(f"   Val:   {prod_win['val_start']} → {prod_win['val_end']}")
         print(f"   Test:  (none — live trading)")
+    elif args.research:
+        windows = RESEARCH_WINDOWS
+        print(f"\n🔬 RESEARCH MODE — proper OOS evaluation on 2025 & 2026")
+        for i, w in enumerate(windows):
+            print(f"   R{i+1}: train→{w['train_end']}  val {w['val_start']}→{w['val_end']}  test {w['test_start']}→{w['test_end']}")
     else:
         windows = WALK_FORWARD_WINDOWS
         if args.single_window:
@@ -1920,13 +1954,23 @@ def main():
         X_test = test[feat_cols]
         val_dates = val['timestamp'].dt.date.values
 
-        # --- HPO (only for first window if not skipped) ---
+        # --- GPU override (must be before HPO so HPO trials also use GPU) ---
         best_params = None
+        if args.gpu:
+            best_params = {'device_type': 'gpu', 'gpu_use_dp': False}
+
+        # --- HPO (only for first window if not skipped) ---
         if not args.skip_hpo and w_idx == 0:
             best_params = run_optuna_hpo(
                 X_train, y_train, X_val, y_val, val_dates,
                 n_trials=args.hpo_trials
             )
+            # Re-inject GPU params if HPO overwrote them
+            if args.gpu:
+                if best_params is None:
+                    best_params = {}
+                best_params['device_type'] = 'gpu'
+                best_params['gpu_use_dp'] = False
 
         # --- Feature selection ---
         if args.null_importance:

@@ -45,7 +45,7 @@ from run_pipeline_v6 import (
     cross_sectional_rank, create_rank_target, add_residual_targets,
     evaluate_model, vol_target_returns, drawdown_stop_returns,
     compute_costs_per_period,
-    EXCLUDE_COLS, REGIME_COLS, WALK_FORWARD_WINDOWS, PRODUCTION_WINDOW, HORIZON, SEEDS, COST_MODEL,
+    EXCLUDE_COLS, REGIME_COLS, WALK_FORWARD_WINDOWS, PRODUCTION_WINDOW, RESEARCH_WINDOWS, HORIZON, SEEDS, COST_MODEL,
     PURGE_DAYS,
 )
 
@@ -244,6 +244,8 @@ def main():
                         help='Huber loss delta parameter (default: 1.0)')
     parser.add_argument('--deadzone-weight', type=float, default=0.0,
                         help='Dead-zone sample weighting: downweight |ret| < τ%% samples (0=off)')
+    parser.add_argument('--research', action='store_true',
+                        help='Research mode: use RESEARCH_WINDOWS for proper OOS evaluation')
     args = parser.parse_args()
 
     if args.no_news:
@@ -256,6 +258,8 @@ def main():
     data_dir = args.data or os.path.join(project_root, 'data', 'features')
     if args.production:
         results_dir = args.results or os.path.join(project_root, 'results_catboost_prod')
+    elif args.research:
+        results_dir = args.results or os.path.join(project_root, 'results_catboost_research')
     else:
         results_dir = args.results or os.path.join(project_root, 'results_catboost')
     os.makedirs(results_dir, exist_ok=True)
@@ -331,6 +335,11 @@ def main():
         print(f"   Train: start → {prod_win['train_end']}")
         print(f"   Val:   {prod_win['val_start']} → {prod_win['val_end']}")
         print(f"   Test:  (none — live trading)")
+    elif args.research:
+        windows = RESEARCH_WINDOWS
+        print(f"\n🔬 RESEARCH MODE — proper OOS evaluation on 2025 & 2026")
+        for i, w in enumerate(windows):
+            print(f"   R{i+1}: train→{w['train_end']}  val {w['val_start']}→{w['val_end']}  test {w['test_start']}→{w['test_end']}")
     else:
         windows = WALK_FORWARD_WINDOWS
         if args.single_window:
