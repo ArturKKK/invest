@@ -1643,6 +1643,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
     free_usdt = 0
     margin_used = 0
     total_upnl = 0
+    exchange_ok = False
 
     if exchange:
         try:
@@ -1672,8 +1673,10 @@ def update_dashboard(exchange, positions, signals, state, results, root,
                 })
 
             equity = total_usdt + total_upnl
+            exchange_ok = True
         except Exception as e:
             print(f"   ⚠️  Dashboard OKX fetch: {e}")
+            exchange_ok = False
 
     # Match scores from signals to live positions
     if signals is not None and len(signals) > 0:
@@ -1686,15 +1689,20 @@ def update_dashboard(exchange, positions, signals, state, results, root,
                 pos['confidence'] = round(float(score_map[sym][1]), 3) if pd.notna(score_map[sym][1]) else 0
 
     # ── Detect closed trades in real-time ──
-    # Compare open dash_trades against live exchange positions
+    # ONLY compare if we successfully fetched exchange positions;
+    # otherwise a transient OKX error would mark all trades as closed with PnL=0
     dash_trades = state.get('dash_trades', [])
-    live_syms = {(p['symbol'], p['side']) for p in live_positions}
-    for t in dash_trades:
-        if t.get('closed') is None and (t['symbol'], t['side']) not in live_syms:
-            # Position no longer exists on exchange — mark as closed
-            # Try to get PnL from the trade's last known state
-            t['closed'] = now.isoformat()
-            # PnL stays 0 if we can't determine it (already snapshotted at cycle start)
+    if exchange_ok and live_positions:
+        live_syms = {(p['symbol'], p['side']) for p in live_positions}
+        # Build UPnL lookup from live positions for PnL at close
+        upnl_map = {(p['symbol'], p['side']): p.get('upnl', 0) for p in live_positions}
+        for t in dash_trades:
+            if t.get('closed') is None and (t['symbol'], t['side']) not in live_syms:
+                # Position no longer exists on exchange — mark as closed
+                t['closed'] = now.isoformat()
+                # Use last known UPnL from exchange if available
+                if t.get('pnl', 0) == 0:
+                    t['pnl'] = round(upnl_map.get((t['symbol'], t['side']), 0), 2)
     state['dash_trades'] = dash_trades
 
     # Build signals list for dashboard
@@ -1738,8 +1746,8 @@ def update_dashboard(exchange, positions, signals, state, results, root,
     state['dash_trades'] = dash_trades
 
     # Win rate from closed trades (actual realized PnL per trade)
-    closed_trades = [t for t in dash_trades if t.get('closed') is not None and t.get('pnl', 0) != 0]
-    n_wins = sum(1 for t in closed_trades if t['pnl'] > 0)
+    closed_trades = [t for t in dash_trades if t.get('closed') is not None]
+    n_wins = sum(1 for t in closed_trades if t.get('pnl', 0) > 0)
     win_rate = n_wins / len(closed_trades) if closed_trades else 0
     max_dd = min((e.get('dd_pct', 0) for e in eq_history), default=0)
 
@@ -1928,19 +1936,22 @@ def main():
 
         # Feature health diagnostic (latest snapshot)
         latest_snap = df.groupby('symbol').last()
-        n_zero_cols = sum(1 for c in feat_cols if (latest_snap[c] == 0).all())
-        n_nan_cols = sum(1 for c in feat_cols if latest_snap[c].isna().all())
+        zero_cols = [c for c in feat_cols if (latest_snap[c] == 0).all()]
+        nan_cols = [c for c in feat_cols if latest_snap[c].isna().all()]
         key_groups = {
             'cross-asset': [c for c in feat_cols if c.startswith(('btc_', 'eth_'))],
             'regime': [c for c in feat_cols if c.startswith('regime_')],
             'sentiment': [c for c in feat_cols if c.startswith(('news_', 'fng_', 'market_news', 'political_'))],
             'derivatives': [c for c in feat_cols if c.startswith(('oi_', 'taker_', 'funding_', 'basis_', 'ls_'))],
+            'dvol': [c for c in feat_cols if c.startswith('dvol_')],
         }
-        print(f"   🔍 Feature health: {n_zero_cols} all-zero, {n_nan_cols} all-NaN of {len(feat_cols)}")
+        print(f"   🔍 Feature health: {len(zero_cols)} all-zero, {len(nan_cols)} all-NaN of {len(feat_cols)}")
         for gname, gcols in key_groups.items():
             if gcols:
-                n_live = sum(1 for c in gcols if not (latest_snap[c] == 0).all())
+                n_live = sum(1 for c in gcols if c not in zero_cols)
                 print(f"      {gname}: {n_live}/{len(gcols)} non-zero")
+        if zero_cols:
+            print(f"      zero features: {zero_cols[:20]}")
 
         # 3. Cross-sectional rank (after all enrichment)
         df = cross_sectional_rank(df, feat_cols)
@@ -1991,7 +2002,27 @@ def main():
                       f"{pos['score']:>+8.3f}")
 
         # 6. Execute (partial rebalance + limit orders)
-        if args.mode == 'signal' or not positions:
+        if args.mode == 'signal':
+            results = execute(None, positions, dry_run=True, leverage=risk_cfg['leverage'])
+        elif not positions and state.get('stopped'):
+            # DD stop triggered — close all live positions to limit further loss
+            print(f"\n🛑 DD stop: closing all positions...")
+            results, actions = rebalance_positions(
+                exchange, [], leverage=risk_cfg['leverage'],
+                dry_run=False, use_limit=True
+            )
+            pnl_snapshot = actions.get('pnl_snapshot', {})
+            # Mark closed dash_trades with PnL
+            dash_trades = state.get('dash_trades', [])
+            closed_keys = {(s.replace('/USDT', ''), side)
+                           for s, side in actions.get('closed', set())}
+            for t in dash_trades:
+                key = (t['symbol'], t['side'])
+                if t.get('closed') is None and key in closed_keys:
+                    t['pnl'] = round(pnl_snapshot.get(key, 0), 2)
+                    t['closed'] = now.isoformat()
+            state['dash_trades'] = dash_trades
+        elif not positions:
             results = execute(None, positions, dry_run=True, leverage=risk_cfg['leverage'])
         else:
             print(f"\n🔄 Partial rebalance (threshold={REBALANCE_THRESHOLD:.0%})...")
