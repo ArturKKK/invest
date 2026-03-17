@@ -1954,23 +1954,15 @@ def main():
         X_test = test[feat_cols]
         val_dates = val['timestamp'].dt.date.values
 
-        # --- GPU override (must be before HPO so HPO trials also use GPU) ---
-        best_params = None
-        if args.gpu:
-            best_params = {'device_type': 'gpu', 'gpu_use_dp': False}
-
         # --- HPO (only for first window if not skipped) ---
+        best_params = None
         if not args.skip_hpo and w_idx == 0:
             best_params = run_optuna_hpo(
                 X_train, y_train, X_val, y_val, val_dates,
                 n_trials=args.hpo_trials
             )
-            # Re-inject GPU params if HPO overwrote them
-            if args.gpu:
-                if best_params is None:
-                    best_params = {}
-                best_params['device_type'] = 'gpu'
-                best_params['gpu_use_dp'] = False
+        # NOTE: LightGBM GPU requires OpenCL (not available on most CUDA clusters).
+        # LGB trains fast enough on CPU. GPU flag only affects CatBoost/XGBoost.
 
         # --- Feature selection ---
         if args.null_importance:
