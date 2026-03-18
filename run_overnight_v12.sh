@@ -18,15 +18,16 @@ set -uo pipefail
 #   Q3: How good is v6_price_only with HPO? (v6_price_only_hpo)
 #   Q4: How good is v6_no_deriv with HPO? (v6_no_deriv_hpo)
 #   Q5: CatBoost + market-only news? (cb_market_news)
-#   Q6: 4h horizon CatBoost? (cb_4h) — needs --horizon support check
+#   Q6: v6 4h horizon + price_only with HPO (decorrelated signal)
 #   Q7: Best 2-3 model ensemble from new configs? (sim grid)
 #   Q8: XGB without derivatives? (xgb_no_deriv)
+#   Q9: v6 4h price_only — v11 showed R2 ICIR 0.681, best decorrelated signal
 #
-# Phase 1: HPO experiments for promising configs       (~4h)
+# Phase 1: HPO experiments for promising configs       (~5-6h)
 # Phase 2: Skip-HPO ablation combos                   (~1h)
-# Phase 3: Sim grid — find optimal ensemble            (~20min)
+# Phase 3: Sim grid — find optimal ensemble            (~30min)
 #
-# Expected total: ~5-6 hours
+# Expected total: ~7-8 hours
 #
 # Usage:
 #   nohup ./run_overnight_v12.sh > overnight_v12.log 2>&1 &
@@ -39,9 +40,9 @@ TIMESTAMP=$(date +%Y%m%d_%H%M)
 LOG="$LOGDIR/run_${TIMESTAMP}.log"
 SUMMARY="$LOGDIR/summary_${TIMESTAMP}.txt"
 
-GPU="--gpu"
 SEEDS="--seeds 5"
-COMMON="--research $GPU $SEEDS"
+COMMON="--research $SEEDS"
+GPU="--gpu"          # Only for CatBoost (CUDA) and XGBoost (CUDA). LGB needs OpenCL = not available on VPS
 HUBER="--huber"
 
 # Sim config — same period as v11 for comparability
@@ -170,7 +171,7 @@ sim_with_models() {
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  PHASE 1: HPO on top configs from v11                       ║
 # ╚══════════════════════════════════════════════════════════════╝
-phase_start "PHASE 1: HPO on promising configs (~4h)"
+phase_start "PHASE 1: HPO on promising configs (~5-6h)"
 
 # Q3: v6 price_only WITH HPO — v11 showed 1.33 without HPO, baseline with HPO was 1.10
 train_experiment "$LOGDIR/v6_price_only_hpo" \
@@ -182,11 +183,16 @@ train_experiment "$LOGDIR/v6_no_deriv_hpo" \
 
 # Q1: CatBoost without derivatives — CB was 1.48 with all features
 train_experiment "$LOGDIR/cb_no_deriv" \
-  run_pipeline_catboost.py "$HUBER --no-derivatives"
+  run_pipeline_catboost.py "$GPU $HUBER --no-derivatives"
 
 # Q2: CatBoost price_only — no news, no derivs
 train_experiment "$LOGDIR/cb_price_only" \
-  run_pipeline_catboost.py "$HUBER --news-mode none --no-derivatives"
+  run_pipeline_catboost.py "$GPU $HUBER --news-mode none --no-derivatives"
+
+# Q9: v6 4h horizon price_only WITH HPO — v11 showed R2 ICIR 0.681 (best), Sharpe 1.62
+# Decorrelated with 1h signal → real diversification for ensemble
+train_experiment "$LOGDIR/v6_4h_price_hpo" \
+  run_pipeline_v6.py "$HUBER --horizon 4 --news-mode none --no-derivatives"
 
 phase_end
 
@@ -197,26 +203,26 @@ phase_start "PHASE 2: Quick ablation tests (~1h)"
 
 # Q5: CatBoost market-only news (coin news might be noise like in XGB)
 train_experiment "$LOGDIR/cb_market_news" \
-  run_pipeline_catboost.py "$HUBER --news-mode market-only --skip-hpo"
+  run_pipeline_catboost.py "$GPU $HUBER --news-mode market-only --skip-hpo"
 
 # Q8: XGBoost without derivatives — derivs hurt LGB, do they hurt XGB?
 train_experiment "$LOGDIR/xgb_no_deriv" \
-  run_pipeline_xgboost.py "$HUBER --no-derivatives --skip-hpo"
+  run_pipeline_xgboost.py "$GPU $HUBER --no-derivatives --skip-hpo"
 
 # XGB price_only — the nuclear option for XGB too
 train_experiment "$LOGDIR/xgb_price_only" \
-  run_pipeline_xgboost.py "$HUBER --news-mode none --no-derivatives --skip-hpo"
+  run_pipeline_xgboost.py "$GPU $HUBER --news-mode none --no-derivatives --skip-hpo"
 
 # CB MSE no_deriv — v11 showed CB MSE ≈ CB Huber, test with no_deriv
 train_experiment "$LOGDIR/cb_mse_no_deriv" \
-  run_pipeline_catboost.py "--no-derivatives --skip-hpo"
+  run_pipeline_catboost.py "$GPU --no-derivatives --skip-hpo"
 
 phase_end
 
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  PHASE 3: SIM GRID — find optimal ensemble from new models  ║
 # ╚══════════════════════════════════════════════════════════════╝
-phase_start "PHASE 3: SIM GRID — optimal ensemble (~20min)"
+phase_start "PHASE 3: SIM GRID — optimal ensemble (~30min)"
 
 # Isolate model dirs (suppress fallbacks)
 for d in "${MODEL_DIRS[@]}"; do
@@ -269,6 +275,24 @@ fi
 if [[ -d "$LOGDIR/xgb_no_deriv" ]]; then
   sim_with_models "3model_new_no_deriv" \
     "$V6_NEW" "SKIP" "$CB_NEW" "$LOGDIR/xgb_no_deriv" ""
+fi
+
+# Sim 9: v6_4h_price solo (decorrelated 4h signal)
+if [[ -d "$LOGDIR/v6_4h_price_hpo" ]]; then
+  sim_with_models "v6_4h_solo" \
+    "$LOGDIR/v6_4h_price_hpo" "SKIP" "SKIP" "SKIP" ""
+fi
+
+# Sim 10: v6_1h + v6_4h ensemble (real diversification)
+if [[ -d "$LOGDIR/v6_4h_price_hpo" ]]; then
+  sim_with_models "v6_1h_plus_4h" \
+    "$V6_NEW" "$LOGDIR/v6_4h_price_hpo" "SKIP" "SKIP" ""
+fi
+
+# Sim 11: v6_1h + v6_4h + CB_no_deriv (3-model diversified)
+if [[ -d "$LOGDIR/v6_4h_price_hpo" ]]; then
+  sim_with_models "v6_1h_4h_cb" \
+    "$V6_NEW" "$LOGDIR/v6_4h_price_hpo" "$CB_NEW" "SKIP" ""
 fi
 
 # Restore
