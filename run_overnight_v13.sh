@@ -36,9 +36,9 @@ TIMESTAMP=$(date +%Y%m%d_%H%M)
 LOG="$LOGDIR/run_${TIMESTAMP}.log"
 SUMMARY="$LOGDIR/summary_${TIMESTAMP}.txt"
 
-GPU="--gpu"
+GPU="--gpu"          # Only for CatBoost/XGBoost (CUDA). LGB needs OpenCL = crash on VPS
 SEEDS="--seeds 5"
-COMMON="--research $GPU $SEEDS"
+COMMON="--research $SEEDS"
 HUBER="--huber"
 
 SIM_DATA="--data data/features/crypto_features_1h.parquet"
@@ -433,7 +433,7 @@ phase_start "PHASE 5: TARGETED TRAINING (~1.5h)"
 
 # More practical: CatBoost with news but no derivs (market-only + no deriv)
 train_experiment "$LOGDIR/cb_market_no_deriv" \
-  run_pipeline_catboost.py "$HUBER --news-mode market-only --no-derivatives --skip-hpo"
+  run_pipeline_catboost.py "$GPU $HUBER --news-mode market-only --no-derivatives --skip-hpo"
 
 # v6 no_deriv without HPO — check if HPO is causing the sim degradation
 train_experiment "$LOGDIR/v6_no_deriv_skip_hpo" \
