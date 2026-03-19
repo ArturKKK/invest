@@ -26,15 +26,16 @@ set -euo pipefail
 GPU="${GPU:---gpu}"
 RESULTS="results_catboost_prod"
 
-# Auto-compute dates: val_end = yesterday, train_end = val_end - 10 days
-# PURGE_DAYS=8, so val_start = train_end + 8 → need train_end + 8 < val_end
+# Auto-compute dates: val_end = yesterday, train_end = val_end - 38 days
+# PURGE_DAYS=8, so val_start = train_end + 8 → val window ~30 days
+# Need enough val data for HPO not to overfit (min 3-4 weeks)
 if command -v gdate &>/dev/null; then
     DATE_CMD=gdate  # macOS with coreutils
 else
     DATE_CMD=date   # Linux
 fi
 VAL_END="${VAL_END:-$($DATE_CMD -u -d '1 day ago' +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -v-1d +%Y-%m-%d)}"
-TRAIN_END="${TRAIN_END:-$($DATE_CMD -u -d "$VAL_END - 10 days" +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d -v-10d "$VAL_END" +%Y-%m-%d)}"
+TRAIN_END="${TRAIN_END:-$($DATE_CMD -u -d "$VAL_END - 38 days" +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d -v-38d "$VAL_END" +%Y-%m-%d)}"
 
 echo "============================================================"
 echo "  Training v14 Champion: cb_market_noderiv_hpo"
