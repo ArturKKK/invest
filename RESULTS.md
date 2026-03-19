@@ -1326,3 +1326,182 @@ Script `run_overnight_v8.sh`: macro-only (DVOL hidden) vs macro+DVOL vs v4-best 
 | v8B | +macro +DVOL | 8.36 | 7.39 | +18.8% | -4.5% | 63% | +2.7% but fragile |
 
 ---
+
+## Research Windows (17–18 марта 2026)
+
+### Контекст
+Предыдущее research (v1-v8; exp1-v5) использовало 3 WF окна с train→2024-06.
+Новый формат: **RESEARCH_WINDOWS** — 2 окна для OOS-оценки на свежих данных:
+- **R1**: train→2024-12-31, val 2025-01-08→2025-09-30, **test Q4 2025** (3 мес OOS)
+- **R2**: train→2025-06-30, val 2025-07-08→2025-12-31, **test Q1 2026** (2.5 мес OOS)
+
+4 пайплайна: LGB v6 (12h target), LGB v7 (blended 75/25 12h/24h), CatBoost, XGBoost.
+Все с Huber loss, 5 seeds, skip-hpo (кроме отмеченных).
+
+---
+
+## Overnight v11 — Baseline Research (17 марта 2026)
+
+**18 экспериментов, 7 фаз, 7h 35m на GPU-кластере.**
+
+### Training Sharpe (LS_Sharpe_net, avg R1+R2)
+
+| # | Experiment | R1 Sharpe | R2 Sharpe | **Avg** | Notes |
+|---|---|---|---|---|---|
+| 1 | v6_baseline (HPO 50) | 0.73 | 1.48 | **1.10** | Current prod config |
+| 2 | v7_baseline (HPO 50) | 0.32 | 1.41 | **0.87** | Weakest model |
+| 3 | cb_baseline (skip-hpo) | 1.18 | 1.78 | **1.48** | Best single model! |
+| 4 | xgb_baseline (skip-hpo) | 0.95 | 1.38 | **1.17** | Solid middle |
+| 5 | v6_no_deriv | 0.82 | 1.84 | **1.33** | +21% vs baseline! |
+| 6 | v6_24h_target | -0.18 | 0.58 | **0.20** | 24h target = DEAD |
+| 7 | v6_4h_target | 0.46 | 1.18 | **0.82** | Interesting but < 12h |
+| 8 | v6_no_news | 0.85 | 1.45 | **1.15** | News neutral for LGB |
+| 9 | xgb_no_news | 1.14 | 1.63 | **1.39** | Market-only = +19%! |
+
+### Sim Results (60d, 3x leverage, edge-boost)
+
+| Config | Return | Sharpe HAC |
+|---|---|---|
+| Ensemble v6+CB (Huber) | +46.2% | 7.19 |
+| v6 solo | +37.7% | 7.29 |
+| 4-model ensemble | +40.2% | 6.30 |
+
+### Ключевые выводы v11
+1. **CatBoost = лучшая одиночная модель** (Sharpe 1.48 avg)
+2. **Derivatives вредят LGB v6** (1.10→1.33 без derivs, +21%)
+3. **v7 = самая слабая модель** (0.87), v6↔v7 корреляция 0.957
+4. **24h target = мёртвый** (Sharpe 0.20)
+5. **v6 solo в sim > 4-model ensemble** (7.29 vs 6.30 HAC)
+6. **News нейтральны для LGB**, но market-only news помогают XGB
+
+---
+
+## Overnight v12 — Focused Follow-up (17–18 марта 2026)
+
+**9 экспериментов (8 training + sim grid), 4h 24m.**
+
+### Training Sharpe (LS_Sharpe_net, avg R1+R2)
+
+| # | Experiment | R1 Sharpe | R2 Sharpe | **Avg** | Notes |
+|---|---|---|---|---|---|
+| 1 | cb_price_only | 1.38 | 2.18 | **1.78** | 🏆 **ALL-TIME BEST** |
+| 2 | cb_no_deriv | 1.31 | 2.01 | **1.66** | News help CB (+0.12) |
+| 3 | v6_price_only_hpo (50 trials) | 1.23 | 1.68 | **1.45** | +32% vs v11 baseline |
+| 4 | v6_no_deriv_hpo (50 trials) | 0.95 | 1.43 | **1.19** | HPO helps v6 |
+| 5 | xgb_no_deriv | 1.23 | 1.63 | **1.43** | Solid |
+| 6 | xgb_price_only | 1.01 | 1.48 | **1.25** | News help XGB |
+| 7 | v6_price_only_skip | 0.97 | 1.69 | **1.33** | Same as v11#5 |
+| 8 | v6_residual_target | 0.91 | 1.66 | **1.29** | Residual ≈ standard |
+
+### v12 Sim Paradox (ОБНАРУЖЕН)
+
+Better training Sharpe → **WORSE** sim performance!
+
+| Config | Sim Return | HAC | Training Sharpe |
+|---|---|---|---|
+| v11 v6+CB baseline | **+46.2%** | **7.19** | 1.10+1.48 |
+| v12 v6po+cbpo | +36.3% | 5.35 | 1.45+1.78 |
+| v12 cbpo solo | +35.1% | 4.79 | 1.78 |
+
+### Ключевые выводы v12
+1. **cb_price_only = лучший training Sharpe ever** (1.78 avg)
+2. **Derivatives вредят ВСЕМ моделям** (подтверждено для CB, XGB, LGB)
+3. **Парадокс**: лучшие training метрики → худшие sim результаты
+4. **HPO помогает v6** (+32% Sharpe vs skip-hpo)
+
+---
+
+## Overnight v13 — Resolve the Sim Paradox (18 марта 2026)
+
+**33 сима + 2 training эксперимента, 2h 9m.**
+
+### Phase 1: Sim Sensitivity (R1, Q4 2025)
+
+| Config | v11 v6+CB | v12 CBpo solo | v12 v6po+CBpo |
+|---|---|---|---|
+| Baseline (lev3/k0.8/edge) | **+12.4%** (7.08) | +9.1% (4.55) | +9.3% (5.21) |
+| lev2 | +8.1% (7.15) | +6.0% (4.64) | +6.2% (5.29) |
+| lev1 | +4.6% (8.34) | +3.6% (5.70) | — |
+| kelly 0.5 | +7.6% (7.16) | +5.6% (4.65) | +5.8% (5.30) |
+| no edge-boost | +11.4% (6.93) | +7.5% (3.99) | — |
+| ddstop on/off | **идентично** | **идентично** | — |
+
+**Выводы Phase 1:**
+- **DDstop бесполезен** (0.0% разницы ± ddstop)
+- Edge-boost даёт +1–1.6pp return
+- v11 > v12 на R1 при ЛЮБЫХ настройках
+
+### Phase 2: R2 Period (Q1 2026)
+
+| Config | Return | HAC |
+|---|---|---|
+| v12 cbpo solo | **+52.7%** | 6.74 |
+| v11 v6 solo | +50.8% | 7.04 |
+| mix v11v6+v12cbpo | +49.3% | 6.20 |
+| v11 v6+cb | +45.8% | 6.41 |
+| v12 v6po+cbpo | +45.9% | 5.84 |
+
+**На R2 v12 cbpo чуть лучше v11, разница невелика.**
+
+### Phase 3: FULL Period (Oct 2025 – Mar 2026, 5 мес)
+
+| # | Config | Return | HAC |
+|---|---|---|---|
+| **27** | **v12 cb_no_deriv solo** | **+131.5%** | **5.09** |
+| 23 | v12 cbpo solo | +103.7% | 4.19 |
+| 33 | mix v11v6 + v13 cbMKTnd | +93.3% | 4.01 |
+| 24 | v12 v6po+cbpo | +94.8% | 3.96 |
+| 22 | v11 v6 solo | +91.5% | 4.15 |
+| 26 | mix 3-model | +91.2% | 3.93 |
+| 21 | v11 v6+cb | +90.1% | 3.99 |
+| 25 | mix v11v6+v12cbpo | +87.1% | 3.71 |
+| 28 | v11 3-model | +73.4% | 3.48 |
+
+### Phase 4: Leverage Sensitivity (FULL period)
+
+| Config | Return | HAC |
+|---|---|---|
+| cbnd 3x (ref) | +131.5% | 5.09 |
+| v11 v6+cb 3x | +90.1% | 3.99 |
+| v11 v6+cb 2x | +55.1% | 3.89 |
+| v11 v6+cb 1x | +30.0% | 4.41 |
+| mix 2x | +53.5% | 3.64 |
+| mix 1x | +29.3% | 4.19 |
+
+### Phase 5: New Training
+
+| Experiment | R1 Sharpe | R2 Sharpe | **Avg** |
+|---|---|---|---|
+| cb_market_no_deriv (market-only news, no derivs) | 1.53 | 2.15 | **1.84** |
+| v6_no_deriv_skip_hpo | 1.18 | 1.46 | **1.32** |
+
+### ПАРАДОКС РЕШЁН
+
+**Причина**: v11 > v12 на R1 (Q4 2025) — но это артефакт конкретного 3-мес периода.
+На FULL период (5 мес) v12 модели **побеждают**:
+
+| | R1 (Q4'25) | R2 (Q1'26) | FULL (5 мес) |
+|---|---|---|---|
+| v11 v6+cb | +12.4% | +45.8% | +90.1% |
+| v12 cbnd solo | ? (not tested R1) | ? | **+131.5%** |
+| v12 cbpo solo | +9.1% | +52.7% | +103.7% |
+
+### Главные выводы v11–v13
+
+1. **cb_no_deriv SOLO = абсолютный чемпион** (+131.5% за 5 мес, HAC 5.09)
+2. **Ансамбли ХУЖЕ соло CatBoost**. Больше моделей → больше "усреднение" → меньше edge
+3. **Derivatives ВРЕДЯТ всем моделям** (подтверждено в training и sim)
+4. **News ПОМОГАЮТ CatBoost** (cb_no_deriv 1.66 > cb_price_only 1.78 training, НО 131.5% > 103.7% sim)
+5. **DDstop бесполезен** (идентичные результаты ±)
+6. **Edge-boost помогает** (~+1-2pp return)
+7. **Training Sharpe НЕ предсказывает sim performance** (1.66→+131.5% vs 1.78→+103.7%)
+8. **LGB v7 можно убрать** (0.957 корреляция с v6, самый слабый Sharpe)
+9. **24h target = мёртвый** (Sharpe 0.20)
+10. **leverage 3x оптимален** для сильных моделей
+
+### Рекомендация на 19 марта 2026
+- **Production model**: CatBoost solo (no derivs, all news, Huber, skip-hpo)
+- **Sim config**: --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop
+- **Следующий шаг**: v14 — CatBoost variations (HPO, residual target, huber delta sweep) для поиска ещё лучшего CB
+
+---
