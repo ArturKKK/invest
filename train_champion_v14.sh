@@ -2,38 +2,53 @@
 set -euo pipefail
 
 # ============================================================
-# Train v14 Champion: cb_market_noderiv_hpo
+# Train v14 Champion: cb_market_noderiv_hpo (CatBoost solo)
 # ============================================================
-# CatBoost, Huber loss (delta=1.0), HPO 50 trials, 5 seeds
-# --news-mode market-only --no-derivatives
+# Config from v14 experiment (won +143.8%, HAC 5.33):
+#   CatBoost, Huber loss (delta=1.0), HPO 50 trials, 5 seeds
+#   --news-mode market-only --no-derivatives
 #
-# Output: results_catboost_prod/ (ready for deploy)
+# PURGE_DAYS=8: gap between train_end and val_start.
+# So train_end must be at least 9 days before latest data.
+#
+# Uses model_registry.py to archive before overwriting.
 #
 # Usage (cluster with GPU):
 #   nohup ./train_champion_v14.sh > train_champion.log 2>&1 &
 #
 # Usage (VPS/local without GPU — slower but works):
 #   GPU="" ./train_champion_v14.sh
+#
+# Custom dates:
+#   TRAIN_END=2026-03-01 VAL_END=2026-03-18 ./train_champion_v14.sh
 # ============================================================
 
 GPU="${GPU:---gpu}"
 RESULTS="results_catboost_prod"
-TRAIN_END="${TRAIN_END:-2026-03-15}"
-VAL_END="${VAL_END:-2026-03-19}"
+
+# Auto-compute dates: val_end = yesterday, train_end = val_end - 10 days
+# PURGE_DAYS=8, so val_start = train_end + 8 → need train_end + 8 < val_end
+if command -v gdate &>/dev/null; then
+    DATE_CMD=gdate  # macOS with coreutils
+else
+    DATE_CMD=date   # Linux
+fi
+VAL_END="${VAL_END:-$($DATE_CMD -u -d '1 day ago' +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -v-1d +%Y-%m-%d)}"
+TRAIN_END="${TRAIN_END:-$($DATE_CMD -u -d "$VAL_END - 10 days" +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d -v-10d "$VAL_END" +%Y-%m-%d)}"
 
 echo "============================================================"
 echo "  Training v14 Champion: cb_market_noderiv_hpo"
-echo "  GPU: $GPU"
+echo "  GPU:       $GPU"
 echo "  Train end: $TRAIN_END"
-echo "  Val end:   $VAL_END"
+echo "  Val end:   $VAL_END  (purge=8d, val window=$(($(($DATE_CMD -u -d "$VAL_END" +%s 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d "$VAL_END" +%s) - $($DATE_CMD -u -d "$TRAIN_END" +%s 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d "$TRAIN_END" +%s)) / 86400 - 8))d)"
 echo "  Output:    $RESULTS/"
 echo "============================================================"
 
-# Archive old models
+# Archive current prod models via model_registry
 if [[ -d "$RESULTS" ]]; then
-    BACKUP="${RESULTS}_bak_$(date +%Y%m%d_%H%M)"
-    echo "Backing up old models to $BACKUP"
-    mv "$RESULTS" "$BACKUP"
+    echo ""
+    echo "📦 Archiving current production models..."
+    python model_registry.py archive --tag "pre-v14-champion" --notes "Before v14 champion deploy" 2>/dev/null || true
 fi
 
 export SKIP_CALENDAR=1
@@ -54,4 +69,12 @@ echo ""
 echo "============================================================"
 echo "  Done! Models in: $RESULTS/"
 echo "============================================================"
-ls -la "$RESULTS/"/*.cbm "$RESULTS/feature_names.json" 2>/dev/null
+ls -la "$RESULTS/"*.cbm "$RESULTS/feature_names.json" 2>/dev/null
+
+# Register new generation
+echo ""
+echo "📋 Registering new model generation..."
+python model_registry.py register \
+    --tag "v14-champion-cb-solo" \
+    --notes "v14 cb_market_noderiv_hpo: CatBoost solo, Huber, HPO 50, market-only news, no derivs. Sim: +143.8% HAC 5.33, +147.5% with vol-size HAC 5.48" \
+    2>/dev/null || true
