@@ -594,12 +594,14 @@ def generate_lgb_signal(df, models, feat_cols):
     return latest[['symbol', 'pred_lgb']].copy()
 
 
-def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use_xgb=True):
+def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True,
+                    use_xgb=True, cb_only=False):
     """
     Generate production ensemble signal.
 
     Pipeline: LGB v6 + LGB v7 + CatBoost [+ XGB] [→ meta-model] [→ deriv gate] → score.
     Flags allow disabling components based on walk-forward validation results.
+    cb_only: if True, skip LGB and XGB models — CatBoost solo mode.
     """
     latest = df.groupby('symbol').last().reset_index()
 
@@ -618,23 +620,24 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
         ("v7", "results_v7_prod"),
         ("v7", "results_v7"),
     ]
-    for mtype, d in lgb_candidates:
-        if mtype in loaded_types:
-            continue
-        p = os.path.join(root, d)
-        if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
-            ms = load_lgb_models(p)
-            if ms:
-                mf_g = ms[0].feature_name()
-                n_missing = sum(1 for c in mf_g if c not in latest.columns)
-                for c in [c for c in mf_g if c not in latest.columns]:
-                    latest[c] = 0.0
-                model_groups.append((ms, mf_g))
-                model_group_labels.append(mtype)
-                loaded_types.add(mtype)
-                label = "PROD" if "_prod" in p or "production" in p else "research"
-                warn = f" ⚠️ {n_missing} zero-filled" if n_missing > 3 else ""
-                print(f"   {os.path.basename(p)}: {len(ms)} LGB, {len(mf_g)} feats [{label}]{warn}")
+    if not cb_only:
+        for mtype, d in lgb_candidates:
+            if mtype in loaded_types:
+                continue
+            p = os.path.join(root, d)
+            if os.path.isdir(p) and any(f.endswith('.txt') for f in os.listdir(p)):
+                ms = load_lgb_models(p)
+                if ms:
+                    mf_g = ms[0].feature_name()
+                    n_missing = sum(1 for c in mf_g if c not in latest.columns)
+                    for c in [c for c in mf_g if c not in latest.columns]:
+                        latest[c] = 0.0
+                    model_groups.append((ms, mf_g))
+                    model_group_labels.append(mtype)
+                    loaded_types.add(mtype)
+                    label = "PROD" if "_prod" in p or "production" in p else "research"
+                    warn = f" ⚠️ {n_missing} zero-filled" if n_missing > 3 else ""
+                    print(f"   {os.path.basename(p)}: {len(ms)} LGB, {len(mf_g)} feats [{label}]{warn}")
 
     # CatBoost
     cb_dir = None
@@ -670,7 +673,7 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
         if os.path.isdir(_p) and any(f.endswith('.json') for f in os.listdir(_p)):
             xgb_dir = _p
             break
-    if xgb_dir and use_xgb:
+    if xgb_dir and use_xgb and not cb_only:
         try:
             import xgboost as xgb_lib
             _files = sorted(Path(xgb_dir).glob('xgb_model_seed_*.json'))
@@ -710,7 +713,7 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
         _p = os.path.join(root, _md)
         if os.path.isdir(_p) and any(f.endswith('.pt') for f in os.listdir(_p)):
             mlp_dir = _p; break
-    if mlp_dir:
+    if mlp_dir and not cb_only:
         try:
             import torch as _torch
             from run_pipeline_mlp import AlphaMLP
@@ -894,7 +897,7 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True, use
 # PORTFOLIO CONSTRUCTION (risk-managed)
 # ============================================================
 
-def _edge_boost_weights(scores, n_long, n_short):
+def _edge_boost_weights(scores, n_long, n_short, coin_vol=None):
     """Compute per-position weights using edge-proportional boost.
 
     Mirrors run_fast_sim.py compute_weights(edge_boost=True):
@@ -902,6 +905,7 @@ def _edge_boost_weights(scores, n_long, n_short):
       boost_i = 1 + min(edge_i / P75_edge, 3.0)
       weight  = boost / sum(boosts)   (per side, normalised to 1)
 
+    If coin_vol is provided, applies inverse-vol scaling: weight *= 1/σ.
     Returns list of (symbol, side, weight, score) sorted long-first.
     """
     all_scores = scores['score'].values
@@ -917,6 +921,13 @@ def _edge_boost_weights(scores, n_long, n_short):
         edges = np.abs(df['score'].values - median_score)
         boosts = 1.0 + np.minimum(edges / edge_p75, 3.0)
         w = boosts / boosts.sum()
+        # Inverse-vol sizing: scale by 1/σ
+        if coin_vol:
+            vol_arr = np.array([coin_vol.get(row['symbol'], 0.05)
+                                for _, row in df.iterrows()])
+            vol_arr = np.clip(vol_arr, 0.005, 0.20)
+            w = w * (1.0 / vol_arr)
+            w = w / w.sum()
         # Cap any single position at 25% of its side
         w = np.minimum(w, 0.25)
         w = w / w.sum()  # re-normalise after cap
@@ -930,7 +941,7 @@ def _edge_boost_weights(scores, n_long, n_short):
     return result
 
 
-def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
+def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=None):
     """
     Risk-managed portfolio construction with edge-boost sizing.
 
@@ -940,6 +951,7 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
 
     state: dict tracking equity curve for DD stop.
     leverage: exchange leverage multiplier (positions get leverage × capital).
+    coin_vol: optional {symbol: realized_vol} for inverse-vol sizing.
     """
     n_long = risk_cfg['n_long']
     n_short = risk_cfg['n_short']
@@ -1020,8 +1032,8 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1):
     # Cap per position at 15% of leveraged capital for diversification
     max_per_pos = capital * leverage * 0.15
 
-    # Compute edge-boost weights
-    weighted = _edge_boost_weights(signals, n_long, n_short)
+    # Compute edge-boost weights (with optional inverse-vol sizing)
+    weighted = _edge_boost_weights(signals, n_long, n_short, coin_vol=coin_vol)
 
     positions = []
     for symbol, side, weight, score in weighted:
@@ -1291,20 +1303,55 @@ def _convert_usd_to_contracts(exchange, markets, okx_sym, usd_amount):
     return contracts, {'last': price, 'bid': bid, 'ask': ask}
 
 
+def _log_fill(symbol, side, order, ticker_info, order_type):
+    """Log per-fill execution details to trading_logs/fills.csv."""
+    try:
+        fill_price = float(order.get('average', 0) or order.get('price', 0) or 0)
+        mid_price = (ticker_info['bid'] + ticker_info['ask']) / 2 if ticker_info else fill_price
+        slippage_bps = ((fill_price / mid_price - 1) * 10000
+                        if mid_price > 0 and fill_price > 0 else 0)
+        # Invert slippage for sells (paying less is good for sells)
+        if side == 'sell':
+            slippage_bps = -slippage_bps
+
+        row = (f"{datetime.now(timezone.utc).isoformat()},"
+               f"{symbol},{side},{order_type},"
+               f"{ticker_info.get('bid', '') if ticker_info else ''},"
+               f"{ticker_info.get('ask', '') if ticker_info else ''},"
+               f"{mid_price:.8g},{fill_price:.8g},"
+               f"{slippage_bps:.2f},"
+               f"{order.get('filled', '')},"
+               f"{order.get('cost', '')}\n")
+
+        fill_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 'trading_logs', 'fills.csv')
+        write_header = not os.path.exists(fill_path)
+        with open(fill_path, 'a') as f:
+            if write_header:
+                f.write("timestamp,symbol,side,type,bid,ask,mid,fill_price,slippage_bps,filled_qty,cost\n")
+            f.write(row)
+    except Exception:
+        pass  # never break trading for logging
+
+
 def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
                          params, use_limit=True, timeout=LIMIT_ORDER_WAIT):
     """Place limit order at bid/ask for maker fee; fall back to market if not filled."""
     import time as _time
 
     if not use_limit or ticker_info is None:
-        return exchange.create_order(symbol=symbol, type='market', side=side,
+        result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=amount, params=params)
+        _log_fill(symbol, side, result, ticker_info, 'market')
+        return result
 
     # Limit price: bid for buys (sit on book), ask for sells
     limit_price = ticker_info['bid'] if side == 'buy' else ticker_info['ask']
     if not limit_price or limit_price <= 0:
-        return exchange.create_order(symbol=symbol, type='market', side=side,
+        result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=amount, params=params)
+        _log_fill(symbol, side, result, ticker_info, 'market')
+        return result
 
     try:
         order = exchange.create_order(
@@ -1320,6 +1367,7 @@ def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
             try:
                 check = exchange.fetch_order(order_id, symbol)
                 if check['status'] == 'closed':  # filled
+                    _log_fill(symbol, side, check, ticker_info, 'limit')
                     return check
                 if check['status'] == 'canceled':
                     break
@@ -1337,10 +1385,15 @@ def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
         try:
             check = exchange.fetch_order(order_id, symbol)
             if check['status'] == 'closed':
+                _log_fill(symbol, side, check, ticker_info, 'limit')
                 return check
             filled_amount = float(check.get('filled', 0))
         except Exception:
             pass
+
+        # Log partial fill if any
+        if filled_amount > 0:
+            _log_fill(symbol, side, check, ticker_info, 'limit_partial')
 
         # Market fallback for remaining amount only
         remaining = amount - filled_amount
@@ -1349,12 +1402,16 @@ def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
             return check
         print(f"         ⏩ Limit {'partially ' if filled_amount > 0 else ''}filled for {symbol}"
               f" ({filled_amount}/{amount}), market for remaining {remaining}")
-        return exchange.create_order(symbol=symbol, type='market', side=side,
+        result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=remaining, params=params)
+        _log_fill(symbol, side, result, ticker_info, 'market_fallback')
+        return result
     except Exception:
         # Limit order placement failed — market fallback
-        return exchange.create_order(symbol=symbol, type='market', side=side,
+        result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=amount, params=params)
+        _log_fill(symbol, side, result, ticker_info, 'market_fallback')
+        return result
 
 
 def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
@@ -1810,6 +1867,10 @@ def main():
     parser.add_argument('--no-deriv-gate', action='store_true', help='Disable derivative risk gate')
     parser.add_argument('--no-meta', action='store_true', help='Disable meta-model (use simple mean ensemble)')
     parser.add_argument('--no-xgb', action='store_true', help='Exclude XGBoost from ensemble')
+    parser.add_argument('--cb-only', action='store_true',
+                        help='CatBoost solo mode: skip LGB and XGB models')
+    parser.add_argument('--vol-size', action='store_true',
+                        help='Inverse-vol position sizing: weight ∝ edge / coin_vol')
     parser.add_argument('--min-zscore', type=float, default=0.0,
                         help='Min |z-score| for position entry (e.g. 0.5). '
                              'Filters out weak signals from portfolio.')
@@ -1967,7 +2028,8 @@ def main():
         signals = generate_signal(df, feat_cols, root,
                                      use_meta=not args.no_meta,
                                      use_deriv_gate=not args.no_deriv_gate,
-                                     use_xgb=not args.no_xgb)
+                                     use_xgb=not args.no_xgb,
+                                     cb_only=args.cb_only)
         if signals is None or len(signals) == 0:
             print("   ❌ No signals")
             return
@@ -1988,9 +2050,24 @@ def main():
                 state['peak'] = max(state.get('peak', args.capital), trading_capital)
             except Exception as e:
                 print(f"   ⚠️  Balance refresh failed: {e}")
+
+        # 5a. Compute per-coin realized vol for inverse-vol sizing
+        coin_vol = None
+        if args.vol_size:
+            coin_vol = {}
+            for sym in df['symbol'].unique():
+                sym_df = df[df['symbol'] == sym].sort_values('timestamp')
+                rets = sym_df['close'].pct_change(1).dropna()
+                if len(rets) >= 12:
+                    coin_vol[sym] = float(rets.tail(24).std())
+            if coin_vol:
+                med_v = np.median(list(coin_vol.values()))
+                print(f"   📊 Vol-size: {len(coin_vol)} coins, median σ={med_v:.4f}")
+
         print(f"\n💼 Portfolio construction (equity=${trading_capital:,.0f})...")
         positions = construct_portfolio(signals, trading_capital, risk_cfg, state,
-                                          leverage=risk_cfg['leverage'])
+                                          leverage=risk_cfg['leverage'],
+                                          coin_vol=coin_vol)
 
         if not positions:
             print("   (no positions this cycle)")
