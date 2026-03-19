@@ -25,6 +25,7 @@ set -euo pipefail
 
 GPU="${GPU:---gpu}"
 RESULTS="results_catboost_prod"
+PURGE=8
 
 # Auto-compute dates: val_end = yesterday, train_end = val_end - 38 days
 # PURGE_DAYS=8, so val_start = train_end + 8 → val window ~30 days
@@ -37,11 +38,21 @@ fi
 VAL_END="${VAL_END:-$($DATE_CMD -u -d '1 day ago' +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -v-1d +%Y-%m-%d)}"
 TRAIN_END="${TRAIN_END:-$($DATE_CMD -u -d "$VAL_END - 38 days" +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d -v-38d "$VAL_END" +%Y-%m-%d)}"
 
+# Sanity check: val_start (train_end + purge) must be BEFORE val_end
+VAL_START=$($DATE_CMD -u -d "$TRAIN_END + $PURGE days" +%Y-%m-%d 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d -v+${PURGE}d "$TRAIN_END" +%Y-%m-%d)
+if [[ "$VAL_START" > "$VAL_END" || "$VAL_START" == "$VAL_END" ]]; then
+    echo "❌ FATAL: val_start ($VAL_START) >= val_end ($VAL_END)"
+    echo "   train_end=$TRAIN_END + purge=${PURGE}d = val_start=$VAL_START"
+    echo "   Fix: set TRAIN_END earlier or VAL_END later"
+    echo "   Example: TRAIN_END=2026-02-08 VAL_END=2026-03-18 $0"
+    exit 1
+fi
+
 echo "============================================================"
 echo "  Training v14 Champion: cb_market_noderiv_hpo"
 echo "  GPU:       $GPU"
 echo "  Train end: $TRAIN_END"
-echo "  Val end:   $VAL_END  (purge=8d, val window=$(($(($DATE_CMD -u -d "$VAL_END" +%s 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d "$VAL_END" +%s) - $($DATE_CMD -u -d "$TRAIN_END" +%s 2>/dev/null || $DATE_CMD -u -j -f %Y-%m-%d "$TRAIN_END" +%s)) / 86400 - 8))d)"
+echo "  Val:       $VAL_START → $VAL_END (purge=${PURGE}d)"
 echo "  Output:    $RESULTS/"
 echo "============================================================"
 
