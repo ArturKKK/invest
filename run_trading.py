@@ -994,12 +994,13 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
             print(f"   ⚠️  Signal too weak (spread={max_spread:.2f} < {conf_thresh}), skipping")
             return []
 
-    # Filter out blocked symbols (not available on OKX demo)
-    before = len(signals)
-    signals = signals[~signals['symbol'].isin(_OKX_BLOCKED)].copy()
-    after = len(signals)
-    if before != after:
-        print(f"   🚫 Filtered {before - after} blocked symbols ({after} tradeable)")
+    # Filter out blocked symbols (only applies to OKX demo, live has all symbols)
+    if risk_cfg.get('_demo_mode', False):
+        before = len(signals)
+        signals = signals[~signals['symbol'].isin(_OKX_BLOCKED)].copy()
+        after = len(signals)
+        if before != after:
+            print(f"   🚫 Filtered {before - after} blocked symbols ({after} tradeable)")
 
     # Min z-score filter: skip weak signals (matches sim --min-zscore)
     min_zs = risk_cfg.get('min_zscore', 0.0)
@@ -1902,6 +1903,7 @@ def main():
     risk_cfg['leverage'] = args.leverage
     if args.min_zscore > 0:
         risk_cfg['min_zscore'] = args.min_zscore
+    risk_cfg['_demo_mode'] = (args.mode == 'paper')
 
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
