@@ -5,12 +5,16 @@ set -uo pipefail
 # OVERNIGHT v15 — Execution Layer Optimization
 # ============================================================
 #
-# ZERO new training. Pure sim grid on existing cb_no_deriv champion.
+# ZERO new training. Pure sim grid on execution flags.
 #
-# v14 KEY FINDINGS (presumed — update after v14 runs):
-#   - cb_no_deriv SOLO = +131.5% (FULL), HAC 5.09
-#   - Ensembles worse than solo CB
-#   - Training variations TBD
+# v14 FINDINGS:
+#   - NEW CHAMPION: cb_market_noderiv_hpo = +143.8% HAC 5.33
+#   - Old champion: v12 cb_no_deriv = +131.5% HAC 5.09
+#   - v13 cb_market_no_deriv (skip-hpo) = +132.8% HAC 4.90
+#   - HPO for cb_no_deriv hurt sim (-10pp), overfit validation
+#   - residual target = flop (+92.2%)
+#   - huber delta=1.5 = best training Sharpe (1.93) but sim +127.2%
+#   - Training Sharpe ≠ sim performance (AGAIN confirmed)
 #
 # v15 INSIGHT:
 #   We have 6+ sim flags that were NEVER TESTED:
@@ -26,7 +30,7 @@ set -uo pipefail
 #   Phase 4: Best combo on R1/R2 stability check (6 sims)
 #   Phase 5: Leverage sensitivity with best combo (4 sims)
 #
-# Expected: ~41 sims × ~3min = ~2h
+# Expected: ~50 sims × ~3min = ~2.5h
 #
 # Usage:
 #   nohup ./run_overnight_v15.sh > overnight_v15.log 2>&1 &
@@ -40,7 +44,9 @@ SUMMARY="$LOGDIR/summary_${TIMESTAMP}.txt"
 
 SIM_DATA="--data data/features/crypto_features_1h.parquet"
 
-# Champion model path (v12 cb_no_deriv)
+# Champion model (v14 cb_market_noderiv_hpo: +143.8%, HAC 5.33)
+CHAMPION="results/overnight_v14/cb_market_noderiv_hpo"
+# Old champion for reference (v12 cb_no_deriv: +131.5%, HAC 5.09)
 V12_CBND="results/overnight_v12/cb_no_deriv"
 
 export SKIP_CALENDAR=1
@@ -123,18 +129,19 @@ setup_models() {
   done
 }
 
-# ─── Verify champion exists ───
-if [[ ! -d "$V12_CBND" ]]; then
-  log "❌ FATAL: Champion model not found: $V12_CBND"
-  log "   Run v12 training first or update the path."
-  exit 1
-fi
+# ─── Verify models exist ───
+for d in "$CHAMPION" "$V12_CBND"; do
+  if [[ ! -d "$d" ]]; then
+    log "❌ FATAL: Model not found: $d"
+    exit 1
+  fi
+done
 
 # Isolate all model dirs
 isolate_models
 
-# Setup champion for ALL sims (cb_no_deriv solo)
-setup_models "SKIP" "SKIP" "$V12_CBND" "SKIP"
+# Setup NEW champion for sims
+setup_models "SKIP" "SKIP" "$CHAMPION" "SKIP"
 
 # Sim periods
 R1="--days 92 --start-date 2025-10-01 --end-date 2025-12-31"
@@ -145,12 +152,20 @@ FULL="--days 158 --start-date 2025-10-01 --end-date 2026-03-07"
 BASE="--leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble"
 
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  PHASE 1: BASELINE REPRODUCTION (~3min)                      ║
-# ║  Reproduce v13 result: cb_no_deriv solo +131.5%              ║
+# ║  PHASE 1: BASELINE REPRODUCTION (~6min)                      ║
+# ║  New champion + old champion reference                       ║
 # ╚══════════════════════════════════════════════════════════════╝
 phase_start "PHASE 1: BASELINE REPRODUCTION"
 
-run_sim "BASELINE" $FULL $BASE
+# New champion: cb_market_noderiv_hpo (expect +143.8%)
+run_sim "BASELINE_new_champ" $FULL $BASE
+
+# Old champion reference
+setup_models "SKIP" "SKIP" "$V12_CBND" "SKIP"
+run_sim "BASELINE_old_champ" $FULL $BASE
+
+# Switch back to new champion for all subsequent sims
+setup_models "SKIP" "SKIP" "$CHAMPION" "SKIP"
 
 phase_end
 
@@ -239,17 +254,22 @@ phase_end
 # ╚══════════════════════════════════════════════════════════════╝
 phase_start "PHASE 4: STABILITY CHECK"
 
-# Baseline on each period
-run_sim "STAB_baseline_R1" $R1 $BASE
-run_sim "STAB_baseline_R2" $R2 $BASE
+# New champion: baseline + best combos on R1, R2
+run_sim "STAB_newchamp_R1" $R1 $BASE
+run_sim "STAB_newchamp_R2" $R2 $BASE
+run_sim "STAB_newchamp_hyst5_R1" $R1 $BASE --hysteresis 5
+run_sim "STAB_newchamp_hyst5_R2" $R2 $BASE --hysteresis 5
+run_sim "STAB_newchamp_h5vt50_R1" $R1 $BASE --hysteresis 5 --vol-target-ann 0.50
+run_sim "STAB_newchamp_h5vt50_R2" $R2 $BASE --hysteresis 5 --vol-target-ann 0.50
 
-# Best single flag (pre-selected: hysteresis 5)
-run_sim "STAB_hyst5_R1" $R1 $BASE --hysteresis 5
-run_sim "STAB_hyst5_R2" $R2 $BASE --hysteresis 5
+# Old champion with best flags (do execution flags help BOTH models?)
+setup_models "SKIP" "SKIP" "$V12_CBND" "SKIP"
+run_sim "STAB_oldchamp_hyst5_R1" $R1 $BASE --hysteresis 5
+run_sim "STAB_oldchamp_hyst5_R2" $R2 $BASE --hysteresis 5
+run_sim "STAB_oldchamp_h5vt50_FULL" $FULL $BASE --hysteresis 5 --vol-target-ann 0.50
 
-# Best combo (pre-selected: hyst5 + vol-target 50%)
-run_sim "STAB_combo_vt50h5_R1" $R1 $BASE --hysteresis 5 --vol-target-ann 0.50
-run_sim "STAB_combo_vt50h5_R2" $R2 $BASE --hysteresis 5 --vol-target-ann 0.50
+# Switch back to new champion
+setup_models "SKIP" "SKIP" "$CHAMPION" "SKIP"
 
 phase_end
 
@@ -305,12 +325,13 @@ TOTAL_TIME=$(( $(date +%s) - START_TIME ))
   echo "============================================================"
   echo ""
   echo "KEY QUESTIONS:"
-  echo "  1. Does vol-targeting improve Sharpe/HAC vs baseline?"
+  echo "  1. Does vol-targeting improve Sharpe/HAC vs baseline (+143.8%)?"
   echo "  2. Does hysteresis reduce turnover and improve returns?"
   echo "  3. Does signal smoothing help or hurt?"
   echo "  4. What is the optimal combo of execution flags?"
   echo "  5. Is the best combo stable across R1 and R2?"
-  echo "  6. What leverage is optimal with best execution config?"
+  echo "  6. Do execution flags help old champion too (model-independent)?"
+  echo "  7. What leverage is optimal with best execution config?"
   echo ""
   echo "NEXT STEPS:"
   echo "  - If any flag adds >5%: implement in production"
