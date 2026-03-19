@@ -1,0 +1,183 @@
+nohup: ignoring input
+mv: cannot move 'results_catboost_prod' to 'results_catboost_prod_bak_v15/results_catboost_prod': Directory not empty
+[12:03:28] 
+[12:03:28] ============================================================
+[12:03:28]   PHASE 1: BASELINE REPRODUCTION
+[12:03:28] ============================================================
+[12:03:28] SIM #1: BASELINE_new_champ
+[12:03:28] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble
+[12:06:45]   => Return=+143.8%  HAC=+5.33
+[12:06:45] SIM #2: BASELINE_old_champ
+[12:06:45] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble
+[12:10:00]   => Return=+131.5%  HAC=+5.09
+[12:10:00]   ⏱️  Phase took 6m 32s
+[12:10:00] 
+[12:10:00] ============================================================
+[12:10:00]   PHASE 2: SINGLE-FLAG SWEEPS
+[12:10:00] ============================================================
+[12:10:00] --- Vol targeting sweep ---
+[12:10:00] SIM #3: VOLTGT_30pct
+[12:10:00] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --vol-target-ann 0.30
+[12:13:15]   => Return=+89.8%  HAC=+4.61
+[12:13:15] SIM #4: VOLTGT_40pct
+[12:13:15] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --vol-target-ann 0.40
+[12:16:31]   => Return=+110.3%  HAC=+4.74
+[12:16:31] SIM #5: VOLTGT_50pct
+[12:16:31] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --vol-target-ann 0.50
+[12:19:48]   => Return=+130.4%  HAC=+4.81
+[12:19:48] SIM #6: VOLTGT_60pct
+[12:19:48] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --vol-target-ann 0.60
+[12:23:06]   => Return=+150.3%  HAC=+4.85
+[12:23:06] --- Hysteresis sweep ---
+[12:23:06] SIM #7: HYST_3
+[12:23:06] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 3
+[12:26:23]   => Return=+143.8%  HAC=+5.33
+[12:26:23] SIM #8: HYST_5
+[12:26:23] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5
+[12:29:38]   => Return=+143.8%  HAC=+5.33
+[12:29:38] SIM #9: HYST_7
+[12:29:38] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 7
+[12:32:53]   => Return=+143.8%  HAC=+5.33
+[12:32:53] SIM #10: HYST_10
+[12:32:53] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 10
+[12:36:09]   => Return=+143.8%  HAC=+5.33
+[12:36:09] --- Signal smoothing sweep ---
+[12:36:09] SIM #11: SMOOTH_02
+[12:36:09] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --smooth-signal 0.2
+[12:39:22]   => Return=+129.3%  HAC=+5.16
+[12:39:22] SIM #12: SMOOTH_03
+[12:39:22] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --smooth-signal 0.3
+[12:42:36]   => Return=+105.4%  HAC=+4.26
+[12:42:36] SIM #13: SMOOTH_04
+[12:42:36] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --smooth-signal 0.4
+[12:45:53]   => Return=+89.4%  HAC=+3.72
+[12:45:53] SIM #14: SMOOTH_05
+[12:45:53] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --smooth-signal 0.5
+[12:49:07]   => Return=+72.3%  HAC=+3.16
+[12:49:07] --- Turnover budget sweep ---
+[12:49:07] SIM #15: TOBUD_3
+[12:49:07] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --turnover-budget 3
+[12:52:16]   => Return=  HAC=
+[12:52:16] SIM #16: TOBUD_5
+[12:52:16] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --turnover-budget 5
+[12:55:25]   => Return=  HAC=
+[12:55:25] SIM #17: TOBUD_8
+[12:55:25] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --turnover-budget 8
+[12:58:39]   => Return=+143.8%  HAC=+5.33
+[12:58:39] --- Vol sizing ---
+[12:58:39] SIM #18: VOLSIZE
+[12:58:39] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --vol-size
+[13:02:04]   => Return=+147.5%  HAC=+5.48
+[13:02:04] --- Regime shorts ---
+[13:02:04] SIM #19: REGSHORT_05
+[13:02:04] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --regime-shorts 0.5
+[13:05:18]   => Return=+56.7%  HAC=+2.47
+[13:05:18] SIM #20: REGSHORT_03
+[13:05:18] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --regime-shorts 0.3
+[13:08:36]   => Return=+30.0%  HAC=+1.27
+[13:08:36]   ⏱️  Phase took 58m 36s
+[13:08:36] 
+[13:08:36] ============================================================
+[13:08:36]   PHASE 3: COMBO GRID
+[13:08:36] ============================================================
+[13:08:36] SIM #21: COMBO_hyst5_vt50
+[13:08:36] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[13:11:49]   => Return=+130.4%  HAC=+4.81
+[13:11:49] SIM #22: COMBO_hyst5_vt40
+[13:11:49] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.40
+[13:15:03]   => Return=+110.3%  HAC=+4.74
+[13:15:03] SIM #23: COMBO_hyst5_sm03
+[13:15:03] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --smooth-signal 0.3
+[13:18:21]   => Return=+105.4%  HAC=+4.26
+[13:18:21] SIM #24: COMBO_hyst5_vt50_sm03
+[13:18:21] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50 --smooth-signal 0.3
+[13:21:34]   => Return=+97.6%  HAC=+3.78
+[13:21:34] SIM #25: COMBO_hyst5_vt40_sm03
+[13:21:34] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.40 --smooth-signal 0.3
+[13:24:47]   => Return=+84.3%  HAC=+3.74
+[13:24:48] SIM #26: COMBO_hyst5_vt50_vs
+[13:24:48] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50 --vol-size
+[13:28:12]   => Return=+132.5%  HAC=+4.97
+[13:28:12] SIM #27: COMBO_hyst5_vt50_sm03_vs
+[13:28:12] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50 --smooth-signal 0.3 --vol-size
+[13:31:33]   => Return=+93.1%  HAC=+3.66
+[13:31:33] SIM #28: COMBO_hyst5_tobud5
+[13:31:33] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --turnover-budget 5
+[13:34:42]   => Return=  HAC=
+[13:34:42] SIM #29: COMBO_hyst5_tobud3
+[13:34:42] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --turnover-budget 3
+[13:37:55]   => Return=  HAC=
+[13:37:55] SIM #30: COMBO_all_moderate
+[13:37:55] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50 --smooth-signal 0.3 --turnover-budget 5 --vol-size
+[13:41:20]   => Return=+93.1%  HAC=+3.66
+[13:41:20] SIM #31: COMBO_all_conservative
+[13:41:20] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 7 --vol-target-ann 0.40 --smooth-signal 0.4 --turnover-budget 3 --vol-size
+[13:44:45]   => Return=+67.2%  HAC=+3.10
+[13:44:45] SIM #32: COMBO_metarisk
+[13:44:45] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --meta-risk
+[13:48:03]   => Return=+184.7%  HAC=+5.29
+[13:48:03] SIM #33: COMBO_metarisk_hyst5_vt50
+[13:48:03] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --meta-risk --hysteresis 5 --vol-target-ann 0.50
+[13:51:17]   => Return=+142.3%  HAC=+4.67
+[13:51:17]   ⏱️  Phase took 42m 41s
+[13:51:17] 
+[13:51:17] ============================================================
+[13:51:17]   PHASE 4: STABILITY CHECK
+[13:51:17] ============================================================
+[13:51:17] SIM #34: STAB_newchamp_R1
+[13:51:17] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 92 --start-date 2025-10-01 --end-date 2025-12-31 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble
+[13:54:28]   => Return=+11.2%  HAC=+6.30
+[13:54:28] SIM #35: STAB_newchamp_R2
+[13:54:28] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 66 --start-date 2026-01-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble
+[13:57:37]   => Return=+66.6%  HAC=+8.42
+[13:57:37] SIM #36: STAB_newchamp_hyst5_R1
+[13:57:37] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 92 --start-date 2025-10-01 --end-date 2025-12-31 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5
+[14:00:47]   => Return=+11.2%  HAC=+6.30
+[14:00:47] SIM #37: STAB_newchamp_hyst5_R2
+[14:00:47] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 66 --start-date 2026-01-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5
+[14:03:58]   => Return=+66.6%  HAC=+8.42
+[14:03:58] SIM #38: STAB_newchamp_h5vt50_R1
+[14:03:58] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 92 --start-date 2025-10-01 --end-date 2025-12-31 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[14:07:09]   => Return=+10.5%  HAC=+5.24
+[14:07:09] SIM #39: STAB_newchamp_h5vt50_R2
+[14:07:09] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 66 --start-date 2026-01-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[14:10:22]   => Return=+64.0%  HAC=+7.39
+[14:10:22] SIM #40: STAB_oldchamp_hyst5_R1
+[14:10:22] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 92 --start-date 2025-10-01 --end-date 2025-12-31 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5
+[14:13:29]   => Return=+11.4%  HAC=+6.45
+[14:13:29] SIM #41: STAB_oldchamp_hyst5_R2
+[14:13:29] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 66 --start-date 2026-01-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5
+[14:16:38]   => Return=+62.1%  HAC=+8.14
+[14:16:38] SIM #42: STAB_oldchamp_h5vt50_FULL
+[14:16:38] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[14:19:56]   => Return=+123.7%  HAC=+4.74
+[14:19:56]   ⏱️  Phase took 28m 39s
+[14:19:56] 
+[14:19:56] ============================================================
+[14:19:56]   PHASE 5: LEVERAGE SENSITIVITY
+[14:19:56] ============================================================
+[14:19:56] SIM #43: LEV_combo_1x
+[14:19:56] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 1 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[14:23:11]   => Return=+74.8%  HAC=+5.66
+[14:23:11] SIM #44: LEV_combo_2x
+[14:23:11] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 2 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[14:26:28]   => Return=+101.9%  HAC=+4.91
+[14:26:28] SIM #45: LEV_combo_4x
+[14:26:28] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 4 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[14:29:43]   => Return=+156.2%  HAC=+4.72
+[14:29:43] SIM #46: LEV_combo_5x
+[14:29:43] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 5 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --hysteresis 5 --vol-target-ann 0.50
+[14:32:58]   => Return=+180.1%  HAC=+4.63
+[14:32:58]   ⏱️  Phase took 13m 2s
+[14:32:58] 
+[14:32:58] ============================================================
+[14:32:58]   FINAL SUMMARY
+[14:32:58] ============================================================
+[14:32:58] 
+[14:32:58] ============================================================
+[14:32:58]   OVERNIGHT v15 — FINAL RESULTS
+[14:32:58] ============================================================
+[14:32:58] 
+[14:32:58]   TOTAL: 46 sims in 2h 29m
+[14:32:58]   SUMMARY: results/overnight_v15/summary_20260319_1203.txt
+[14:32:58] 

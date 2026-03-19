@@ -1,0 +1,414 @@
+=== SIM #1: BASELINE_new_champ ===
+   Return:     +143.8%  (ann. ~+332%)
+   Max DD:     -20.5%
+   Sharpe:     +5.28
+   Sharpe HAC: +5.33  (Newey-West adjusted)
+   Calmar:     16.18
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #2: BASELINE_old_champ ===
+   Return:     +131.5%  (ann. ~+304%)
+   Max DD:     -19.9%
+   Sharpe:     +5.07
+   Sharpe HAC: +5.09  (Newey-West adjusted)
+   Calmar:     15.25
+   Win Rate:   60%  (187W / 126L)
+
+=== SIM #3: VOLTGT_30pct ===
+   Return:     +89.8%  (ann. ~+207%)
+   Max DD:     -17.6%
+   Sharpe:     +4.30
+   Sharpe HAC: +4.61  (Newey-West adjusted)
+   Calmar:     11.78
+   Win Rate:   61%  (189W / 123L)
+
+=== SIM #4: VOLTGT_40pct ===
+   Return:     +110.3%  (ann. ~+255%)
+   Max DD:     -20.1%
+   Sharpe:     +4.46
+   Sharpe HAC: +4.74  (Newey-West adjusted)
+   Calmar:     12.67
+   Win Rate:   61%  (189W / 123L)
+
+=== SIM #5: VOLTGT_50pct ===
+   Return:     +130.4%  (ann. ~+301%)
+   Max DD:     -22.2%
+   Sharpe:     +4.56
+   Sharpe HAC: +4.81  (Newey-West adjusted)
+   Calmar:     13.54
+   Win Rate:   60%  (189W / 124L)
+
+=== SIM #6: VOLTGT_60pct ===
+   Return:     +150.3%  (ann. ~+347%)
+   Max DD:     -24.1%
+   Sharpe:     +4.63
+   Sharpe HAC: +4.85  (Newey-West adjusted)
+   Calmar:     14.39
+   Win Rate:   60%  (189W / 124L)
+
+=== SIM #7: HYST_3 ===
+   Return:     +143.8%  (ann. ~+332%)
+   Max DD:     -20.5%
+   Sharpe:     +5.28
+   Sharpe HAC: +5.33  (Newey-West adjusted)
+   Calmar:     16.18
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #8: HYST_5 ===
+   Return:     +143.8%  (ann. ~+332%)
+   Max DD:     -20.5%
+   Sharpe:     +5.28
+   Sharpe HAC: +5.33  (Newey-West adjusted)
+   Calmar:     16.18
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #9: HYST_7 ===
+   Return:     +143.8%  (ann. ~+332%)
+   Max DD:     -20.5%
+   Sharpe:     +5.28
+   Sharpe HAC: +5.33  (Newey-West adjusted)
+   Calmar:     16.18
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #10: HYST_10 ===
+   Return:     +143.8%  (ann. ~+332%)
+   Max DD:     -20.5%
+   Sharpe:     +5.28
+   Sharpe HAC: +5.33  (Newey-West adjusted)
+   Calmar:     16.18
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #11: SMOOTH_02 ===
+   Return:     +129.3%  (ann. ~+299%)
+   Max DD:     -21.4%
+   Sharpe:     +5.05
+   Sharpe HAC: +5.16  (Newey-West adjusted)
+   Calmar:     13.93
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #12: SMOOTH_03 ===
+   Return:     +105.4%  (ann. ~+243%)
+   Max DD:     -21.5%
+   Sharpe:     +4.12
+   Sharpe HAC: +4.26  (Newey-West adjusted)
+   Calmar:     11.31
+   Win Rate:   58%  (181W / 132L)
+
+=== SIM #13: SMOOTH_04 ===
+   Return:     +89.4%  (ann. ~+206%)
+   Max DD:     -20.4%
+   Sharpe:     +3.60
+   Sharpe HAC: +3.72  (Newey-West adjusted)
+   Calmar:     10.12
+   Win Rate:   57%  (179W / 134L)
+
+=== SIM #14: SMOOTH_05 ===
+   Return:     +72.3%  (ann. ~+167%)
+   Max DD:     -19.4%
+   Sharpe:     +3.00
+   Sharpe HAC: +3.16  (Newey-West adjusted)
+   Calmar:     8.62
+   Win Rate:   56%  (176W / 137L)
+
+=== SIM #15: TOBUD_3 ===
+
+=== SIM #16: TOBUD_5 ===
+
+=== SIM #17: TOBUD_8 ===
+   Return:     +143.8%  (ann. ~+332%)
+   Max DD:     -20.5%
+   Sharpe:     +5.28
+   Sharpe HAC: +5.33  (Newey-West adjusted)
+   Calmar:     16.18
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #18: VOLSIZE ===
+   Return:     +147.5%  (ann. ~+341%)
+   Max DD:     -20.4%
+   Sharpe:     +5.36
+   Sharpe HAC: +5.48  (Newey-West adjusted)
+   Calmar:     16.68
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #19: REGSHORT_05 ===
+   Return:     +56.7%  (ann. ~+131%)
+   Max DD:     -21.3%
+   Sharpe:     +2.49
+   Sharpe HAC: +2.47  (Newey-West adjusted)
+   Calmar:     6.16
+   Win Rate:   55%  (173W / 140L)
+
+=== SIM #20: REGSHORT_03 ===
+   Return:     +30.0%  (ann. ~+69%)
+   Max DD:     -22.4%
+   Sharpe:     +1.28
+   Sharpe HAC: +1.27  (Newey-West adjusted)
+   Calmar:     3.10
+   Win Rate:   54%  (170W / 143L)
+
+=== SIM #21: COMBO_hyst5_vt50 ===
+   Return:     +130.4%  (ann. ~+301%)
+   Max DD:     -22.2%
+   Sharpe:     +4.56
+   Sharpe HAC: +4.81  (Newey-West adjusted)
+   Calmar:     13.54
+   Win Rate:   60%  (189W / 124L)
+
+=== SIM #22: COMBO_hyst5_vt40 ===
+   Return:     +110.3%  (ann. ~+255%)
+   Max DD:     -20.1%
+   Sharpe:     +4.46
+   Sharpe HAC: +4.74  (Newey-West adjusted)
+   Calmar:     12.67
+   Win Rate:   61%  (189W / 123L)
+
+=== SIM #23: COMBO_hyst5_sm03 ===
+   Return:     +105.4%  (ann. ~+243%)
+   Max DD:     -21.5%
+   Sharpe:     +4.12
+   Sharpe HAC: +4.26  (Newey-West adjusted)
+   Calmar:     11.31
+   Win Rate:   58%  (181W / 132L)
+
+=== SIM #24: COMBO_hyst5_vt50_sm03 ===
+   Return:     +97.6%  (ann. ~+226%)
+   Max DD:     -23.2%
+   Sharpe:     +3.63
+   Sharpe HAC: +3.78  (Newey-West adjusted)
+   Calmar:     9.70
+   Win Rate:   58%  (181W / 132L)
+
+=== SIM #25: COMBO_hyst5_vt40_sm03 ===
+   Return:     +84.3%  (ann. ~+195%)
+   Max DD:     -21.1%
+   Sharpe:     +3.56
+   Sharpe HAC: +3.74  (Newey-West adjusted)
+   Calmar:     9.25
+   Win Rate:   58%  (181W / 132L)
+
+=== SIM #26: COMBO_hyst5_vt50_vs ===
+   Return:     +132.5%  (ann. ~+306%)
+   Max DD:     -22.2%
+   Sharpe:     +4.66
+   Sharpe HAC: +4.97  (Newey-West adjusted)
+   Calmar:     13.81
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #27: COMBO_hyst5_vt50_sm03_vs ===
+   Return:     +93.1%  (ann. ~+215%)
+   Max DD:     -23.2%
+   Sharpe:     +3.51
+   Sharpe HAC: +3.66  (Newey-West adjusted)
+   Calmar:     9.27
+   Win Rate:   59%  (185W / 128L)
+
+=== SIM #28: COMBO_hyst5_tobud5 ===
+
+=== SIM #29: COMBO_hyst5_tobud3 ===
+
+=== SIM #30: COMBO_all_moderate ===
+   Return:     +93.1%  (ann. ~+215%)
+   Max DD:     -23.2%
+   Sharpe:     +3.51
+   Sharpe HAC: +3.66  (Newey-West adjusted)
+   Calmar:     9.27
+   Win Rate:   59%  (185W / 128L)
+
+=== SIM #31: COMBO_all_conservative ===
+   Return:     +67.2%  (ann. ~+155%)
+   Max DD:     -20.4%
+   Sharpe:     +2.95
+   Sharpe HAC: +3.10  (Newey-West adjusted)
+   Calmar:     7.61
+   Win Rate:   59%  (184W / 129L)
+
+=== SIM #32: COMBO_metarisk ===
+   Return:     +184.7%  (ann. ~+427%)
+   Max DD:     -21.9%
+   Sharpe:     +5.36
+   Sharpe HAC: +5.29  (Newey-West adjusted)
+   Calmar:     19.47
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #33: COMBO_metarisk_hyst5_vt50 ===
+   Return:     +142.3%  (ann. ~+329%)
+   Max DD:     -22.7%
+   Sharpe:     +4.46
+   Sharpe HAC: +4.67  (Newey-West adjusted)
+   Calmar:     14.48
+   Win Rate:   61%  (190W / 123L)
+
+=== SIM #34: STAB_newchamp_R1 ===
+   Return:     +11.2%  (ann. ~+44%)
+   Max DD:     -3.8%
+   Sharpe:     +5.39
+   Sharpe HAC: +6.30  (Newey-West adjusted)
+   Calmar:     11.72
+   Win Rate:   60%  (30W / 20L)
+
+=== SIM #35: STAB_newchamp_R2 ===
+   Return:     +66.6%  (ann. ~+368%)
+   Max DD:     -7.3%
+   Sharpe:     +7.44
+   Sharpe HAC: +8.42  (Newey-West adjusted)
+   Calmar:     50.36
+   Win Rate:   60%  (78W / 51L)
+
+=== SIM #36: STAB_newchamp_hyst5_R1 ===
+   Return:     +11.2%  (ann. ~+44%)
+   Max DD:     -3.8%
+   Sharpe:     +5.39
+   Sharpe HAC: +6.30  (Newey-West adjusted)
+   Calmar:     11.72
+   Win Rate:   60%  (30W / 20L)
+
+=== SIM #37: STAB_newchamp_hyst5_R2 ===
+   Return:     +66.6%  (ann. ~+368%)
+   Max DD:     -7.3%
+   Sharpe:     +7.44
+   Sharpe HAC: +8.42  (Newey-West adjusted)
+   Calmar:     50.36
+   Win Rate:   60%  (78W / 51L)
+
+=== SIM #38: STAB_newchamp_h5vt50_R1 ===
+   Return:     +10.5%  (ann. ~+42%)
+   Max DD:     -5.8%
+   Sharpe:     +4.30
+   Sharpe HAC: +5.24  (Newey-West adjusted)
+   Calmar:     7.20
+   Win Rate:   60%  (30W / 20L)
+
+=== SIM #39: STAB_newchamp_h5vt50_R2 ===
+   Return:     +64.0%  (ann. ~+354%)
+   Max DD:     -9.3%
+   Sharpe:     +6.50
+   Sharpe HAC: +7.39  (Newey-West adjusted)
+   Calmar:     37.88
+   Win Rate:   60%  (78W / 51L)
+
+=== SIM #40: STAB_oldchamp_hyst5_R1 ===
+   Return:     +11.4%  (ann. ~+45%)
+   Max DD:     -3.9%
+   Sharpe:     +5.64
+   Sharpe HAC: +6.45  (Newey-West adjusted)
+   Calmar:     11.79
+   Win Rate:   60%  (30W / 20L)
+
+=== SIM #41: STAB_oldchamp_hyst5_R2 ===
+   Return:     +62.1%  (ann. ~+343%)
+   Max DD:     -7.1%
+   Sharpe:     +7.08
+   Sharpe HAC: +8.14  (Newey-West adjusted)
+   Calmar:     48.24
+   Win Rate:   60%  (77W / 52L)
+
+=== SIM #42: STAB_oldchamp_h5vt50_FULL ===
+   Return:     +123.7%  (ann. ~+286%)
+   Max DD:     -21.6%
+   Sharpe:     +4.44
+   Sharpe HAC: +4.74  (Newey-West adjusted)
+   Calmar:     13.25
+   Win Rate:   60%  (187W / 126L)
+
+=== SIM #43: LEV_combo_1x ===
+   Return:     +74.8%  (ann. ~+173%)
+   Max DD:     -12.6%
+   Sharpe:     +5.49
+   Sharpe HAC: +5.66  (Newey-West adjusted)
+   Calmar:     13.77
+   Win Rate:   61%  (191W / 122L)
+
+=== SIM #44: LEV_combo_2x ===
+   Return:     +101.9%  (ann. ~+235%)
+   Max DD:     -18.3%
+   Sharpe:     +4.68
+   Sharpe HAC: +4.91  (Newey-West adjusted)
+   Calmar:     12.84
+   Win Rate:   60%  (189W / 124L)
+
+=== SIM #45: LEV_combo_4x ===
+   Return:     +156.2%  (ann. ~+361%)
+   Max DD:     -25.4%
+   Sharpe:     +4.47
+   Sharpe HAC: +4.72  (Newey-West adjusted)
+   Calmar:     14.19
+   Win Rate:   61%  (189W / 123L)
+
+=== SIM #46: LEV_combo_5x ===
+   Return:     +180.1%  (ann. ~+416%)
+   Max DD:     -28.2%
+   Sharpe:     +4.39
+   Sharpe HAC: +4.63  (Newey-West adjusted)
+   Calmar:     14.77
+   Win Rate:   61%  (189W / 123L)
+
+
+=== ALL SIM RESULTS (sorted by HAC) ===
+
+Config                                       Return        HAC
+─────────────────────────────────────────────────────────────────
+VOLTGT_60pct	                               +150.3%      +4.85
+VOLTGT_50pct	                               +130.4%      +4.81
+VOLTGT_40pct	                               +110.3%      +4.74
+VOLTGT_30pct	                                +89.8%      +4.61
+VOLSIZE	                                    +147.5%      +5.48
+TOBUD_8	                                    +143.8%      +5.33
+TOBUD_5	                                                      
+TOBUD_3	                                                      
+STAB_oldchamp_hyst5_R2	                      +62.1%      +8.14
+STAB_oldchamp_hyst5_R1	                      +11.4%      +6.45
+STAB_oldchamp_h5vt50_FULL	                  +123.7%      +4.74
+STAB_newchamp_R2	                            +66.6%      +8.42
+STAB_newchamp_R1	                            +11.2%      +6.30
+STAB_newchamp_hyst5_R2	                      +66.6%      +8.42
+STAB_newchamp_hyst5_R1	                      +11.2%      +6.30
+STAB_newchamp_h5vt50_R2	                     +64.0%      +7.39
+STAB_newchamp_h5vt50_R1	                     +10.5%      +5.24
+SMOOTH_05	                                   +72.3%      +3.16
+SMOOTH_04	                                   +89.4%      +3.72
+SMOOTH_03	                                  +105.4%      +4.26
+SMOOTH_02	                                  +129.3%      +5.16
+REGSHORT_05	                                 +56.7%      +2.47
+REGSHORT_03	                                 +30.0%      +1.27
+LEV_combo_5x	                               +180.1%      +4.63
+LEV_combo_4x	                               +156.2%      +4.72
+LEV_combo_2x	                               +101.9%      +4.91
+LEV_combo_1x	                                +74.8%      +5.66
+HYST_7	                                     +143.8%      +5.33
+HYST_5	                                     +143.8%      +5.33
+HYST_3	                                     +143.8%      +5.33
+HYST_10	                                    +143.8%      +5.33
+COMBO_metarisk_hyst5_vt50	                  +142.3%      +4.67
+COMBO_metarisk	                             +184.7%      +5.29
+COMBO_hyst5_vt50_vs	                        +132.5%      +4.97
+COMBO_hyst5_vt50_sm03_vs	                    +93.1%      +3.66
+COMBO_hyst5_vt50_sm03	                       +97.6%      +3.78
+COMBO_hyst5_vt50	                           +130.4%      +4.81
+COMBO_hyst5_vt40_sm03	                       +84.3%      +3.74
+COMBO_hyst5_vt40	                           +110.3%      +4.74
+COMBO_hyst5_tobud5	                                           
+COMBO_hyst5_tobud3	                                           
+COMBO_hyst5_sm03	                           +105.4%      +4.26
+COMBO_all_moderate	                          +93.1%      +3.66
+COMBO_all_conservative	                      +67.2%      +3.10
+BASELINE_old_champ	                         +131.5%      +5.09
+BASELINE_new_champ	                         +143.8%      +5.33
+
+============================================================
+  TOTAL: 46 sims in 2h 29m
+============================================================
+
+KEY QUESTIONS:
+  1. Does vol-targeting improve Sharpe/HAC vs baseline (+143.8%)?
+  2. Does hysteresis reduce turnover and improve returns?
+  3. Does signal smoothing help or hurt?
+  4. What is the optimal combo of execution flags?
+  5. Is the best combo stable across R1 and R2?
+  6. Do execution flags help old champion too (model-independent)?
+  7. What leverage is optimal with best execution config?
+
+NEXT STEPS:
+  - If any flag adds >5%: implement in production
+  - If vol-target helps: tune EWMA halflife (v16)
+  - If hysteresis helps: test K=3..10 more finely
+  - Add funding z-score overlay as code (Tier 2)

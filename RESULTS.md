@@ -1499,9 +1499,139 @@ Better training Sharpe → **WORSE** sim performance!
 9. **24h target = мёртвый** (Sharpe 0.20)
 10. **leverage 3x оптимален** для сильных моделей
 
-### Рекомендация на 19 марта 2026
-- **Production model**: CatBoost solo (no derivs, all news, Huber, skip-hpo)
-- **Sim config**: --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop
-- **Следующий шаг**: v14 — CatBoost variations (HPO, residual target, huber delta sweep) для поиска ещё лучшего CB
+### Рекомендация на 19 марта 2026 (обновлена после v14–v15)
+- **Production model**: CatBoost solo cb_market_noderiv_hpo (market-only news, no derivs, Huber, HPO 50 trials)
+- **Sim config**: --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --vol-size
+- **Следующий шаг**: deploy vol-size в production, исследовать meta-risk overlay
+
+---
+
+## v14 — CatBoost Training Variations (19 марта 2026)
+
+6 CatBoost экспериментов + 22 сима. Цель: побить cb_no_deriv (+131.5%) вариациями обучения.
+
+### Phase 1: Training (6 experiments)
+
+| Experiment | Конфиг | Train Sharpe | Sim Return | Sim HAC |
+|---|---|---|---|---|
+| cb_noderiv_hpo | no derivs, HPO 50 trials | 1.77 | +121.2% | 4.90 |
+| cb_noderiv_residual | no derivs, residual target | 1.27 | +92.2% | 4.06 |
+| cb_noderiv_hd05 | no derivs, huber delta=0.5 | 1.70 | +111.6% | 4.61 |
+| cb_noderiv_hd15 | no derivs, huber delta=1.5 | **1.93** | +127.2% | 5.03 |
+| cb_all_hpo | ALL features, HPO 50 | 1.62 | +128.4% | 5.29 |
+| **cb_market_noderiv_hpo** | **market-only news, no derivs, HPO 50** | **1.83** | **+143.8%** | **5.33** |
+
+### Phase 2: References (reproduce)
+
+| Config | Return | HAC |
+|---|---|---|
+| **cb_market_noderiv_hpo** (NEW) | **+143.8%** | **5.33** |
+| v13 cb_market_no_deriv (skip-hpo) | +132.8% | 4.90 |
+| v12 cb_no_deriv | +131.5% | 5.09 |
+| v11 cb | +122.5% | 5.05 |
+| v12 cb_price_only | +103.7% | 4.19 |
+
+### Phase 3: Stability (R1/R2)
+
+| Config | R1 Return | R1 HAC | R2 Return | R2 HAC |
+|---|---|---|---|---|
+| v12 cb_no_deriv | +11.4% | 6.45 | +62.1% | 8.14 |
+| cb_noderiv_hpo | +11.3% | 6.42 | +58.7% | 7.81 |
+| cb_all_hpo | +14.1% | 8.52 | +57.8% | 8.26 |
+| **cb_market_noderiv_hpo** | +11.2% | 6.30 | **+66.6%** | **8.42** |
+
+### Главные выводы v14
+
+1. **НОВЫЙ ЧЕМПИОН: cb_market_noderiv_hpo** (+143.8%, HAC 5.33) — обогнал старого на +12.3pp
+2. **Ключ: market-only news + HPO**. Per-coin news удалены (шум), market-level оставлены (сигнал)
+3. **HPO помог market-only** (skip-hpo 132.8% → HPO 143.8%), но **навредил no-deriv** (131.5% → 121.2%)
+4. **Residual target = провал** (+92.2%). Предсказание excess return сложнее raw return
+5. **Huber delta=1.5**: лучший training Sharpe ever (1.93!), но sim +127.2% < old champ. Training ≠ sim (ОПЯТЬ)
+6. **cb_all_hpo** (+128.4%, HAC 5.29) — derivs + HPO = почти равны old champ. HPO компенсирует вред derivs
+
+---
+
+## v15 — Execution Layer Optimization (19 марта 2026)
+
+46 симов, 0 обучения. Тест 6 sim-флагов которые существовали но НИКОГДА не использовались.
+
+**Чемпион для всех тестов**: cb_market_noderiv_hpo (+143.8% baseline)
+
+### Что значат флаги
+
+| Флаг | Что делает |
+|---|---|
+| `--vol-target-ann X` | Масштабирует exposure обратно пропорционально реализованной волатильности. Target X% годовых. Высокая vol → меньше позиции, низкая → больше |
+| `--hysteresis K` | Не выкидывает позицию пока она не упала в ранкинге ниже N+K. Снижает churn |
+| `--smooth-signal α` | EMA-blend текущих предсказаний с предыдущими. α=0.3 → 30% веса старым scores |
+| `--turnover-budget N` | Максимум N замен на сторону за ребаланс |
+| `--vol-size` | Inverse-vol sizing: позиции в low-vol монетах крупнее, в high-vol мельче |
+| `--regime-shorts X` | В bull-режиме масштабирует шорты на X (0.5 = вдвое меньше шортов) |
+| `--meta-risk` | Composite risk scaler (0.3x–1.5x) из 5 сигналов: model confidence, score spread, recent win rate, DD depth, regime |
+
+### Phase 2: Single-flag sweeps (каждый отдельно vs baseline)
+
+| Config | Return | HAC | Max DD | Δ Return | Вердикт |
+|---|---|---|---|---|---|
+| **BASELINE** | **+143.8%** | **5.33** | **-20.5%** | — | — |
+| vol-target 30% | +89.8% | 4.61 | -17.6% | -54.0pp | ВРЕДИТ |
+| vol-target 40% | +110.3% | 4.74 | -20.1% | -33.5pp | ВРЕДИТ |
+| vol-target 50% | +130.4% | 4.81 | -22.2% | -13.4pp | ВРЕДИТ |
+| vol-target 60% | +150.3% | 4.85 | -24.1% | +6.5pp | Marginal, DD хуже |
+| hysteresis 3 | +143.8% | 5.33 | -20.5% | 0 | НОЛЬ ЭФФЕКТА |
+| hysteresis 5 | +143.8% | 5.33 | -20.5% | 0 | НОЛЬ ЭФФЕКТА |
+| hysteresis 7 | +143.8% | 5.33 | -20.5% | 0 | НОЛЬ ЭФФЕКТА |
+| hysteresis 10 | +143.8% | 5.33 | -20.5% | 0 | НОЛЬ ЭФФЕКТА |
+| smooth 0.2 | +129.3% | 5.16 | -21.4% | -14.5pp | ВРЕДИТ |
+| smooth 0.3 | +105.4% | 4.26 | -21.5% | -38.4pp | ВРЕДИТ |
+| smooth 0.4 | +89.4% | 3.72 | -20.4% | -54.4pp | ВРЕДИТ |
+| smooth 0.5 | +72.3% | 3.16 | -19.4% | -71.5pp | ВРЕДИТ |
+| turnover-3 | — | — | — | — | БАГ (пустой output) |
+| turnover-5 | — | — | — | — | БАГ (пустой output) |
+| turnover-8 | +143.8% | 5.33 | -20.5% | 0 | НОЛЬ ЭФФЕКТА |
+| **vol-size** | **+147.5%** | **5.48** | **-20.4%** | **+3.7pp** | **WINNER** |
+| regime-shorts 0.5 | +56.7% | 2.47 | -21.3% | -87.1pp | КАТАСТРОФА |
+| regime-shorts 0.3 | +30.0% | 1.27 | -22.4% | -113.8pp | КАТАСТРОФА |
+
+### Phase 3: Combos
+
+| Config | Return | HAC | Max DD |
+|---|---|---|---|
+| **meta-risk (solo)** | **+184.7%** | **5.29** | -21.9% |
+| vol-size (solo) | +147.5% | 5.48 | -20.4% |
+| hyst5 + vt50 | +130.4% | 4.81 | -22.2% |
+| hyst5 + vt50 + vol-size | +132.5% | 4.97 | -22.2% |
+| meta-risk + hyst5 + vt50 | +142.3% | 4.67 | -22.7% |
+| hyst5 + smooth 0.3 | +105.4% | 4.26 | -21.5% |
+| all_moderate | +93.1% | 3.66 | -23.2% |
+| all_conservative | +67.2% | 3.10 | -20.4% |
+
+### Phase 5: Leverage sweep (с hyst5 + vt50)
+
+| Leverage | Return | HAC | Max DD |
+|---|---|---|---|
+| 1x | +74.8% | **5.66** | -12.6% |
+| 2x | +101.9% | 4.91 | -18.3% |
+| 3x (baseline) | +143.8% | 5.33 | -20.5% |
+| 4x | +156.2% | 4.72 | -25.4% |
+| 5x | +180.1% | 4.63 | -28.2% |
+
+### Главные выводы v15
+
+1. **`--vol-size` = единственный чистый winner** (+147.5%, HAC 5.48 — лучший HAC всего эксперимента). Inverse-vol sizing: монеты с низкой vol получают больший вес → стабильнее portfolio
+2. **`--meta-risk` = больше return (+184.7%!), но чуть хуже HAC (5.29 vs 5.33)**. Масштабирует exposure вверх в "хорошие" режимы → больше variance. С solo CB model agreement signal = константа (бесполезен), работают только spread/perf/DD/regime сигналы
+3. **Hysteresis = НОЛЬ эффекта** на 12h rebal. Топ-10 монет почти не меняются между ребалансами — hysteresis не нужен
+4. **Smooth-signal ВРЕДИТ** монотонно: чем сильнее сглаживание, тем хуже. Модель уже выдает точный сигнал
+5. **Vol-target ВРЕДИТ return И HAC**. Модель неявно учитывает vol через features — внешний vol scaling отбирает edge
+6. **Regime-shorts = КАТАСТРОФА** (-87pp!). Short alpha реальная и сильная, нельзя резать
+7. **Turnover-budget 3/5 = баг** в sim (пустой output), turnover-8 = нет эффекта
+8. **Leverage: risk-adjusted оптимум = 1x** (HAC 5.66). 3x — разумный компромисс return/risk
+9. **Kitchen sink (all flags) = worst of all worlds** (+67–93%). Больше ограничений ≠ лучше
+
+### Рекомендация после v15
+- **Deploy**: `--vol-size` в production (inverse-vol sizing, +3.7pp return, +0.15 HAC, DD чуть ниже)
+- **Исследовать**: `--meta-risk` отдельно (нужен эксперимент с meta-risk + vol-size combo)
+- **Не трогать**: hysteresis, smooth-signal, vol-target, regime-shorts
+- **Починить**: turnover-budget баг
 
 ---

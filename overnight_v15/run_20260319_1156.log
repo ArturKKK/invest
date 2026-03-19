@@ -1,0 +1,176 @@
+[11:56:14] 
+[11:56:14] ============================================================
+[11:56:14]   PHASE 1: BASELINE REPRODUCTION
+[11:56:14] ============================================================
+[11:56:14] SIM #1: BASELINE
+[11:56:14] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble
+======================================================================
+  FAST SIMULATION
+  158d | $1,000 | rebal=12h | N=10+10 | kelly=80% | cost=4bp/side
+  leverage=3x | mode=boost
+======================================================================
+
+📊 Loading offline data: data/features/crypto_features_1h.parquet
+   (2565321, 107), 50 symbols
+   Date range: 2017-09-16 09:00:00+00:00 → 2026-03-07 15:00:00+00:00
+   Enriching features (cross-asset, regime, 12h+v7, calendar, macro, sentiment, derivatives)...
+   🎯 Adding targets...
+   🌐 Adding cross-asset features...
+   🔰 Adding advanced regime features...
+   🕐 Adding 12h-specific features (v7 enhanced)...
+   ✅ Added ~18 features for 12h holding period (v7)
+   📅 SKIPPED calendar features (SKIP_CALENDAR=1)
+   🏛️ Adding macro features...
+      Macro raw: 9 cols, derived: 29, total new: 38
+   📰 Adding sentiment features... (news_mode=all)
+      FNG: 2018-02-01 → 2026-03-11, mean=48.3
+      Funding: 96,393 non-zero rows (3.8%)
+      LS ratio: 0 non-missing rows
+      Synthetic positioning features...
+      Loading news features (mode=all)...
+      + coin-level news: 8 features
+      + market-level news: 7 features
+      📊 Coverage: 2,228,238/2,565,321 rows (86.9%)
+      📰 Events: 1,100,564/2,228,238 covered rows (49.4%) have news
+      🕳️  Holes: 337,083 rows = NaN (not 0!)
+   ✅ Sentiment features added: 173 → 210 total
+   📊 Adding derivatives features (Binance Futures)...
+      Loaded metrics: 1,800,870 rows, 50 symbols, 2021-12-01 → 2026-03-12
+      OI: 1,785,559 rows (69.6%), 9 features
+      Taker: 1,648,976 rows (64.3%), 6 features
+      Top L/S: 1,433,710 rows (55.9%), 5 features
+      Global L/S: 3 features
+      Binance funding: 2,239,209 rows (87.3%)
+      Funding surprise: computed from OKX funding data
+      Market-wide aggregates: 4 features
+      Basis/Premium: 448,115 rows (17.5%), 6 features
+      ⚠️  No liquidation data (run download_binance_futures.py)
+      DVOL: 13 features (BTC range: 2021-04-01 → 2026-03-15)
+   ✅ Derivatives features: +48 features
+   🧬 Adding news interaction features...
+   ✅ Added 23 news interaction features
+   ⚠️  offline mode: some features may be zero-filled by models
+   Final: (2565321, 299), 281 features
+📡 Models …
+   catboost: 5 CB models, 162 feats
+   mlp: 5 MLP models, 177 feats ⚠️ 9 features zero-filled
+   🏗️  Architecture: 2 groups (10 models)
+   2025-10-01 04:00:00+00:00 → 2026-03-06 16:00:00+00:00  (314 steps, 12h apart)
+
+📐 Calibrating edge distribution (P75 (for boost/adaptive)) ...
+   P75 edge = 0.01929, P90 = 0.02768
+   (1410 samples, 30 steps)
+
+──────────────────────────────────────────────────────────────────────
+      0/313 | $  999.96 | DD  -0.0% | L10 S10 | Δ20
+      5/313 | $  960.43 | DD  -4.0% | L10 S10 | Δ12
+     10/313 | $  977.02 | DD  -2.3% | L10 S10 | Δ14
+     15/313 | $1,010.28 | DD   0.0% | L10 S10 | Δ32
+     20/313 | $1,076.73 | DD   0.0% | L10 S10 | Δ34
+     25/313 | $1,034.63 | DD  -3.9% | L10 S10 | Δ28
+     30/313 | $1,097.72 | DD  -1.0% | L10 S10 | Δ30
+     35/313 | $1,104.82 | DD  -2.0% | L10 S10 | Δ28
+     40/313 | $1,120.01 | DD  -0.6% | L10 S10 | Δ20
+     45/313 | $1,178.94 | DD  -0.6% | L10 S10 | Δ24
+     50/313 | $1,201.06 | DD  -0.7% | L10 S10 | Δ16
+     55/313 | $1,255.41 | DD   0.0% | L10 S10 | Δ18
+     60/313 | $1,223.04 | DD  -2.6% | L10 S10 | Δ30
+     65/313 | $1,200.02 | DD  -4.4% | L10 S10 | Δ20
+     70/313 | $1,183.89 | DD  -5.7% | L10 S10 | Δ26
+     75/313 | $1,009.92 | DD -19.6% | L10 S10 | Δ18
+     80/313 | $1,110.62 | DD -11.5% | L10 S10 | Δ26
+     85/313 | $1,219.32 | DD  -2.9% | L10 S10 | Δ32
+     90/313 | $1,289.36 | DD   0.0% | L10 S10 | Δ16
+     95/313 | $1,287.44 | DD  -2.3% | L10 S10 | Δ28
+    100/313 | $1,309.71 | DD  -0.6% | L10 S10 | Δ32
+    105/313 | $1,301.20 | DD  -2.5% | L10 S10 | Δ34
+    110/313 | $1,335.84 | DD   0.0% | L10 S10 | Δ26
+    115/313 | $1,293.02 | DD  -3.6% | L10 S10 | Δ22
+    120/313 | $1,267.88 | DD  -5.5% | L10 S10 | Δ26
+    125/313 | $1,276.88 | DD  -4.8% | L10 S10 | Δ18
+    130/313 | $1,260.31 | DD  -6.0% | L10 S10 | Δ22
+    135/313 | $1,255.64 | DD  -6.4% | L10 S10 | Δ20
+    140/313 | $1,305.35 | DD  -2.7% | L10 S10 | Δ26
+    145/313 | $1,330.52 | DD  -2.3% | L10 S10 | Δ22
+    150/313 | $1,392.06 | DD   0.0% | L10 S10 | Δ34
+    155/313 | $1,420.32 | DD   0.0% | L10 S10 | Δ26
+    160/313 | $1,426.81 | DD  -1.5% | L10 S10 | Δ32
+    165/313 | $1,425.86 | DD  -1.6% | L10 S10 | Δ22
+    170/313 | $1,419.02 | DD  -2.0% | L10 S10 | Δ24
+    175/313 | $1,400.23 | DD  -3.3% | L10 S10 | Δ18
+    180/313 | $1,404.06 | DD  -3.1% | L10 S10 | Δ22
+    185/313 | $1,389.23 | DD  -4.1% | L10 S10 | Δ22
+    190/313 | $1,389.61 | DD  -4.1% | L10 S10 | Δ18
+    195/313 | $1,446.34 | DD  -0.1% | L10 S10 | Δ20
+    200/313 | $1,423.24 | DD  -1.7% | L10 S10 | Δ24
+    205/313 | $1,423.37 | DD  -1.7% | L10 S10 | Δ18
+    210/313 | $1,428.55 | DD  -1.8% | L10 S10 | Δ18
+    215/313 | $1,438.37 | DD  -1.5% | L10 S10 | Δ14
+    220/313 | $1,516.89 | DD   0.0% | L10 S10 | Δ24
+    225/313 | $1,530.25 | DD   0.0% | L10 S10 | Δ32
+    230/313 | $1,634.49 | DD   0.0% | L10 S10 | Δ20
+    235/313 | $1,688.88 | DD  -1.6% | L10 S10 | Δ22
+    240/313 | $1,840.93 | DD   0.0% | L10 S10 | Δ30
+    245/313 | $1,931.91 | DD   0.0% | L10 S10 | Δ26
+    250/313 | $1,963.35 | DD  -0.2% | L10 S10 | Δ32
+    255/313 | $1,936.98 | DD  -2.1% | L10 S10 | Δ24
+    260/313 | $2,019.18 | DD  -1.0% | L10 S10 | Δ28
+    265/313 | $2,094.43 | DD   0.0% | L10 S10 | Δ26
+    270/313 | $2,191.02 | DD  -0.7% | L10 S10 | Δ26
+    275/313 | $2,191.83 | DD  -0.6% | L10 S10 | Δ30
+    280/313 | $2,224.59 | DD  -1.9% | L10 S10 | Δ32
+    285/313 | $2,189.12 | DD  -3.4% | L10 S10 | Δ20
+    290/313 | $2,171.01 | DD  -4.2% | L10 S10 | Δ26
+    295/313 | $2,247.31 | DD  -1.0% | L10 S10 | Δ30
+    300/313 | $2,254.85 | DD  -1.1% | L10 S10 | Δ24
+    305/313 | $2,330.85 | DD   0.0% | L10 S10 | Δ18
+    310/313 | $2,377.00 | DD  -0.5% | L10 S10 | Δ18
+    312/313 | $2,315.36 | DD  -3.1% | L10 S10 | Δ20
+
+======================================================================
+  RESULTS — 158d, rebal=12h, N=10+10, lev=3x, mode=boost
+======================================================================
+
+   Start:      $1,000
+   End:        $2,315.36
+   Return:     +131.5%  (ann. ~+304%)
+   Max DD:     -19.9%
+   Sharpe:     +5.07
+   Sharpe HAC: +5.09  (Newey-West adjusted)
+   Calmar:     15.25
+   Win Rate:   60%  (187W / 126L)
+   Avg Win:    $+17.98
+   Avg Loss:   $-16.24
+   PF:         1.64
+   Trades:     7178
+   Turnover:   $1,362,429  (1362.4x capital)
+   Costs:      $712.28  (71.2%)
+   Leverage:   3x
+   Liq. level: -33% DD (approx)
+
+   📈 Equity ($968–$2318):
+      $   1,000 |░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   1,089 |███░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   1,153 |█████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   1,295 |█████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   1,362 |███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   1,404 |████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   1,357 |███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+      $   1,943 |████████████████████████████░░░░░░░░░░░░|
+      $   2,176 |███████████████████████████████████░░░░░|
+      $   2,315 |███████████████████████████████████████░|
+
+   Saved: /workdir/invest/trading_logs/fast_sim_equity.csv
+
+======================================================================
+   🟡 Marginal — keep monitoring
+======================================================================
+[11:59:31]   => Return=+131.5%  HAC=+5.09
+[11:59:31]   ⏱️  Phase took 3m 17s
+[11:59:31] 
+[11:59:31] ============================================================
+[11:59:31]   PHASE 2: SINGLE-FLAG SWEEPS
+[11:59:31] ============================================================
+[11:59:31] --- Vol targeting sweep ---
+[11:59:32] SIM #2: VOLTGT_30pct
+[11:59:32] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --days 158 --start-date 2025-10-01 --end-date 2026-03-07 --leverage 3 --kelly 0.8 --edge-boost --no-deriv-gate --no-ddstop --ensemble --vol-target-ann 0.30

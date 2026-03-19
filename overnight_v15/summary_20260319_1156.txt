@@ -1,0 +1,8 @@
+=== SIM #1: BASELINE ===
+   Return:     +131.5%  (ann. ~+304%)
+   Max DD:     -19.9%
+   Sharpe:     +5.07
+   Sharpe HAC: +5.09  (Newey-West adjusted)
+   Calmar:     15.25
+   Win Rate:   60%  (187W / 126L)
+
