@@ -1002,22 +1002,31 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         if before != after:
             print(f"   🚫 Filtered {before - after} blocked symbols ({after} tradeable)")
 
-    # Min z-score filter: skip weak signals (matches sim --min-zscore)
+    # Min z-score filter: split by sign to match sim logic
+    # Sim: cand_L = [score_z >= min_zscore], cand_S = [score_z <= -min_zscore]
+    # Never short a coin the model predicts will go up (positive score)
     min_zs = risk_cfg.get('min_zscore', 0.0)
     if min_zs > 0:
         before_mz = len(signals)
-        strong = signals[(signals['score'] >= min_zs) | (signals['score'] <= -min_zs)]
-        if len(strong) >= 6:  # need at least 3L + 3S
-            signals = strong.copy()
+        long_cands = signals[signals['score'] >= min_zs].sort_values('score', ascending=False)
+        short_cands = signals[signals['score'] <= -min_zs].sort_values('score', ascending=True)
+        n_long = min(n_long, len(long_cands))
+        n_short = min(n_short, len(short_cands))
+        if n_long + n_short >= 2:
+            signals = pd.concat([long_cands.head(n_long), short_cands.head(n_short)])
         n_dropped = before_mz - len(signals)
         if n_dropped > 0:
-            print(f"   🔍 Min z-score {min_zs}: dropped {n_dropped} weak signals ({len(signals)} remain)")
+            print(f"   🔍 Min z-score {min_zs}: dropped {n_dropped} weak signals "
+                  f"({n_long}L + {n_short}S = {len(signals)} remain)")
+    else:
+        # No min_zscore: classic rank-based market-neutral
+        signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
+        n = len(signals)
+        n_long = min(n_long, n // 3)
+        n_short = min(n_short, n // 3)
 
     # Build positions
     signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
-    n = len(signals)
-    n_long = min(n_long, n // 3)
-    n_short = min(n_short, n // 3)
     total_positions = n_long + n_short
 
     if total_positions == 0:
