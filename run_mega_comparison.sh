@@ -187,8 +187,8 @@ setup_sim_models() {
 phase_start "PHASE 0: ПОДГОТОВКА"
 
 # Проверяем данные
-if [[ ! -f "$DATA" ]]; then
-  log "❌ FATAL: Feature data not found: $DATA"
+if [[ ! -f "$DATA_FILE" ]]; then
+  log "❌ FATAL: Feature data not found: $DATA_FILE"
   exit 1
 fi
 
