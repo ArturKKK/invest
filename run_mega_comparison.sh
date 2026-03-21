@@ -41,7 +41,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M)
 LOG="$LOGDIR/run_${TIMESTAMP}.log"
 SUMMARY="$LOGDIR/summary_${TIMESTAMP}.csv"
 DETAIL_LOG="$LOGDIR/detail_${TIMESTAMP}.txt"
-DATA="data/features/crypto_features_1h.parquet"
+DATA="data/features"
+DATA_FILE="data/features/crypto_features_1h.parquet"
 
 # ─── GPU: set to "--gpu" if you have CUDA, "" otherwise ───
 # CatBoost/XGBoost benefit from GPU. LGB uses CPU (needs OpenCL for GPU).
@@ -79,10 +80,10 @@ run_sim() {
   SIM_N=$((SIM_N + 1))
   local label="${window}__${model_config}__${sim_config}"
   log "SIM #${SIM_N}: $label"
-  log "CMD: python run_fast_sim.py --data $DATA $*"
+  log "CMD: python run_fast_sim.py --data $DATA_FILE $*"
 
   local output
-  output=$(python run_fast_sim.py --data "$DATA" "$@" 2>&1) || true
+  output=$(python run_fast_sim.py --data "$DATA_FILE" "$@" 2>&1) || true
   echo "=== SIM #${SIM_N}: $label ===" >> "$DETAIL_LOG"
   echo "$output" >> "$DETAIL_LOG"
   echo "" >> "$DETAIL_LOG"
