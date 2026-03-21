@@ -86,3 +86,5 @@ _tune_ridge.py
 run_pipeline_ridge.py
 temp.md
 test.md
+results_catboost_prod 3/
+bench_image_compression.sh

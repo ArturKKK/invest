@@ -22,14 +22,19 @@ rsync -avz --progress \
     --exclude='.git/' \
     --exclude='logs/' \
     --exclude='.env' \
+    --exclude='*.tar.gz' \
+    --exclude='models_archive/' \
+    --exclude='results/' \
+    --exclude='results_v6/' \
+    --exclude='results_v7/' \
+    --exclude='results_catboost/' \
+    --exclude='results_xgboost/' \
+    --exclude='results_deriv/' \
+    --exclude='results_catboost_prod 3/' \
+    --exclude='trading_logs/' \
     ./ "${VPS}:${REMOTE_DIR}/"
 
-# 2. Sync models (separately, heavy)
-echo "📊 Syncing models..."
-rsync -avz --progress \
-    models/ "${VPS}:${REMOTE_DIR}/models/"
-
-# 3. Remote setup
+# 2. Remote setup
 echo "🔧 Setting up remote environment..."
 ssh "$VPS" bash -s <<'REMOTE'
 set -euo pipefail
