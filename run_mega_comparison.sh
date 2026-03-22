@@ -236,26 +236,27 @@ phase_end
 phase_start "PHASE 1: ОБУЧЕНИЕ МОДЕЛЕЙ"
 
 # Определяем 3 окна обучения
-# Каждое окно: train до даты X, тест = следующие 6 месяцев
+# Каждое окно: train до даты X, val = следующие 2 мес (early stopping), тест = после val
+# ВАЖНО: val НЕ должен пересекаться с test — иначе indirect data leakage через early stopping
 declare -A WINDOWS
 
-WINDOWS[A_train_end]="2024-06-30"
-WINDOWS[A_val_start]="2024-07-08"
-WINDOWS[A_val_end]="2024-12-24"
+WINDOWS[A_train_end]="2024-04-30"
+WINDOWS[A_val_start]="2024-05-08"
+WINDOWS[A_val_end]="2024-06-24"
 WINDOWS[A_test_start]="2024-07-01"
 WINDOWS[A_test_end]="2024-12-31"
 WINDOWS[A_label]="WinA_train2024H1"
 
-WINDOWS[B_train_end]="2024-12-31"
-WINDOWS[B_val_start]="2025-01-08"
-WINDOWS[B_val_end]="2025-06-24"
+WINDOWS[B_train_end]="2024-10-31"
+WINDOWS[B_val_start]="2024-11-08"
+WINDOWS[B_val_end]="2024-12-24"
 WINDOWS[B_test_start]="2025-01-01"
 WINDOWS[B_test_end]="2025-06-30"
 WINDOWS[B_label]="WinB_train2024"
 
-WINDOWS[C_train_end]="2025-06-30"
-WINDOWS[C_val_start]="2025-07-08"
-WINDOWS[C_val_end]="2025-12-24"
+WINDOWS[C_train_end]="2025-04-30"
+WINDOWS[C_val_start]="2025-05-08"
+WINDOWS[C_val_end]="2025-06-24"
 WINDOWS[C_test_start]="2025-07-01"
 WINDOWS[C_test_end]="2025-12-31"
 WINDOWS[C_label]="WinC_train2025H1"
