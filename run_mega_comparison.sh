@@ -48,6 +48,12 @@ DATA_FILE="data/features/crypto_features_1h.parquet"
 # CatBoost/XGBoost benefit from GPU. LGB uses CPU (needs OpenCL for GPU).
 USE_GPU="${USE_GPU:---gpu}"  # default: --gpu (set USE_GPU="" to disable)
 
+# ─── Skip controls (set via env vars before running) ───
+# SKIP_TRAINING=1  → skip Phase 1 (use existing models, e.g. after a failed Phase 2)
+# SIM_WINDOWS="A B" → run Phase 2 only for specified windows (default: all three)
+SKIP_TRAINING="${SKIP_TRAINING:-0}"
+SIM_WINDOWS="${SIM_WINDOWS:-A B C}"
+
 START_TIME=$(date +%s)
 
 # ─── Logging ───
@@ -296,6 +302,10 @@ train_model() {
   log "   ✅ Done: ${model_type}_${suffix} (${elapsed}s)"
 }
 
+if [[ "$SKIP_TRAINING" == "1" ]]; then
+  log "⏭  SKIP_TRAINING=1 → skipping Phase 1, assuming models already exist"
+else
+
 # ── Обучаем все модели для всех окон ──
 
 for WIN in A B C; do
@@ -357,6 +367,8 @@ done
 log ""
 log "✅ Phase 1 complete: All models trained"
 
+fi  # end SKIP_TRAINING check
+
 phase_end
 
 
@@ -386,8 +398,13 @@ run_window_sims() {
   start_epoch=$(date -j -f "%Y-%m-%d" "$test_start" "+%s" 2>/dev/null || date -d "$test_start" "+%s")
   end_epoch=$(date -j -f "%Y-%m-%d" "$test_end" "+%s" 2>/dev/null || date -d "$test_end" "+%s")
   days=$(( (end_epoch - start_epoch) / 86400 ))
+  # --days must cover from test_start back to data end (run_fast_sim slices from END of data).
+  # Using days-from-test_start-to-today ensures the slice always includes the test window.
+  local today_epoch
+  today_epoch=$(date +%s)
+  local days_from_start=$(( (today_epoch - start_epoch) / 86400 + 30 ))
 
-  local SIM_PERIOD="--start-date $test_start --end-date $test_end --days $days"
+  local SIM_PERIOD="--start-date $test_start --end-date $test_end --days $days_from_start"
 
   log ""
   log "╔══════════════════════════════════════════════════════════════╗"
@@ -666,8 +683,8 @@ run_window_sims() {
 
 }
 
-# Запускаем для всех трёх окон
-for WIN in A B C; do
+# Запускаем для выбранных окон (по умолчанию все три)
+for WIN in $SIM_WINDOWS; do
   run_window_sims "$WIN"
 done
 
