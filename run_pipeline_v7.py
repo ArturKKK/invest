@@ -1206,6 +1206,9 @@ def main():
     df = add_cross_asset_features(df)
     if args.residual_target:
         df = add_residual_targets(df, beta_window=168)
+    from run_pipeline_v6 import add_market_mode_features, add_liquidity_features
+    df = add_market_mode_features(df)
+    df = add_liquidity_features(df)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     from run_pipeline_v6 import add_calendar_features, add_macro_features

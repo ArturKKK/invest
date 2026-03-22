@@ -40,6 +40,7 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_pipeline_v6 import (
     add_multi_horizon_targets, add_cross_asset_features,
+    add_market_mode_features, add_liquidity_features,
     add_advanced_regime_features, add_12h_features, add_calendar_features, add_macro_features,
     add_sentiment_features, add_derivatives_features,
     cross_sectional_rank, create_rank_target, add_residual_targets,
@@ -286,6 +287,8 @@ def main():
     df = add_cross_asset_features(df)
     if args.residual_target:
         df = add_residual_targets(df, beta_window=168)
+    df = add_market_mode_features(df)
+    df = add_liquidity_features(df)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_calendar_features(df)

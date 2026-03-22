@@ -180,6 +180,11 @@ REGIME_COLS = {
     'yield_curve_10y2y_chg_1d', 'yield_curve_10y2y_chg_5d', 'yield_curve_10y2y_chg_20d',
     # Macro cross-interactions
     'risk_on_off_ratio', 'real_rate_chg_5d',
+    # Market-mode features (market-level, same for all coins)
+    'avg_corr_24h', 'avg_corr_72h',
+    'pca1_share_72h', 'idio_fraction_72h',
+    'beta_dispersion_48h', 'beta_dispersion_168h',
+    'dispersion_ret_12h_lag1', 'dispersion_regime_12h',
 }
 
 # Cost model for perpetual swaps — v6 (12h rebalance)
@@ -297,6 +302,154 @@ def add_cross_asset_features(df):
     df['ret_vs_btc_24h'] = df['ret_24h'] - df['btc_ret_24h']
 
     df.drop(columns=['btc_ma24', 'btc_ma72', 'btc_ma168', 'eth_btc_ratio'], inplace=True)
+    return df
+
+
+def add_market_mode_features(df):
+    """Market-mode / correlation structure features.
+
+    Measures how much the cross-section is dominated by a single factor
+    (BTC / "market mode").  When market mode is strong, cross-sectional
+    alpha opportunities shrink — this gives the model information about
+    the current tradability of the cross-section.
+
+    All features are market-level (same for all coins at each timestamp)
+    and should NOT be cross-sectionally ranked.
+    """
+    print("   🔗 Adding market-mode features...")
+
+    # Need per-coin 1h returns in wide format
+    rets = df.pivot_table(index='timestamp', columns='symbol', values='ret_1h')
+    rets = rets.sort_index()
+
+    # --- 1. Average pairwise correlation (rolling 24h, 72h) ---
+    for w in [24, 72]:
+        # rolling pairwise corr is expensive; approximate via mean of
+        # each coin's correlation with the equal-weight market return
+        mkt_ret = rets.mean(axis=1)
+        corrs = rets.rolling(w, min_periods=max(12, w // 2)).corr(mkt_ret)
+        avg_corr = corrs.mean(axis=1)
+        avg_corr.name = f'avg_corr_{w}h'
+        avg_corr = avg_corr.reset_index().rename(columns={0: f'avg_corr_{w}h'})
+        if 'level_1' in avg_corr.columns:
+            avg_corr = avg_corr.drop(columns='level_1')
+        avg_corr = avg_corr.drop_duplicates('timestamp')
+        df = df.merge(avg_corr[['timestamp', f'avg_corr_{w}h']], on='timestamp', how='left')
+        df[f'avg_corr_{w}h'] = df[f'avg_corr_{w}h'].fillna(0.5)
+
+    # --- 2. PCA1 explained variance (rolling 72h) ---
+    # Fraction of total variance explained by first principal component
+    def _pca1_share(window):
+        """Compute fraction of variance from PC1 for a return window."""
+        w = window.dropna(axis=1, how='all').dropna(axis=0, how='any')
+        if len(w) < 12 or w.shape[1] < 5:
+            return np.nan
+        centered = w - w.mean()
+        try:
+            cov = centered.T @ centered / (len(centered) - 1)
+            eigenvalues = np.linalg.eigvalsh(cov)
+            return eigenvalues[-1] / (eigenvalues.sum() + 1e-10)
+        except Exception:
+            return np.nan
+
+    pca_results = []
+    timestamps = rets.index.tolist()
+    pca_window = 72
+    for i in range(pca_window, len(timestamps)):
+        window = rets.iloc[i - pca_window:i]
+        share = _pca1_share(window)
+        pca_results.append({'timestamp': timestamps[i], 'pca1_share_72h': share})
+
+    if pca_results:
+        pca_df = pd.DataFrame(pca_results)
+        df = df.merge(pca_df, on='timestamp', how='left')
+    else:
+        df['pca1_share_72h'] = np.nan
+    df['pca1_share_72h'] = df['pca1_share_72h'].fillna(method='ffill').fillna(0.5)
+    df['idio_fraction_72h'] = 1.0 - df['pca1_share_72h']
+
+    # --- 3. Beta dispersion (std of rolling betas across coins) ---
+    if 'btc_ret_1h' in df.columns:
+        for w in [48, 168]:
+            beta_col = f'btc_beta_{w}h'
+            if beta_col in df.columns:
+                df[f'beta_dispersion_{w}h'] = df.groupby('timestamp')[beta_col].transform('std')
+                df[f'beta_dispersion_{w}h'] = df[f'beta_dispersion_{w}h'].fillna(0)
+
+    # --- 4. Dispersion of 12h returns (realized, lagged for no look-ahead) ---
+    if 'ret_12h' in df.columns:
+        disp_12h = df.groupby('timestamp')['ret_12h'].std().reset_index()
+        disp_12h.columns = ['timestamp', 'dispersion_ret_12h']
+        # Lag by 1 bar (12h) to prevent any look-ahead
+        disp_12h = disp_12h.sort_values('timestamp')
+        disp_12h['dispersion_ret_12h_lag1'] = disp_12h['dispersion_ret_12h'].shift(1)
+        disp_12h['dispersion_ret_12h_ma24'] = disp_12h['dispersion_ret_12h'].rolling(24, min_periods=6).mean()
+        disp_12h['dispersion_regime_12h'] = disp_12h['dispersion_ret_12h_lag1'] / (
+            disp_12h['dispersion_ret_12h_ma24'] + 1e-10)
+        df = df.merge(
+            disp_12h[['timestamp', 'dispersion_ret_12h_lag1', 'dispersion_regime_12h']],
+            on='timestamp', how='left'
+        )
+        df['dispersion_ret_12h_lag1'] = df['dispersion_ret_12h_lag1'].fillna(0)
+        df['dispersion_regime_12h'] = df['dispersion_regime_12h'].fillna(1.0)
+
+    n_added = sum(1 for c in ['avg_corr_24h', 'avg_corr_72h', 'pca1_share_72h',
+                               'idio_fraction_72h', 'beta_dispersion_48h',
+                               'beta_dispersion_168h', 'dispersion_ret_12h_lag1',
+                               'dispersion_regime_12h'] if c in df.columns)
+    print(f"   ✅ Added {n_added} market-mode features")
+    return df
+
+
+def add_liquidity_features(df):
+    """OHLCV-based liquidity proxies.
+
+    No external data needed — purely derived from existing price/volume.
+    These capture per-coin liquidity conditions that affect execution cost
+    and position capacity.
+    """
+    print("   💧 Adding liquidity features...")
+
+    for sym, grp in df.groupby('symbol'):
+        idx = grp.index
+        c = grp['close']
+        v = grp['volume']
+        h = grp['high']
+        l = grp['low']
+
+        # 1. Dollar volume (close * volume) — absolute liquidity measure
+        dv = c * v
+        df.loc[idx, 'dollar_volume_12h'] = dv.rolling(12).sum()
+        df.loc[idx, 'dollar_volume_24h'] = dv.rolling(24).sum()
+
+        # 2. Amihud illiquidity = |ret| / dollar_volume (high = illiquid)
+        # Rolling mean over 24h for stability
+        abs_ret = c.pct_change().abs()
+        amihud_raw = abs_ret / (dv + 1e-10)
+        df.loc[idx, 'amihud_illiq_24h'] = amihud_raw.rolling(24, min_periods=6).mean()
+
+        # 3. Range per dollar volume — price impact proxy
+        bar_range = (h - l) / (c + 1e-10)
+        df.loc[idx, 'range_per_dv_24h'] = (bar_range / (dv + 1e-10)).rolling(24, min_periods=6).mean()
+
+        # 4. Volume-price correlation (rolling) — selling pressure indicator
+        df.loc[idx, 'vol_price_corr_48h'] = c.pct_change().rolling(48, min_periods=12).corr(
+            v.pct_change().rolling(48, min_periods=12).mean()  # smooth volume change
+        )
+
+    # Cross-sectional dollar volume rank (relative liquidity position)
+    df['dollar_volume_24h_cs'] = df.groupby('timestamp')['dollar_volume_24h'].rank(pct=True) - 0.5
+    # Cross-sectional amihud rank
+    df['amihud_illiq_24h_cs'] = df.groupby('timestamp')['amihud_illiq_24h'].rank(pct=True) - 0.5
+
+    # Fill NaNs
+    for col in ['dollar_volume_12h', 'dollar_volume_24h', 'amihud_illiq_24h',
+                'range_per_dv_24h', 'vol_price_corr_48h',
+                'dollar_volume_24h_cs', 'amihud_illiq_24h_cs']:
+        if col in df.columns:
+            df[col] = df[col].fillna(0)
+
+    print(f"   ✅ Added 7 liquidity features")
     return df
 
 
@@ -1225,6 +1378,9 @@ TSZSCORE_COLS = {
     'liq_long_usd', 'liq_short_usd', 'liq_total_usd',
     'liq_imbalance', 'liq_total_zscore', 'liq_cascade_12h', 'liq_cascade_24h',
     'liq_imbalance_12h', 'liq_ret_interaction', 'agg_liq_zscore',
+    # Liquidity proxies (per-coin, spike-prone → TS-zscore)
+    'amihud_illiq_24h', 'range_per_dv_24h',
+    'dollar_volume_12h', 'dollar_volume_24h',
 }
 
 
@@ -1858,6 +2014,8 @@ def main():
     df = add_cross_asset_features(df)
     if args.residual_target:
         df = add_residual_targets(df, beta_window=168)
+    df = add_market_mode_features(df)
+    df = add_liquidity_features(df)
     df = add_advanced_regime_features(df)
     df = add_12h_features(df)
     df = add_calendar_features(df)
