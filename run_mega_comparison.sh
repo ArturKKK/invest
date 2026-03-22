@@ -94,25 +94,28 @@ run_sim() {
   echo "$output" >> "$DETAIL_LOG"
   echo "" >> "$DETAIL_LOG"
 
+  # Strip ANSI escape codes before parsing (libraries may emit color codes)
+  local clean
+  clean=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+
   # Parse metrics — формат вывода run_fast_sim.py:
-  #   Return:     +55.3%  (ann. ~+120%)   → $2=+55.3%
-  #   Max DD:     -12.3%                  → $1=Max $2=DD: $3=-12.3%
-  #   Sharpe HAC: +5.32  (Newey-West)    → $1=Sharpe $2=HAC: $3=+5.32
-  #   Win Rate:   63%  (100W / 58L)      → $1=Win $2=Rate: $3=63%
-  #   PF:         1.82                   → $1=PF: $2=1.82
-  #   Calmar:     5.32                   → $1=Calmar: $2=5.32
-  #   Trades:     1234                   → $1=Trades: $2=1234
-  #   Costs:      $1,234.56  (24.7%)     → extract % in parens (last field)
+  #   Return:     +55.3%  (ann. ~+120%)
+  #   Max DD:     -12.3%
+  #   Sharpe HAC: +5.32  (Newey-West)
+  #   Win Rate:   63%  (100W / 58L)
+  #   PF:         1.82
+  #   Calmar:     5.32
+  #   Trades:     1234
+  #   Costs:      $1,234.56  (24.7%)
   local ret hac maxdd wr pf calmar trades costs
-  ret=$(echo "$output"    | grep "Return:"    | head -1 | awk '{print $2}' | tr -d '%')
-  hac=$(echo "$output"    | grep "Sharpe HAC:" | head -1 | awk '{print $3}')
-  maxdd=$(echo "$output"  | grep "Max DD:"    | head -1 | awk '{print $3}' | tr -d '%')
-  wr=$(echo "$output"     | grep "Win Rate:"  | head -1 | awk '{print $3}' | tr -d '%')
-  pf=$(echo "$output"     | grep "^   PF:"    | head -1 | awk '{print $2}')
-  calmar=$(echo "$output" | grep "Calmar:"    | head -1 | awk '{print $2}')
-  trades=$(echo "$output" | grep "Trades:"    | head -1 | awk '{print $2}')
-  # Costs: extract the (XX.X%) part at the end — avoids $1,234 comma issue
-  costs=$(echo "$output"  | grep "Costs:"     | head -1 | awk '{print $NF}' | tr -d '()%')
+  ret=$(echo "$clean"    | grep "Return:"     | head -1 | awk '{print $2}' | tr -d '%')
+  hac=$(echo "$clean"    | grep "Sharpe HAC:" | head -1 | awk '{print $3}')
+  maxdd=$(echo "$clean"  | grep "Max DD:"     | head -1 | awk '{print $3}' | tr -d '%')
+  wr=$(echo "$clean"     | grep "Win Rate:"   | head -1 | awk '{print $3}' | tr -d '%')
+  pf=$(echo "$clean"     | grep "^   PF:"     | head -1 | awk '{print $2}')
+  calmar=$(echo "$clean" | grep "Calmar:"     | head -1 | awk '{print $2}')
+  trades=$(echo "$clean" | grep "Trades:"     | head -1 | awk '{print $2}')
+  costs=$(echo "$clean"  | grep "Costs:"      | head -1 | awk '{print $NF}' | tr -d '()%')
 
   # Fallbacks
   [[ -z "$ret" ]] && ret="N/A"
@@ -123,6 +126,16 @@ run_sim() {
   [[ -z "$calmar" ]] && calmar="N/A"
   [[ -z "$trades" ]] && trades="N/A"
   [[ -z "$costs" ]] && costs="N/A"
+
+  # Sanitize: strip any | or control chars that would break CSV
+  ret=$(echo "$ret" | tr -d '|')
+  hac=$(echo "$hac" | tr -d '|')
+  maxdd=$(echo "$maxdd" | tr -d '|')
+  wr=$(echo "$wr" | tr -d '|')
+  pf=$(echo "$pf" | tr -d '|')
+  calmar=$(echo "$calmar" | tr -d '|')
+  trades=$(echo "$trades" | tr -d '|')
+  costs=$(echo "$costs" | tr -d '|')
 
   echo "$window|$model_config|$sim_config|$ret|$hac|$maxdd|$wr|$pf|$calmar|$trades|$costs" >> "$SUMMARY"
   log "  => Return=${ret}%  HAC=${hac}  MaxDD=${maxdd}%  WR=${wr}%  PF=${pf}"
