@@ -67,7 +67,7 @@ phase_end() {
 }
 
 # ─── CSV header ───
-echo "window,model_config,sim_config,return_pct,sharpe_hac,max_dd,win_rate,profit_factor,calmar,n_trades,costs_pct" > "$SUMMARY"
+echo "window|model_config|sim_config|return_pct|sharpe_hac|max_dd|win_rate|profit_factor|calmar|n_trades|costs_pct" > "$SUMMARY"
 
 # ─── Sim runner (парсит результат, пишет в CSV) ───
 SIM_N=0
@@ -109,7 +109,7 @@ run_sim() {
   [[ -z "$trades" ]] && trades="N/A"
   [[ -z "$costs" ]] && costs="N/A"
 
-  echo "$window,$model_config,$sim_config,$ret,$hac,$maxdd,$wr,$pf,$calmar,$trades,$costs" >> "$SUMMARY"
+  echo "$window|$model_config|$sim_config|$ret|$hac|$maxdd|$wr|$pf|$calmar|$trades|$costs" >> "$SUMMARY"
   log "  => Return=${ret}%  HAC=${hac}  MaxDD=${maxdd}%  WR=${wr}%  PF=${pf}"
 }
 
@@ -686,7 +686,7 @@ if not csvs:
     sys.exit(1)
 
 csv_path = os.path.join(summary_dir, csvs[-1])
-df = pd.read_csv(csv_path)
+df = pd.read_csv(csv_path, sep='|')
 
 # Clean numeric columns
 for col in ['return_pct', 'sharpe_hac', 'max_dd', 'win_rate', 'profit_factor', 'calmar']:
