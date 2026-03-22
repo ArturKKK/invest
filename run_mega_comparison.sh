@@ -88,16 +88,25 @@ run_sim() {
   echo "$output" >> "$DETAIL_LOG"
   echo "" >> "$DETAIL_LOG"
 
-  # Parse metrics
+  # Parse metrics — формат вывода run_fast_sim.py:
+  #   Return:     +55.3%  (ann. ~+120%)   → $2=+55.3%
+  #   Max DD:     -12.3%                  → $1=Max $2=DD: $3=-12.3%
+  #   Sharpe HAC: +5.32  (Newey-West)    → $1=Sharpe $2=HAC: $3=+5.32
+  #   Win Rate:   63%  (100W / 58L)      → $1=Win $2=Rate: $3=63%
+  #   PF:         1.82                   → $1=PF: $2=1.82
+  #   Calmar:     5.32                   → $1=Calmar: $2=5.32
+  #   Trades:     1234                   → $1=Trades: $2=1234
+  #   Costs:      $1,234.56  (24.7%)     → extract % in parens (last field)
   local ret hac maxdd wr pf calmar trades costs
-  ret=$(echo "$output" | grep "Return:" | head -1 | awk '{print $2}' | tr -d '%')
-  hac=$(echo "$output" | grep "Sharpe HAC:" | awk '{print $3}')
-  maxdd=$(echo "$output" | grep "Max DD:" | head -1 | awk '{print $2}' | tr -d '%')
-  wr=$(echo "$output" | grep "Win Rate:" | head -1 | awk '{print $2}' | tr -d '%')
-  pf=$(echo "$output" | grep "Profit Factor:" | head -1 | awk '{print $3}')
-  calmar=$(echo "$output" | grep "Calmar:" | head -1 | awk '{print $2}')
-  trades=$(echo "$output" | grep "Trades:" | head -1 | awk '{print $2}')
-  costs=$(echo "$output" | grep "Costs:" | head -1 | awk '{print $2}' | tr -d '%')
+  ret=$(echo "$output"    | grep "Return:"    | head -1 | awk '{print $2}' | tr -d '%')
+  hac=$(echo "$output"    | grep "Sharpe HAC:" | head -1 | awk '{print $3}')
+  maxdd=$(echo "$output"  | grep "Max DD:"    | head -1 | awk '{print $3}' | tr -d '%')
+  wr=$(echo "$output"     | grep "Win Rate:"  | head -1 | awk '{print $3}' | tr -d '%')
+  pf=$(echo "$output"     | grep "^   PF:"    | head -1 | awk '{print $2}')
+  calmar=$(echo "$output" | grep "Calmar:"    | head -1 | awk '{print $2}')
+  trades=$(echo "$output" | grep "Trades:"    | head -1 | awk '{print $2}')
+  # Costs: extract the (XX.X%) part at the end — avoids $1,234 comma issue
+  costs=$(echo "$output"  | grep "Costs:"     | head -1 | awk '{print $NF}' | tr -d '()%')
 
   # Fallbacks
   [[ -z "$ret" ]] && ret="N/A"
