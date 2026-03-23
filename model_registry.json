@@ -600,8 +600,119 @@
           "model_date": "2026-03-14T05:06:24.643360",
           "size_mb": 1.3
         }
+      },
+      "archive_path": "models_archive/gen_006_v14-champion-cb-solo_20260323"
+    },
+    {
+      "gen": 7,
+      "tag": "v15-cb-huber-fresh-deploy",
+      "timestamp": "2026-03-23T17:35:34.915793",
+      "notes": "CatBoost huber solo (mega3 champion). Train→2026-02-01, val→2026-03-15. 208 feats, 5 seeds, no-news, huber-delta=1.0. Deploying at 3x leverage. HAC baseline: WinA=6.91, WinB=9.22, WinC=7.17.",
+      "models": {
+        "results_v6_prod": {
+          "path": "results_v6_prod",
+          "exists": true,
+          "n_features": 200,
+          "has_calendar": false,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "lgb_model_seed_123.txt",
+            "lgb_model_seed_2024.txt",
+            "lgb_model_seed_42.txt",
+            "lgb_model_seed_456.txt",
+            "lgb_model_seed_789.txt"
+          ],
+          "model_date": "2026-03-16T10:44:18.685738",
+          "size_mb": 17.0
+        },
+        "results_v7_prod": {
+          "path": "results_v7_prod",
+          "exists": true,
+          "n_features": 196,
+          "has_calendar": false,
+          "has_derivatives": true,
+          "has_sentiment": false,
+          "train_end": "2026-02-01",
+          "val_end": "2026-03-07",
+          "train_rows": 2526168,
+          "trained_at": "2026-03-16T01:52:07.001044",
+          "n_models": 5,
+          "model_files": [
+            "lgb_model_seed_123.txt",
+            "lgb_model_seed_2024.txt",
+            "lgb_model_seed_42.txt",
+            "lgb_model_seed_456.txt",
+            "lgb_model_seed_789.txt"
+          ],
+          "model_date": "2026-03-16T10:44:18.719454",
+          "size_mb": 14.4
+        },
+        "results_catboost_prod": {
+          "path": "results_catboost_prod",
+          "exists": true,
+          "n_features": 208,
+          "has_calendar": true,
+          "has_derivatives": true,
+          "has_sentiment": false,
+          "train_end": "2026-02-01",
+          "val_end": "2026-03-15",
+          "train_rows": 2526204,
+          "trained_at": "2026-03-23T13:23:44.597244",
+          "n_models": 5,
+          "model_files": [
+            "cb_model_seed_123.cbm",
+            "cb_model_seed_2024.cbm",
+            "cb_model_seed_42.cbm",
+            "cb_model_seed_456.cbm",
+            "cb_model_seed_789.cbm"
+          ],
+          "model_date": "2026-03-23T17:34:11.340049",
+          "size_mb": 17.7
+        },
+        "results_xgboost_prod": {
+          "path": "results_xgboost_prod",
+          "exists": true,
+          "n_features": 223,
+          "has_calendar": false,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "n_models": 5,
+          "model_files": [
+            "xgb_model_seed_123.json",
+            "xgb_model_seed_2024.json",
+            "xgb_model_seed_42.json",
+            "xgb_model_seed_456.json",
+            "xgb_model_seed_789.json"
+          ],
+          "model_date": "2026-03-16T10:44:18.805303",
+          "size_mb": 27.9
+        },
+        "results_mlp_prod": {
+          "path": "results_mlp_prod",
+          "exists": true,
+          "n_features": 177,
+          "has_calendar": true,
+          "has_derivatives": true,
+          "has_sentiment": true,
+          "train_end": "2026-02-01",
+          "val_end": "2026-03-07",
+          "train_rows": 2526204,
+          "trained_at": "2026-03-14T00:43:02.812768",
+          "n_models": 5,
+          "model_files": [
+            "mlp_model_seed_123.pt",
+            "mlp_model_seed_2024.pt",
+            "mlp_model_seed_42.pt",
+            "mlp_model_seed_456.pt",
+            "mlp_model_seed_789.pt"
+          ],
+          "model_date": "2026-03-14T05:06:24.643360",
+          "size_mb": 1.3
+        }
       }
     }
   ],
-  "current_gen": 6
+  "current_gen": 7
 }
