@@ -365,7 +365,7 @@ def add_market_mode_features(df):
         df = df.merge(pca_df, on='timestamp', how='left')
     else:
         df['pca1_share_72h'] = np.nan
-    df['pca1_share_72h'] = df['pca1_share_72h'].fillna(method='ffill').fillna(0.5)
+    df['pca1_share_72h'] = df['pca1_share_72h'].ffill().fillna(0.5)
     df['idio_fraction_72h'] = 1.0 - df['pca1_share_72h']
 
     # --- 3. Beta dispersion (std of rolling betas across coins) ---
