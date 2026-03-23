@@ -27,7 +27,7 @@ mkdir -p "$LOGDIR/models"
 LOG="$LOGDIR/feature_comparison_${TIMESTAMP}.log"
 SUMMARY="$LOGDIR/summary_${TIMESTAMP}.csv"
 DETAIL_LOG="$LOGDIR/detail_${TIMESTAMP}.log"
-DATA_FILE="data/features/crypto_features_1h.parquet"
+DATA_FILE="data/features"
 
 # Detect GPU
 USE_GPU=""
