@@ -27,7 +27,8 @@ mkdir -p "$LOGDIR/models"
 LOG="$LOGDIR/feature_comparison_${TIMESTAMP}.log"
 SUMMARY="$LOGDIR/summary_${TIMESTAMP}.csv"
 DETAIL_LOG="$LOGDIR/detail_${TIMESTAMP}.log"
-DATA_FILE="data/features"
+DATA_DIR="data/features"
+DATA_PARQUET="data/features/crypto_features_1h.parquet"
 
 # Detect GPU
 USE_GPU=""
@@ -53,10 +54,10 @@ run_sim() {
   SIM_N=$((SIM_N + 1))
   local label="${window}__${model_config}__${sim_config}"
   log "SIM #${SIM_N}: $label"
-  log "CMD: python run_fast_sim.py --data $DATA_FILE $*"
+  log "CMD: python run_fast_sim.py --data $DATA_PARQUET $*"
 
   local output
-  output=$(python run_fast_sim.py --data "$DATA_FILE" "$@" 2>&1) || true
+  output=$(python run_fast_sim.py --data "$DATA_PARQUET" "$@" 2>&1) || true
   echo "=== SIM #${SIM_N}: $label ===" >> "$DETAIL_LOG"
   echo "$output" >> "$DETAIL_LOG"
   echo "" >> "$DETAIL_LOG"
@@ -186,7 +187,7 @@ for WIN in A B C; do
 
   t0=$(date +%s)
   python run_pipeline_catboost.py \
-    --data "$DATA_FILE" \
+    --data "$DATA_DIR" \
     --results "$outdir" \
     --production \
     --train-end "$train_end" \
