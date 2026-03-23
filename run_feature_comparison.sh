@@ -113,18 +113,18 @@ backup_prod_models() {
   log "📦 Backing up production models..."
   mkdir -p "$LOGDIR/prod_backup"
   for d in "${MODEL_DIRS[@]}"; do
-    [[ -d "$d" ]] && cp -r "$d" "$LOGDIR/prod_backup/" && log "   Backed up $d"
+    if [[ -d "$d" ]]; then cp -r "$d" "$LOGDIR/prod_backup/" && log "   Backed up $d"; fi
   done
-  [[ -d "results/production" ]] && cp -r "results/production" "$LOGDIR/prod_backup/"
+  if [[ -d "results/production" ]]; then cp -r "results/production" "$LOGDIR/prod_backup/"; fi
 }
 
 restore_prod_models() {
   log "♻️  Restoring production models..."
   for d in "${MODEL_DIRS[@]}"; do
-    rm -rf "$d" 2>/dev/null
-    [[ -d "$LOGDIR/prod_backup/$d" ]] && cp -r "$LOGDIR/prod_backup/$d" . && log "   Restored $d"
+    rm -rf "$d" 2>/dev/null || true
+    if [[ -d "$LOGDIR/prod_backup/$d" ]]; then cp -r "$LOGDIR/prod_backup/$d" . && log "   Restored $d"; fi
   done
-  [[ -d "$LOGDIR/prod_backup/production" ]] && cp -r "$LOGDIR/prod_backup/production" results/
+  if [[ -d "$LOGDIR/prod_backup/production" ]]; then cp -r "$LOGDIR/prod_backup/production" results/; fi
 }
 
 # ── Window definitions (same as mega_comparison3) ──
