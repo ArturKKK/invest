@@ -1065,7 +1065,7 @@ def add_derivatives_features(df, project_root):
                           'taker_flow_zscore', 'taker_imbalance_cs']
             for col in taker_cols:
                 if col in df.columns:
-                    df[col] = df[col].fillna(0)
+                    df[col] = df.groupby('symbol')[col].transform(lambda x: x.ffill()).fillna(0)
             n_added += len(taker_cols)
             n_with = (df['taker_imbalance'] != 0).sum()
             print(f"      Taker: {n_with:,} rows ({n_with/len(df)*100:.1f}%), {len(taker_cols)} features")
@@ -1153,7 +1153,7 @@ def add_derivatives_features(df, project_root):
     if 'taker_imbalance' in df.columns:
         # Market-wide taker skew: are buyers dominating across all coins?
         df['agg_taker_imbalance'] = df.groupby('timestamp')['taker_imbalance'].transform('mean')
-        df['agg_taker_imbalance'] = df['agg_taker_imbalance'].fillna(0)
+        df['agg_taker_imbalance'] = df['agg_taker_imbalance'].ffill().fillna(0)
         mkt_feats += 1
 
     if 'funding_rate_binance' in df.columns:

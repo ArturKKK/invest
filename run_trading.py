@@ -641,7 +641,7 @@ def generate_signal(df, feat_cols, root, use_meta=True, use_deriv_gate=True,
 
     # CatBoost
     cb_dir = None
-    for _cb in ["results_catboost_huber_prod", "results/production/catboost_with_news", "results_catboost_prod", "results_catboost"]:
+    for _cb in ["results_catboost_prod", "results_catboost_huber_prod", "results/production/catboost_with_news", "results_catboost"]:
         _p = os.path.join(root, _cb)
         if os.path.isdir(_p):
             cb_dir = _p
@@ -1963,6 +1963,7 @@ def main():
         # 2b. Enrich with full pipeline features (matches training pipeline)
         from run_pipeline_v6 import (
             add_multi_horizon_targets, add_cross_asset_features,
+            add_market_mode_features, add_liquidity_features,
             add_advanced_regime_features,
             add_derivatives_features, add_sentiment_features,
         )
@@ -1983,6 +1984,8 @@ def main():
         print("   🔧 Enriching: targets, cross-asset, regime, 12h, sentiment, derivatives...")
         df = add_multi_horizon_targets(df)
         df = add_cross_asset_features(df)
+        df = add_market_mode_features(df)
+        df = add_liquidity_features(df)
         df = add_advanced_regime_features(df)
         df = add_12h_features(df)
         from run_pipeline_v6 import add_calendar_features
