@@ -223,6 +223,8 @@ def main():
                         help='Production mode: max training data, no test holdout')
     parser.add_argument('--train-end', type=str, default=None,
                         help='Override train cutoff date (YYYY-MM-DD) for --production')
+    parser.add_argument('--train-start', type=str, default=None,
+                        help='Rolling window: only use training data from this date (YYYY-MM-DD)')
     parser.add_argument('--val-end', type=str, default=None,
                         help='Override val end date (YYYY-MM-DD) for --production')
     parser.add_argument('--seeds', type=int, default=N_SEEDS)
@@ -330,12 +332,15 @@ def main():
             prod_win['train_end'] = args.train_end
             te = pd.Timestamp(args.train_end)
             prod_win['val_start'] = (te + pd.Timedelta(days=PURGE_DAYS)).strftime('%Y-%m-%d')
+        if args.train_start:
+            prod_win['train_start'] = args.train_start
         if args.val_end:
             prod_win['val_end'] = args.val_end
             prod_win['test_start'] = args.val_end
         windows = [prod_win]
+        ts_label = prod_win.get('train_start', 'start')
         print(f"\n🔴 PRODUCTION MODE — max training data, models go to live trading")
-        print(f"   Train: start → {prod_win['train_end']}")
+        print(f"   Train: {ts_label} → {prod_win['train_end']}")
         print(f"   Val:   {prod_win['val_start']} → {prod_win['val_end']}")
         print(f"   Test:  (none — live trading)")
     elif args.research:
@@ -366,7 +371,10 @@ def main():
         print(f"  Test:  {window['test_start']} → {window['test_end']}")
         print(f"{'─'*70}")
 
-        train = df[df['timestamp'] < window['train_end']].copy()
+        train_mask = df['timestamp'] < window['train_end']
+        if window.get('train_start'):
+            train_mask = train_mask & (df['timestamp'] >= window['train_start'])
+        train = df[train_mask].copy()
         val = df[(df['timestamp'] >= window['val_start']) &
                  (df['timestamp'] < window['val_end'])].copy()
         test = df[(df['timestamp'] >= window['test_start']) &
@@ -450,6 +458,7 @@ def main():
                 prod_meta = {
                     'mode': 'production',
                     'model_type': 'CatBoost',
+                    'train_start': window.get('train_start'),
                     'train_end': window['train_end'],
                     'val_end': window['val_end'],
                     'n_seeds': args.seeds,
