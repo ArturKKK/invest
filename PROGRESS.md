@@ -1,7 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
 **Последнее обновление:** 2026-03-31  
-**Статус:** Phase 5 — LIVE trading. Ridge α=1000 (R7) deployed on VPS. R8 research done: 17-feature model (Sharpe 3.97) ready for deployment.
+**Статус:** Phase 5 — LIVE trading. Ridge α=1000 (R7, EMA=2, 14 features) deployed on VPS. R9+R9B: LightGBM EMA=None = Sh=4.21 (+0.62) strong candidate for R10 deployment. Quick win: deploy `pred_shrinkage=0.05`.
 
 ---
 
@@ -574,4 +574,34 @@ VAL_END = '2025-07-01'    # Val: TRAIN_END to VAL_END
 IC scan выявил 21 фичу с |IC| > 0.015 из 79 кандидатов. DVOL и макро-фичи не прошли порог.
 Ablation подтвердил: добавление >3 фич ухудшает модель (Ridge предпочитает меньше orthogonal features).
 
-**Pending:** переобучить модель на 17 фичах и задеплоить на VPS.
+~~**Pending:** переобучить модель на 17 фичах и задеплоить на VPS.~~ **ОТМЕНЕНО**: R8 < R7 при прямом сравнении.
+
+---
+
+## R9 + R9B Research — Targeted Improvements (31 марта 2026)
+
+**Скрипты:** `_research_round9.py`, `_research_round9b.py`  
+**Итог:** найдено 2 key-finding + 1 quick-win
+
+### Quick Win (Ready to Deploy)
+- **`pred_shrinkage=0.05`**: Eq=-6 (-0.2%), Sh +0.01, Worst month -5.6% → -6.4% (улучшение на 0.8pp). Добавить в VPS args.
+
+### Key Finding: LGB EMA=None is Superior
+- LightGBM без EMA-сглаживания: Sh=4.21 (+0.62!), Eq=$2916 (-2.6%), Wr=-5.6%, WM=11/13 vs 9/13
+- IC теста: 0.060-0.072 vs Ridge 0.013-0.020 (3-4× лучше)
+- Вывод: Ridge нуждается в EMA(2) для подавления шума; LGB уже имеет качественный сигнал
+- Deploy: требует R10 validation (hyperparameter tuning, out-of-sample robustness check)
+
+### Отвергнутые идеи
+- Multi-horizon блендинг: все комбинации хуже 12h. 12h оптимален.
+- Position counts: 6L/3S текущий оптимален по equity
+- EMA=3: лучший worst month (-4.2%), но -$222 equity и -0.05 Sharpe
+- Rebalancing sweep: тест невалиден (overlapping fwd_ret)
+- vol_target param: баг — параметр не подключён в sim
+
+### Next: R10 — LightGBM Hyperparameter Tuning
+- num_leaves sweep: 15/31/63/127
+- n_estimators + early stopping
+- Feature importance analysis  
+- Ridge+LGB ensemble test
+- VPS deployment если результаты подтвердятся
