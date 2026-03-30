@@ -54,7 +54,7 @@ from telegram_bot import create_bot
 # ============================================================
 # CONFIG
 # ============================================================
-HORIZON = 12       # must match training pipeline (v6/v7 both use 12h target)
+DEFAULT_REBAL_HOURS = 12
 TOP_K_DEFAULT = 10  # will be overridden by risk config
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
@@ -140,9 +140,10 @@ UNRANKED_COLS = {
 }
 
 # Default risk config (overridden by optimal_config.json)
+# R7 winner: 6L/3S asymmetric (long-heavy)
 DEFAULT_RISK = {
-    'n_long': 10,
-    'n_short': 10,
+    'n_long': 6,
+    'n_short': 3,
     'vol_target': 0.008,
     'vol_lookback': 48,
     'kelly_frac': 0.8,
@@ -153,7 +154,7 @@ DEFAULT_RISK = {
 
 # ── Partial rebalance settings ──
 REBALANCE_THRESHOLD = 0.12  # 12% — don't resize if |target-live|/target < this
-LIMIT_ORDER_WAIT = 5        # seconds to wait for limit fill before market fallback
+LIMIT_ORDER_WAIT = 12       # seconds to wait for limit fill before market fallback
 
 
 # ============================================================
@@ -426,12 +427,226 @@ def build_features(df):
     return df
 
 
+# 14 features verified by cross-sectional IC analysis (_cs_model_v3.py)
+RIDGE_FEATURES = [
+    'ret_12h', 'ret_24h', 'ret_48h',
+    'residual_12h', 'residual_24h',
+    'mom_z_12h', 'mom_z_24h',
+    'dist_from_high_24h',
+    'oi_chg_12h', 'oi_chg_24h', 'oi_zscore',
+    'taker_cvd_12h', 'taker_cvd_24h',
+    'ls_divergence',
+]
+
+
 def cross_sectional_rank(df, feat_cols):
     """Rank normalize features cross-sectionally per timestamp."""
     rank_cols = [c for c in feat_cols if c not in UNRANKED_COLS]
     for col in rank_cols:
         df[col] = df.groupby('timestamp')[col].rank(pct=True) - 0.5
     return df
+
+
+def add_ridge_features(df):
+    """Compute features needed by Ridge model that the standard pipeline doesn't produce."""
+    print("   🔧 Adding Ridge-specific features...")
+
+    # 1. BTC beta (168h rolling) + residuals
+    if 'btc_ret_1h' in df.columns and 'ret_1h' in df.columns:
+        btc_beta = pd.Series(np.nan, index=df.index)
+        for sym, g in df.groupby('symbol'):
+            cov = g['ret_1h'].rolling(168, min_periods=84).cov(g['btc_ret_1h'])
+            var = g['btc_ret_1h'].rolling(168, min_periods=84).var()
+            btc_beta.loc[g.index] = cov / (var + 1e-10)
+        for h in [12, 24]:
+            brc = f'btc_ret_{h}h'
+            if brc in df.columns and f'ret_{h}h' in df.columns:
+                df[f'residual_{h}h'] = df[f'ret_{h}h'] - btc_beta * df[brc]
+
+    # 2. Momentum z-score: ret / realized_vol
+    if 'ret_1h' in df.columns:
+        df['_ret_1h_sq'] = df['ret_1h'] ** 2
+        for h in [12, 24]:
+            rvol = df.groupby('symbol')['_ret_1h_sq'].transform(
+                lambda x: x.rolling(h, min_periods=h // 2).mean().pow(0.5))
+            df[f'mom_z_{h}h'] = df[f'ret_{h}h'] / (rvol + 1e-10)
+        df.drop(columns=['_ret_1h_sq'], inplace=True)
+
+    # 3. Distance from 24h high (mean-reversion signal)
+    high_24 = df.groupby('symbol')['high'].transform(lambda x: x.rolling(24).max())
+    low_24 = df.groupby('symbol')['low'].transform(lambda x: x.rolling(24).min())
+    df['dist_from_high_24h'] = (high_24 - df['close']) / (high_24 - low_24 + 1e-10)
+
+    # 4. Rename pipeline feature names to match Ridge model
+    for old, new in [('oi_change_12h', 'oi_chg_12h'),
+                     ('oi_change_24h', 'oi_chg_24h'),
+                     ('oi_zscore_7d', 'oi_zscore')]:
+        if old in df.columns:
+            df[new] = df[old]
+
+    n_avail = sum(1 for f in RIDGE_FEATURES if f in df.columns)
+    print(f"   ✅ Ridge features: {n_avail}/{len(RIDGE_FEATURES)} available")
+    return df
+
+
+def generate_signal_lgb_cs(df, root):
+    """
+    Generate trading signal using LightGBM ensemble (R9B production model).
+
+    Key differences from Ridge:
+    - Models loaded from results_lgb_prod/lgb_model_seed_*.txt
+    - Features: same 14 CS-IC features, already CS-ranked in-place by caller
+    - NO EMA smoothing (LGB signal already high quality, EMA hurts)
+    - Ensemble of 5 seeds → averaged predictions, reduces seed variance
+    - IC: 0.053–0.072 vs Ridge 0.013–0.020 (3-4x better signal quality)
+    """
+    import lightgbm as lgb_lib
+
+    lgb_dir = os.path.join(root, 'results_lgb_prod')
+    if not os.path.isdir(lgb_dir):
+        print(f"   ❌ LGB models not found: {lgb_dir}")
+        print(f"      Run: python train_lgb_prod.py")
+        return None
+
+    model_files = sorted(Path(lgb_dir).glob('lgb_model_seed_*.txt'))
+    if not model_files:
+        print(f"   ❌ No lgb_model_seed_*.txt files in {lgb_dir}")
+        return None
+
+    models = [lgb_lib.Booster(model_file=str(f)) for f in model_files]
+    feat_names = models[0].feature_name()
+
+    latest = df.groupby('symbol').last().reset_index()
+
+    missing = [f for f in feat_names if f not in latest.columns]
+    if missing:
+        print(f"   ⚠️  LGB missing {len(missing)} features: {missing[:5]}{'...' if len(missing)>5 else ''}")
+        for f in missing:
+            latest[f] = 0.0
+
+    X = latest[feat_names].fillna(0).values
+    preds_all = np.mean([m.predict(X) for m in models], axis=0)
+
+    # Z-normalize cross-sectionally
+    pred_std = np.std(preds_all)
+    if pred_std > 1e-10:
+        scores = (preds_all - np.mean(preds_all)) / pred_std
+    else:
+        scores = preds_all
+
+    # BTC regime data (same computation as Ridge, for construct_portfolio R7 logic)
+    btc_data = df[df['symbol'] == 'BTC/USDT'].sort_values('timestamp')
+    regime_data = {}
+    if len(btc_data) >= 168:
+        btc_close = btc_data['close'].values
+        btc_ret_7d = btc_close[-1] / btc_close[-168] - 1 if btc_close[-168] > 0 else 0
+        btc_hourly_rets = np.diff(btc_close[-169:]) / (btc_close[-169:-1] + 1e-10)
+        btc_vol_7d = float(np.std(btc_hourly_rets))
+        trend_strength = abs(btc_ret_7d) / (btc_vol_7d * np.sqrt(168) + 1e-10)
+        all_hourly_rets = np.diff(btc_close) / (btc_close[:-1] + 1e-10)
+        btc_vol_48h = float(np.std(all_hourly_rets[-48:])) if len(all_hourly_rets) >= 48 else btc_vol_7d
+        btc_vol_long = float(np.std(all_hourly_rets[-720:])) if len(all_hourly_rets) >= 720 else btc_vol_48h
+        vol_regime = btc_vol_48h / (btc_vol_long + 1e-10)
+        trend_direction = btc_ret_7d / (btc_vol_7d * np.sqrt(168) + 1e-10)
+        regime_data = {
+            'trend_strength': trend_strength,
+            'vol_regime': vol_regime,
+            'trend_direction': trend_direction,
+        }
+        print(f"   📊 Regime: BTC 7d={btc_ret_7d*100:+.1f}%, "
+              f"trend={trend_strength:.2f}, vol_regime={vol_regime:.2f}, "
+              f"trend_dir={trend_direction:+.2f}")
+
+    latest['score'] = scores
+    latest['confidence'] = np.full(len(latest), 0.5)
+    latest['deriv_scale'] = np.full(len(latest), 1.0)
+
+    print(f"   ✅ LGB ensemble: {len(models)} models × {len(feat_names)} feats, "
+          f"score range [{scores.min():.2f}, {scores.max():.2f}]")
+
+    result = latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
+        'score', ascending=False).reset_index(drop=True)
+    result.attrs['model_info'] = {'n_models': len(models), 'groups': {'lgb_cs': len(models)}}
+    result.attrs['regime_data'] = regime_data
+    return result
+
+
+def generate_signal_ridge(df, root):
+    """Generate trading signal using Ridge mean-reversion model + regime filter."""
+    model_path = os.path.join(root, 'results_ridge_prod', 'model.json')
+    if not os.path.exists(model_path):
+        print(f"   ❌ Ridge model not found: {model_path}")
+        print(f"      Run: python train_ridge_prod.py")
+        return None
+
+    with open(model_path) as f:
+        model_data = json.load(f)
+
+    features = model_data['features']
+    coef = np.array(model_data['coef'])
+    intercept = model_data['intercept']
+
+    # Latest snapshot per symbol (features already CS-ranked by cross_sectional_rank)
+    latest = df.groupby('symbol').last().reset_index()
+
+    missing = [f for f in features if f not in latest.columns]
+    if missing:
+        print(f"   ⚠️  Ridge missing {len(missing)} features: {missing}")
+        for f in missing:
+            latest[f] = 0.0
+
+    X = latest[features].fillna(0).values
+    scores = X @ coef + intercept
+
+    # Regime filter: scale down in strong BTC trends
+    btc_data = df[df['symbol'] == 'BTC/USDT'].sort_values('timestamp')
+    regime_data = {}  # R7: pass regime info to construct_portfolio
+    if len(btc_data) >= 168:
+        btc_close = btc_data['close'].values
+        btc_ret_7d = btc_close[-1] / btc_close[-168] - 1 if btc_close[-168] > 0 else 0
+        btc_hourly_rets = np.diff(btc_close[-169:]) / (btc_close[-169:-1] + 1e-10)
+        btc_vol_7d = float(np.std(btc_hourly_rets))
+        trend_strength = abs(btc_ret_7d) / (btc_vol_7d * np.sqrt(168) + 1e-10)
+        mr_scale = float(np.clip(1.5 - 0.5 * trend_strength, 0.2, 1.0))
+
+        # R7: vol_regime (48h vol / 720h mean vol) and trend_direction
+        all_hourly_rets = np.diff(btc_close) / (btc_close[:-1] + 1e-10)
+        btc_vol_48h = float(np.std(all_hourly_rets[-48:])) if len(all_hourly_rets) >= 48 else btc_vol_7d
+        btc_vol_long = float(np.std(all_hourly_rets[-720:])) if len(all_hourly_rets) >= 720 else btc_vol_48h
+        vol_regime = btc_vol_48h / (btc_vol_long + 1e-10)
+        trend_direction = btc_ret_7d / (btc_vol_7d * np.sqrt(168) + 1e-10)
+
+        regime_data = {
+            'trend_strength': trend_strength,
+            'vol_regime': vol_regime,
+            'trend_direction': trend_direction,
+        }
+        print(f"   📊 Regime: BTC 7d={btc_ret_7d*100:+.1f}%, "
+              f"trend={trend_strength:.2f}, mr_scale={mr_scale:.2f}, "
+              f"vol_regime={vol_regime:.2f}, trend_dir={trend_direction:+.2f}")
+    else:
+        mr_scale = 1.0
+        print(f"   ⚠️  Regime: insufficient BTC data, mr_scale=1.0")
+
+    scores = scores * mr_scale
+
+    # Z-normalize cross-sectionally
+    score_std = np.std(scores)
+    if score_std > 1e-10:
+        scores = (scores - np.mean(scores)) / score_std
+
+    latest['score'] = scores
+    latest['confidence'] = np.full(len(latest), 0.5)
+    latest['deriv_scale'] = np.full(len(latest), 1.0)
+
+    print(f"   ✅ Ridge model: {len(features)} feats, "
+          f"α={model_data.get('alpha', '?')}, mr_scale={mr_scale:.2f}")
+
+    result = latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
+        'score', ascending=False).reset_index(drop=True)
+    result.attrs['model_info'] = {'n_models': 1, 'groups': {'ridge': 1}}
+    result.attrs['regime_data'] = regime_data  # R7
+    return result
 
 
 def add_12h_features(df):
@@ -941,17 +1156,17 @@ def _edge_boost_weights(scores, n_long, n_short, coin_vol=None):
     return result
 
 
-def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=None):
+def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=None, regime_data=None):
     """
     Risk-managed portfolio construction with edge-boost sizing.
 
-    Each position gets capital proportional to signal strength:
-      weight ∝ 1 + min(|score - median| / P75_edge, 3.0)
-    Total allocation per side is split 50/50 (half long, half short).
+    R7 enhancements: regime-conditional asymmetry, vol scaling,
+    strategy momentum, EQ-MOM boost, dynamic Kelly L/S allocation.
 
     state: dict tracking equity curve for DD stop.
     leverage: exchange leverage multiplier (positions get leverage × capital).
     coin_vol: optional {symbol: realized_vol} for inverse-vol sizing.
+    regime_data: optional dict with trend_strength, vol_regime, trend_direction.
     """
     n_long = risk_cfg['n_long']
     n_short = risk_cfg['n_short']
@@ -1025,6 +1240,65 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         n_long = min(n_long, n // 3)
         n_short = min(n_short, n // 3)
 
+    # ── R7: Regime-conditional asymmetry ──
+    if regime_data:
+        trend_dir = regime_data.get('trend_direction', 0)
+        if not np.isnan(trend_dir):
+            n_base_l, n_base_s = n_long, n_short
+            if trend_dir >= 0.3:       # mild bull → tilt long
+                n_long = min(n_long + 1, len(signals) // 3)
+                n_short = max(2, n_short - 1)
+            elif trend_dir <= -0.3:    # mild bear → tilt short
+                n_long = max(2, n_long - 1)
+                n_short = min(n_short + 1, len(signals) // 3)
+            if (n_long, n_short) != (n_base_l, n_base_s):
+                print(f"   📊 Regime-asym: trend_dir={trend_dir:+.2f} → {n_long}L/{n_short}S")
+
+    # ── R7: Vol scaling (BTC vol regime) ──
+    r7_vol_scale = 1.0
+    if regime_data:
+        vol_regime = regime_data.get('vol_regime', 1.0)
+        if vol_regime > 0:
+            r7_vol_scale = min(1.5, 1.0 / max(0.5, vol_regime))
+            if abs(r7_vol_scale - 1.0) > 0.05:
+                print(f"   📊 R7 Vol-scale: vol_regime={vol_regime:.2f}, scale={r7_vol_scale:.2f}")
+
+    # ── R7: Dynamic exposure (reduce in strong trends) ──
+    dyn_exposure = 1.0
+    if regime_data:
+        ts_val = regime_data.get('trend_strength', 0)
+        if ts_val > 0.8:
+            dyn_exposure = max(0.5, 1.0 - (ts_val - 0.8) * 0.5)
+            print(f"   📊 Dynamic exposure: trend_str={ts_val:.2f}, dyn_exp={dyn_exposure:.2f}")
+
+    # ── R7: Strategy Momentum 48h (4 × 12h cycles) ──
+    sm_scale = 1.0
+    recent_rets = state.get('recent_rets', [])
+    if len(recent_rets) >= 4:
+        recent_4 = recent_rets[-4:]
+        cum_48h = float(np.prod([1 + r for r in recent_4]))
+        if cum_48h < 0.97:
+            sm_scale = max(0.3, cum_48h)
+            print(f"   📊 Strategy Momentum: cum_48h={cum_48h:.3f}, sm_scale={sm_scale:.2f}")
+
+    # ── R7: EQ-MOM Boost (drawdown scaling + recovery boost) ──
+    eq_boost = 1.0
+    equity_hist = [x for x in state.get('r7_equity_vals', []) if isinstance(x, (int, float))]
+    if len(equity_hist) > 4:
+        recent_eq = equity_hist[-1]
+        peak_eq = max(equity_hist)
+        eq_dd = (recent_eq - peak_eq) / (peak_eq + 1e-10)
+        if eq_dd < -0.05:
+            eq_boost = max(0.3, 1.0 + eq_dd * 3)
+            print(f"   📊 EQ-MOM: DD={eq_dd*100:.1f}%, boost={eq_boost:.2f}")
+        elif eq_dd > -0.01:
+            lookback = min(8, len(equity_hist))
+            min_eq = min(equity_hist[-lookback:])
+            recovery = (recent_eq - min_eq) / (min_eq + 1e-10)
+            if recovery > 0.05:
+                eq_boost = min(1.5, 1.0 + recovery * 0.5)
+                print(f"   📊 EQ-MOM: recovery={recovery*100:.1f}%, boost={eq_boost:.2f}")
+
     # Build positions
     signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
     total_positions = n_long + n_short
@@ -1032,12 +1306,20 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     if total_positions == 0:
         return []
 
-    # Total allocation: capital × kelly × vol_scale × leverage
-    # Split 50/50 between long and short sides.
-    # Within each side, allocate proportionally to edge-boost weights.
-    effective_kelly = kelly * vol_scale
+    # Total allocation: capital × kelly × vol_scale × R7 factors × leverage
+    effective_kelly = kelly * vol_scale * r7_vol_scale * dyn_exposure * sm_scale * eq_boost
     total_alloc = capital * effective_kelly * leverage
-    half_alloc = total_alloc / 2
+
+    # R7: Dynamic Kelly L/S split (instead of fixed 50/50)
+    if n_long > 0 and n_short > 0:
+        long_scores = signals.head(n_long)['score']
+        short_scores = signals.tail(n_short)['score']
+        pred_spread = float(long_scores.mean() - short_scores.mean())
+        long_alloc_frac = float(np.clip(0.5 + pred_spread * 5, 0.3, 0.7))
+    else:
+        long_alloc_frac = 0.5
+    long_half = total_alloc * long_alloc_frac
+    short_half = total_alloc * (1 - long_alloc_frac)
 
     # Cap per position at 15% of leveraged capital for diversification
     max_per_pos = capital * leverage * 0.15
@@ -1047,7 +1329,7 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
 
     positions = []
     for symbol, side, weight, score in weighted:
-        side_alloc = half_alloc
+        side_alloc = long_half if side == 'long' else short_half
         usd = round(min(side_alloc * weight, max_per_pos), 2)
         if usd < 5:  # OKX minimum
             continue
@@ -1063,9 +1345,11 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     n_s = sum(1 for p in positions if p['side'] == 'short')
     usds = [p['usd'] for p in positions]
     print(f"   📊 Allocating ${actual_alloc:.0f} of ${capital:.0f} "
-          f"(kelly={kelly:.0%} × vol_scale={vol_scale:.2f} × lev={leverage}x)")
+          f"(kelly={kelly:.0%} × vol={vol_scale:.2f} × r7_vol={r7_vol_scale:.2f} "
+          f"× dyn={dyn_exposure:.2f} × sm={sm_scale:.2f} × eqb={eq_boost:.2f} × lev={leverage}x)")
     print(f"   📊 Positions: {n_l}L + {n_s}S = {n_l+n_s} "
-          f"[edge-boost ${min(usds):.0f}–${max(usds):.0f}]")
+          f"[L/S split={long_alloc_frac:.0%}/{1-long_alloc_frac:.0%}, "
+          f"edge-boost ${min(usds):.0f}–${max(usds):.0f}]")
 
     return positions
 
@@ -1313,10 +1597,39 @@ def _convert_usd_to_contracts(exchange, markets, okx_sym, usd_amount):
     return contracts, {'last': price, 'bid': bid, 'ask': ask}
 
 
+def _settle_order(exchange, order, symbol, retries=6):
+    """Fetch settled order data to get actual fill price/qty/cost."""
+    if not exchange or not order or not order.get('id'):
+        return order
+    import time as _time
+    for i in range(retries):
+        try:
+            _time.sleep(0.5 * (i + 1))  # 0.5, 1.0, 1.5, 2.0, 2.5, 3.0 = 10.5s max
+            settled = exchange.fetch_order(order['id'], symbol)
+            if settled.get('status') == 'closed' and settled.get('average'):
+                return settled
+        except Exception:
+            pass
+    return order
+
+
+def _is_order_filled(order):
+    """Check if order actually filled (non-zero price and qty)."""
+    if not order:
+        return False
+    avg = order.get('average')
+    filled = order.get('filled')
+    return (order.get('status') == 'closed'
+            and avg is not None and float(avg) > 0
+            and filled is not None and float(filled) > 0)
+
+
 def _log_fill(symbol, side, order, ticker_info, order_type):
     """Log per-fill execution details to trading_logs/fills.csv."""
     try:
         fill_price = float(order.get('average', 0) or order.get('price', 0) or 0)
+        filled_qty = order.get('filled', '')
+        cost = order.get('cost', '')
         mid_price = (ticker_info['bid'] + ticker_info['ask']) / 2 if ticker_info else fill_price
         slippage_bps = ((fill_price / mid_price - 1) * 10000
                         if mid_price > 0 and fill_price > 0 else 0)
@@ -1330,8 +1643,8 @@ def _log_fill(symbol, side, order, ticker_info, order_type):
                f"{ticker_info.get('ask', '') if ticker_info else ''},"
                f"{mid_price:.8g},{fill_price:.8g},"
                f"{slippage_bps:.2f},"
-               f"{order.get('filled', '')},"
-               f"{order.get('cost', '')}\n")
+               f"{filled_qty},"
+               f"{cost}\n")
 
         fill_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  'trading_logs', 'fills.csv')
@@ -1352,6 +1665,7 @@ def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
     if not use_limit or ticker_info is None:
         result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=amount, params=params)
+        result = _settle_order(exchange, result, symbol)
         _log_fill(symbol, side, result, ticker_info, 'market')
         return result
 
@@ -1360,6 +1674,7 @@ def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
     if not limit_price or limit_price <= 0:
         result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=amount, params=params)
+        result = _settle_order(exchange, result, symbol)
         _log_fill(symbol, side, result, ticker_info, 'market')
         return result
 
@@ -1414,12 +1729,14 @@ def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
               f" ({filled_amount}/{amount}), market for remaining {remaining}")
         result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=remaining, params=params)
+        result = _settle_order(exchange, result, symbol)
         _log_fill(symbol, side, result, ticker_info, 'market_fallback')
         return result
     except Exception:
         # Limit order placement failed — market fallback
         result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=amount, params=params)
+        result = _settle_order(exchange, result, symbol)
         _log_fill(symbol, side, result, ticker_info, 'market_fallback')
         return result
 
@@ -1439,6 +1756,7 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
     actions = {
         'closed': set(), 'kept': set(), 'resized': set(), 'opened': set(),
         'pnl_snapshot': {},
+        'resize_details': [],  # (symbol, side, old_notional, new_notional, upnl_before)
     }
 
     if dry_run or not exchange:
@@ -1548,10 +1866,15 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True},
                 use_limit=use_limit
             )
-            print(f"      ✅ Closed {side} {sym} → {order.get('id', '?')}")
-            actions['closed'].add(key)
-            results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
-                            'status': 'closed', 'order_id': order.get('id')})
+            if _is_order_filled(order):
+                print(f"      ✅ Closed {side} {sym} → {order.get('id', '?')}")
+                actions['closed'].add(key)
+                results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
+                                'status': 'closed', 'order_id': order.get('id')})
+            else:
+                print(f"      ⚠️  Close {sym} NOT FILLED (id={order.get('id', '?')})")
+                results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
+                                'status': 'error', 'error': 'not_filled'})
         except Exception as e:
             print(f"      ⚠️  Close {sym}: {str(e)[:120]}")
             results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
@@ -1592,9 +1915,20 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 exchange, okx_sym, order_side, contracts_delta, ticker_info,
                 params=params, use_limit=use_limit
             )
-            print(f"      ✅ {tag} {side} {sym}: ${abs_delta:.0f} ({contracts_delta} cts) → {order.get('id', '?')}")
-            actions['resized'].add(key)
-            results.append({**target_pos, 'status': 'resized', 'order_id': order.get('id')})
+            if _is_order_filled(order):
+                print(f"      ✅ {tag} {side} {sym}: ${abs_delta:.0f} ({contracts_delta} cts) → {order.get('id', '?')}")
+                actions['resized'].add(key)
+                actions['resize_details'].append({
+                    'symbol': sym.replace('/USDT', ''),
+                    'side': side,
+                    'old_notional': live_info['notional'],
+                    'new_notional': target_pos['usd'],
+                    'upnl_before': live_info['upnl'],
+                })
+                results.append({**target_pos, 'status': 'resized', 'order_id': order.get('id')})
+            else:
+                print(f"      ⚠️  Resize {sym} NOT FILLED (id={order.get('id', '?')})")
+                actions['kept'].add(key)  # treat as kept (old size remains)
         except Exception as e:
             print(f"      ⚠️  Resize {sym}: {str(e)[:120]}")
             results.append({**target_pos, 'status': 'error', 'error': str(e)})
@@ -1620,10 +1954,15 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 params={'tdMode': 'isolated', 'posSide': 'net'},
                 use_limit=use_limit
             )
-            print(f"      ✅ {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
-                  f"({contracts} cts) → {order.get('id', '?')}")
-            actions['opened'].add((pos['symbol'], pos['side']))
-            results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+            if _is_order_filled(order):
+                print(f"      ✅ {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
+                      f"({contracts} cts) → {order.get('id', '?')}")
+                actions['opened'].add((pos['symbol'], pos['side']))
+                results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+            else:
+                print(f"      ⚠️  {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
+                      f"NOT FILLED (id={order.get('id', '?')})")
+                failed.append(pos)  # retry as if margin issue
         except Exception as e:
             if '51008' in str(e):
                 failed.append(pos)
@@ -1631,7 +1970,7 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 print(f"      ❌ {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {e}")
                 results.append({**pos, 'status': 'error', 'error': str(e)})
 
-    # Retry sweeps for margin (51008)
+    # Retry sweeps for margin (51008) and unfilled orders
     for sweep in range(2):
         if not failed:
             break
@@ -1649,9 +1988,14 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                     params={'tdMode': 'isolated', 'posSide': 'net'},
                     use_limit=use_limit
                 )
-                print(f"      🔄 {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {order.get('id', '?')}")
-                actions['opened'].add((pos['symbol'], pos['side']))
-                results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+                if _is_order_filled(order):
+                    print(f"      🔄 {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} → {order.get('id', '?')}")
+                    actions['opened'].add((pos['symbol'], pos['side']))
+                    results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+                else:
+                    print(f"      ⚠️  {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
+                          f"NOT FILLED on retry (id={order.get('id', '?')})")
+                    still_failed.append(pos)
             except Exception as e:
                 if '51008' in str(e):
                     still_failed.append(pos)
@@ -1674,14 +2018,196 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
 
 def load_state(path):
     if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            print(f"   ⚠️  Corrupt state file {path}, starting fresh")
     return {}
 
 
 def save_state(state, path):
-    with open(path, 'w') as f:
-        json.dump(state, f, indent=2, default=str)
+    # Atomic write: write to tmp, then rename (prevents corruption + partial writes)
+    tmp_path = path + '.tmp'
+    try:
+        with open(tmp_path, 'w') as f:
+            json.dump(state, f, indent=2, default=str)
+        os.replace(tmp_path, path)
+    except Exception as e:
+        print(f"   ⚠️  save_state failed: {e}")
+        # Try direct write as fallback
+        try:
+            with open(path, 'w') as f:
+                json.dump(state, f, indent=2, default=str)
+        except Exception:
+            pass
+
+
+# ============================================================
+# POSITION LEDGER & TRADES.CSV
+# ============================================================
+
+def _ledger_key(symbol, side):
+    """Canonical key for position ledger: 'BTC|long'."""
+    sym = symbol.replace('/USDT', '').replace(':USDT', '')
+    return f"{sym}|{side}"
+
+
+def _update_position_ledger(state, exchange, resize_details=None):
+    """Sync position ledger with actual exchange positions.
+
+    Ledger format in state['position_ledger']:
+      { "BTC|long": {"entry_price": 65000.0, "opened_at": "...", "notional": 500,
+                      "contracts": 0.008, "side": "long", "symbol": "BTC"}, ... }
+
+    Returns (realized_pnl_list, current_ledger) where realized_pnl_list contains
+    dicts for each position that was closed since last call.
+    """
+    ledger = state.get('position_ledger', {})
+    realized = []
+    fully_closed_keys = set()
+
+    if not exchange:
+        return realized, ledger
+
+    try:
+        live_positions = exchange.fetch_positions()
+    except Exception:
+        return realized, ledger
+
+    # Build current position map from exchange
+    live_map = {}  # key -> {entry_price, notional, contracts, upnl, side, symbol}
+    for p in live_positions:
+        if float(p.get('contracts', 0)) > 0:
+            sym = p['symbol'].replace('/USDT:USDT', '/USDT')
+            sym_clean = sym.replace('/USDT', '')
+            key = _ledger_key(sym, p['side'])
+            live_map[key] = {
+                'entry_price': float(p.get('entryPrice', 0)),
+                'notional': abs(float(p.get('notional', 0))),
+                'contracts': float(p.get('contracts', 0)),
+                'upnl': float(p.get('unrealizedPnl', 0)),
+                'mark_price': float(p.get('markPrice', 0)),
+                'side': p['side'],
+                'symbol': sym_clean,
+            }
+
+    # Detect closed positions (in ledger but not in live)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for key, entry in list(ledger.items()):
+        if key not in live_map:
+            # Position was fully closed — record realized PnL
+            notional = entry.get('notional', 0)
+            last_upnl = entry.get('last_upnl', 0)
+            pnl_pct = (last_upnl / notional * 100) if notional > 0 else 0
+
+            hold_hours = 0
+            opened_at = entry.get('opened_at', '')
+            if opened_at:
+                try:
+                    opened_dt = datetime.fromisoformat(opened_at.replace('Z', '+00:00'))
+                    hold_hours = (datetime.now(timezone.utc) - opened_dt).total_seconds() / 3600
+                except Exception:
+                    pass
+
+            realized.append({
+                'symbol': entry.get('symbol', key.split('|')[0]),
+                'side': entry.get('side', ''),
+                'usd': round(notional, 2),
+                'entry_price': entry.get('entry_price', 0),
+                'pnl_usd': round(last_upnl, 4),
+                'pnl_pct': round(pnl_pct, 2),
+                'opened_at': opened_at,
+                'closed_at': now_iso,
+                'hold_hours': round(hold_hours, 1),
+            })
+            fully_closed_keys.add(key)
+            del ledger[key]
+
+    # Detect partial closes (resize down): position still exists but smaller
+    if resize_details:
+        for rd in resize_details:
+            lkey = _ledger_key(rd['symbol'], rd['side'])
+            if lkey in fully_closed_keys or lkey not in live_map:
+                continue
+            old_n = rd['old_notional']
+            new_n = live_map[lkey].get('notional', rd['new_notional'])
+            if new_n >= old_n or old_n <= 0:
+                continue  # resize up or zero — no realized PnL
+            closed_frac = (old_n - new_n) / old_n
+            upnl_before = rd.get('upnl_before', 0)
+            realized_upnl = upnl_before * closed_frac
+            pnl_pct = (realized_upnl / (old_n * closed_frac) * 100) if (old_n * closed_frac) > 0 else 0
+            entry = ledger.get(lkey, {})
+            opened_at = entry.get('opened_at', '')
+            hold_hours = 0
+            if opened_at:
+                try:
+                    opened_dt = datetime.fromisoformat(opened_at.replace('Z', '+00:00'))
+                    hold_hours = (datetime.now(timezone.utc) - opened_dt).total_seconds() / 3600
+                except Exception:
+                    pass
+            realized.append({
+                'symbol': rd['symbol'],
+                'side': rd['side'],
+                'usd': round(old_n * closed_frac, 2),
+                'entry_price': entry.get('entry_price', 0),
+                'pnl_usd': round(realized_upnl, 4),
+                'pnl_pct': round(pnl_pct, 2),
+                'opened_at': opened_at,
+                'closed_at': now_iso,
+                'hold_hours': round(hold_hours, 1),
+            })
+
+    # Update / add entries for live positions
+    for key, pos in live_map.items():
+        if key in ledger:
+            # Update mark data; keep original entry time
+            ledger[key]['notional'] = pos['notional']
+            ledger[key]['contracts'] = pos['contracts']
+            ledger[key]['last_upnl'] = pos['upnl']
+            ledger[key]['mark_price'] = pos['mark_price']
+            # If exchange entry_price changed (partial fill updated avg), sync it
+            if pos['entry_price'] > 0:
+                ledger[key]['entry_price'] = pos['entry_price']
+        else:
+            # New position
+            ledger[key] = {
+                'entry_price': pos['entry_price'],
+                'opened_at': now_iso,
+                'notional': pos['notional'],
+                'contracts': pos['contracts'],
+                'last_upnl': pos['upnl'],
+                'mark_price': pos['mark_price'],
+                'side': pos['side'],
+                'symbol': pos['symbol'],
+            }
+
+    state['position_ledger'] = ledger
+    return realized, ledger
+
+
+def _write_trades_csv(realized_trades, root):
+    """Append closed trades to trading_logs/trades.csv."""
+    if not realized_trades:
+        return
+    csv_path = os.path.join(root, 'trading_logs', 'trades.csv')
+    write_header = not os.path.exists(csv_path)
+    try:
+        with open(csv_path, 'a') as f:
+            if write_header:
+                f.write("exit_time,symbol,side,usd,entry_price,pnl_usd,pnl_pct,"
+                        "opened_at,hold_hours,status\n")
+            for t in realized_trades:
+                f.write(f"{t['closed_at']},{t['symbol']},{t['side']},"
+                        f"{t['usd']},{t['entry_price']},"
+                        f"{t['pnl_usd']},{t['pnl_pct']},"
+                        f"{t['opened_at']},{t['hold_hours']},closed\n")
+        print(f"   📝 Recorded {len(realized_trades)} closed trades to trades.csv")
+    except Exception as e:
+        print(f"   ⚠️  trades.csv write error: {e}")
 
 
 # ============================================================
@@ -1689,7 +2215,8 @@ def save_state(state, path):
 # ============================================================
 
 def update_dashboard(exchange, positions, signals, state, results, root,
-                     capital, leverage, mode, next_rebal_str=''):
+                     capital, leverage, mode, next_rebal_str='',
+                     rebal_hours=DEFAULT_REBAL_HOURS):
     """Write dashboard/data/dashboard.json for the web UI."""
     dashboard_dir = os.path.join(root, 'dashboard', 'data')
     os.makedirs(dashboard_dir, exist_ok=True)
@@ -1763,13 +2290,21 @@ def update_dashboard(exchange, positions, signals, state, results, root,
         live_syms = {(p['symbol'], p['side']) for p in live_positions}
         # Build UPnL lookup from live positions for PnL at close
         upnl_map = {(p['symbol'], p['side']): p.get('upnl', 0) for p in live_positions}
+        # Also look up PnL from position ledger (has last_upnl for recently closed)
+        ledger = state.get('position_ledger', {})
         for t in dash_trades:
             if t.get('closed') is None and (t['symbol'], t['side']) not in live_syms:
                 # Position no longer exists on exchange — mark as closed
                 t['closed'] = now.isoformat()
-                # Use last known UPnL from exchange if available
                 if t.get('pnl', 0) == 0:
-                    t['pnl'] = round(upnl_map.get((t['symbol'], t['side']), 0), 2)
+                    # Try live upnl first, then ledger's last_upnl
+                    pnl = upnl_map.get((t['symbol'], t['side']), 0)
+                    if pnl == 0:
+                        lkey = _ledger_key(t['symbol'], t['side'])
+                        lentry = ledger.get(lkey)
+                        if lentry:
+                            pnl = lentry.get('last_upnl', 0)
+                    t['pnl'] = round(pnl, 2)
     state['dash_trades'] = dash_trades
 
     # Build signals list for dashboard
@@ -1847,7 +2382,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
         'signals': dash_signals,
         'equity_history': eq_history,
         'models': models_str,
-        'rebal_hours': HORIZON,
+        'rebal_hours': rebal_hours,
         'min_score': 0,
         'edge_boost': True,
         'cycle': state.get('n_cycles', 0),
@@ -1884,6 +2419,14 @@ def main():
     parser.add_argument('--min-zscore', type=float, default=0.0,
                         help='Min |z-score| for position entry (e.g. 0.5). '
                              'Filters out weak signals from portfolio.')
+    parser.add_argument('--ridge', action='store_true',
+                        help='Use Ridge mean-reversion model instead of GBDT ensemble')
+    parser.add_argument('--lgb', action='store_true',
+                        help='Use LightGBM ensemble (R9B: Sh=4.29, Wr=-1.2%%, WM=12/13). '
+                             'Requires results_lgb_prod/ from train_lgb_prod.py. No EMA.')
+    parser.add_argument('--rebal-hours', type=int, default=DEFAULT_REBAL_HOURS,
+                        choices=[1, 2, 3, 4, 6, 8, 12, 24],
+                        help='Live rebalance cadence in hours. Use 24 to match recent sims.')
     args = parser.parse_args()
 
     root = os.path.dirname(os.path.abspath(__file__))
@@ -1921,6 +2464,8 @@ def main():
         state['equity'] = args.capital
         state['peak'] = args.capital
         state['recent_rets'] = []
+    if 'prev_equity' not in state:
+        state['prev_equity'] = state.get('equity', args.capital)
 
     print("=" * 70)
     print(f"  PRODUCTION TRADING — {args.mode.upper()}")
@@ -2004,6 +2549,10 @@ def main():
         from run_pipeline_xgboost import add_news_interaction_features
         df = add_news_interaction_features(df)
 
+        # Ridge/LGB-specific features (residuals, mom_z, dist_from_high, OI renames)
+        if args.ridge or args.lgb:
+            df = add_ridge_features(df)
+
         feat_cols = [c for c in df.columns if c not in EXCLUDE_COLS
                      and not c.startswith('target_')
                      and df[c].dtype in ['float64', 'float32', 'int64', 'int32']]
@@ -2039,15 +2588,32 @@ def main():
         # 4. Generate signal
         print(f"\n📡 Generating signal...")
         nonlocal last_signals
-        signals = generate_signal(df, feat_cols, root,
-                                     use_meta=not args.no_meta,
-                                     use_deriv_gate=not args.no_deriv_gate,
-                                     use_xgb=not args.no_xgb,
-                                     cb_only=args.cb_only)
+        if args.lgb:
+            signals = generate_signal_lgb_cs(df, root)
+        elif args.ridge:
+            signals = generate_signal_ridge(df, root)
+        else:
+            signals = generate_signal(df, feat_cols, root,
+                                         use_meta=not args.no_meta,
+                                         use_deriv_gate=not args.no_deriv_gate,
+                                         use_xgb=not args.no_xgb,
+                                         cb_only=args.cb_only)
         if signals is None or len(signals) == 0:
             print("   ❌ No signals")
             return
         last_signals = signals
+
+        # R7: Signal EMA(2) smoothing — only for Ridge (LGB=None is optimal for LGB)
+        if args.ridge and not args.lgb:
+            prev_scores = state.get('prev_signal_scores', {})
+            if prev_scores:
+                alpha_ema = 2.0 / (2 + 1)  # span=2
+                for idx, row in signals.iterrows():
+                    sym = row['symbol']
+                    if sym in prev_scores:
+                        signals.at[idx, 'score'] = alpha_ema * row['score'] + (1 - alpha_ema) * prev_scores[sym]
+                print(f"   📊 Signal EMA(2): smoothed {len(prev_scores)} symbols")
+            state['prev_signal_scores'] = dict(zip(signals['symbol'], signals['score']))
 
         # 5. Portfolio — trade from FULL equity (compound growth)
         # Refresh equity from exchange before sizing
@@ -2078,10 +2644,16 @@ def main():
                 med_v = np.median(list(coin_vol.values()))
                 print(f"   📊 Vol-size: {len(coin_vol)} coins, median σ={med_v:.4f}")
 
+        # R7/R9B: Extract regime data from signal (Ridge or LGB)
+        regime_data = None
+        if (args.ridge or args.lgb) and hasattr(signals, 'attrs'):
+            regime_data = signals.attrs.get('regime_data')
+
         print(f"\n💼 Portfolio construction (equity=${trading_capital:,.0f})...")
         positions = construct_portfolio(signals, trading_capital, risk_cfg, state,
                                           leverage=risk_cfg['leverage'],
-                                          coin_vol=coin_vol)
+                                          coin_vol=coin_vol,
+                                          regime_data=regime_data)
 
         if not positions:
             print("   (no positions this cycle)")
@@ -2093,6 +2665,7 @@ def main():
                       f"{pos['score']:>+8.3f}")
 
         # 6. Execute (partial rebalance + limit orders)
+        resize_details = []  # populated by rebalance_positions if any resizes
         if args.mode == 'signal':
             results = execute(None, positions, dry_run=True, leverage=risk_cfg['leverage'])
         elif not positions and state.get('stopped'):
@@ -2124,22 +2697,9 @@ def main():
 
             # PnL snapshot was captured inside rebalance_positions
             pnl_snapshot = actions.get('pnl_snapshot', {})
+            resize_details = actions.get('resize_details', [])
 
-            # Record cycle PnL as DELTA vs previous snapshot (not cumulative UPnL)
-            if pnl_snapshot:
-                current_total = sum(pnl_snapshot.values())
-                prev_total = state.get('prev_upnl_total', 0)
-                cycle_delta = current_total - prev_total
-                state['prev_upnl_total'] = round(current_total, 4)
-
-                cycle_pnls = state.get('cycle_pnls', [])
-                cycle_pnls.append(round(cycle_delta, 2))
-                cycle_pnls = cycle_pnls[-200:]
-                state['cycle_pnls'] = cycle_pnls
-                print(f"   📊 Cycle PnL: ${cycle_delta:+.2f} (UPnL total: ${current_total:+.2f}, "
-                      f"win rate: {sum(1 for p in cycle_pnls if p > 0)}/{len(cycle_pnls)})")
-
-            # Mark only closed positions in dash_trades
+            # Mark only closed positions in dash_trades (before ledger sync)
             dash_trades = state.get('dash_trades', [])
             closed_keys = {(s.replace('/USDT', ''), side)
                            for s, side in actions.get('closed', set())}
@@ -2149,6 +2709,73 @@ def main():
                     t['pnl'] = round(pnl_snapshot.get(key, 0), 2)
                     t['closed'] = now.isoformat()
             state['dash_trades'] = dash_trades
+
+        # ── Position ledger sync & trades.csv ──
+        if exchange and args.mode in ('paper', 'live'):
+            # Pre-seed ledger with pre-close UPnL snapshot (if available)
+            # so closed positions get accurate PnL (not stale from last cycle)
+            pnl_pre = locals().get('pnl_snapshot', {}) or {}
+            if pnl_pre:
+                ledger_pre = state.get('position_ledger', {})
+                for (sym_clean, side), upnl in pnl_pre.items():
+                    lkey = _ledger_key(sym_clean, side)
+                    if lkey in ledger_pre:
+                        ledger_pre[lkey]['last_upnl'] = upnl
+                state['position_ledger'] = ledger_pre
+
+            realized_trades, ledger = _update_position_ledger(state, exchange, resize_details=resize_details)
+            if realized_trades:
+                _write_trades_csv(realized_trades, root)
+                # Use realized PnL from actual closes
+                realized_pnl = sum(t['pnl_usd'] for t in realized_trades)
+            else:
+                realized_pnl = 0
+
+            # Cycle PnL: realized from closes + UPnL delta on open positions
+            current_upnl = sum(pos.get('last_upnl', 0) for pos in ledger.values())
+            prev_upnl = state.get('prev_upnl_total')
+            if prev_upnl is None:
+                prev_upnl = current_upnl
+            upnl_delta = current_upnl - prev_upnl
+            cycle_pnl = realized_pnl + upnl_delta
+            state['prev_upnl_total'] = round(current_upnl, 4)
+
+            cycle_pnls = state.get('cycle_pnls', [])
+            cycle_pnls.append(round(cycle_pnl, 2))
+            cycle_pnls = cycle_pnls[-200:]
+            state['cycle_pnls'] = cycle_pnls
+
+            # Refresh equity post-trade for accurate recent_rets
+            base_equity = state.get('equity', args.capital)
+            try:
+                bal = exchange.fetch_balance()
+                total_usdt = float(bal.get('USDT', {}).get('total', 0))
+                equity_now = total_usdt + current_upnl
+                state['equity'] = round(equity_now, 4)
+                state['peak'] = max(state.get('peak', args.capital), equity_now)
+            except Exception:
+                equity_now = base_equity + cycle_pnl
+                state['equity'] = round(equity_now, 4)
+                state['peak'] = max(state.get('peak', args.capital), equity_now)
+            equity_prev = state.get('prev_equity', args.capital)
+            if equity_prev > 0:
+                cycle_ret = (equity_now - equity_prev) / equity_prev
+                recent_rets = state.get('recent_rets', [])
+                recent_rets.append(round(cycle_ret, 6))
+                recent_rets = recent_rets[-200:]
+                state['recent_rets'] = recent_rets
+            state['prev_equity'] = round(equity_now, 4)
+
+            # R7: Track equity history for EQ-MOM Boost
+            r7_eq = state.get('r7_equity_vals', [])
+            r7_eq.append(round(equity_now, 4))
+            r7_eq = r7_eq[-200:]
+            state['r7_equity_vals'] = r7_eq
+
+            n_wins = sum(1 for p in cycle_pnls if p > 0)
+            print(f"   📊 Cycle PnL: ${cycle_pnl:+.2f} "
+                  f"(realized: ${realized_pnl:+.2f}, UPnL Δ: ${upnl_delta:+.2f}, "
+                  f"win rate: {n_wins}/{len(cycle_pnls)})")
 
         # 7. Log
         log = {
@@ -2190,7 +2817,7 @@ def main():
     # Run
     last_signals = None
     if args.loop:
-        print(f"\n🔄 Continuous mode (every {HORIZON}h)...")
+        print(f"\n🔄 Continuous mode (every {args.rebal_hours}h)...")
         while True:
             try:
                 run_cycle()
@@ -2206,11 +2833,11 @@ def main():
                     pass
 
             now = datetime.now(timezone.utc)
-            # Align to next HORIZON-hour boundary + 5min
-            next_h = ((now.hour // HORIZON) + 1) * HORIZON
+            # Align to next rebalance boundary + 5min
+            next_h = ((now.hour // args.rebal_hours) + 1) * args.rebal_hours
             next_time = now.replace(hour=0, minute=5, second=0, microsecond=0) + timedelta(hours=next_h)
             while next_time <= now:
-                next_time += timedelta(hours=HORIZON)
+                next_time += timedelta(hours=args.rebal_hours)
 
             sleep = (next_time - now).total_seconds()
             next_rebal_str = next_time.strftime('%H:%M UTC')
@@ -2223,7 +2850,7 @@ def main():
                 try:
                     update_dashboard(exchange, [], last_signals, state, [], root,
                                      args.capital, risk_cfg['leverage'], args.mode,
-                                     next_rebal_str)
+                                     next_rebal_str, args.rebal_hours)
                 except Exception:
                     pass
                 chunk = min(DASH_INTERVAL, remaining)

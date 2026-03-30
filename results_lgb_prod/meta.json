@@ -1,0 +1,31 @@
+{
+  "features": [
+    "ret_12h",
+    "ret_24h",
+    "ret_48h",
+    "residual_12h",
+    "residual_24h",
+    "mom_z_12h",
+    "mom_z_24h",
+    "dist_from_high_24h",
+    "oi_chg_12h",
+    "oi_chg_24h",
+    "oi_zscore",
+    "taker_cvd_12h",
+    "taker_cvd_24h",
+    "ls_divergence"
+  ],
+  "num_leaves": 31,
+  "seeds": [
+    0,
+    7,
+    13,
+    42,
+    99
+  ],
+  "n_models": 5,
+  "train_rows": 998026,
+  "signal_ema": null,
+  "trained_through": "2026-03-07",
+  "note": "R9B: LGB EMA=None, 5-seed ensemble. Better IC than Ridge (0.06-0.07 vs 0.013-0.020). Validated in _verify_lgb.py."
+}
