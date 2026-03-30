@@ -2250,7 +2250,7 @@ vs R6 winner (SM48+6L3S): $1720, Wr=-3.0%, Sh=3.57
 | R5 | EQ-BOOST+KELLY | 3.43 | $1366 | -9.3% | Kelly sizing |
 | R6 | SM48+6L3S | 3.57 | $1720 | -3.0% | Strategy momentum + long-heavy |
 | **R7** | **RG-ASYM+VOL+EMA2** | **3.63** | **$2226** | **-6.1%** | **Regime-tilt + vol-scale + EMA** |
-| **R8** | **+range_24h +btc_beta +gls_z (TOP-3)** | **3.97** | **$223** | **-1.9%** | **IC scan + new features** |
+| **R8** | **+range_24h +btc_beta +gls_z (TOP-3)** | **3.97** | **$223*** | **-1.9%** | **IC scan + new features (no lev, 8.5m test)** |
 
 Полный стек R7 winner (DEPLOYED to VPS 30 Mar 2026):
 - Ridge α=1000, 14 CS-IC features, 12h horizon
@@ -2330,7 +2330,7 @@ R7 задеплоен в прод с 14 CS-IC фичами. R8 исследуе�
 |--------|--------|-------------|--------|--------|---------|
 | **Baseline (14 feats)** | **$200** | **-2.6%** | **2.93** | 38.9 | 9/13 |
 
-Note: Equity здесь $100 start, leveraged sim (not $100→$2226 как в R7, где capital=$100 и leverage scenarios). Масштаб зависит от sim config.
+Note: Equity здесь — unleveraged, $100 start, отображает «$100 × cumulative_return». R7 equity ($2226) считался с **leverage=5** (каждый месяц доходность ×5), поэтому напрямую не сравнимы. Также разные тестовые окна: R7 тест Oct24–Jan25, May–Aug25, Nov25–Mar26 (≈13 мес); R8 тест Oct–Dec24, Apr–Jun25, Oct25–Mar26 (≈8.5 мес).
 
 ### Phase 2: Feature Ablation (add one at a time)
 
