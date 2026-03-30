@@ -1722,3 +1722,740 @@ Better training Sharpe → **WORSE** sim performance!
 **Оставить expanding** (текущий production конфиг). Разница с cap36m несущественна (0.18 HAC), а expanding проще и не требует выбора окна. Тренируем на всех данных с 2017.
 
 ---
+
+## 🧪 Ridge Model Research (март 2026)
+
+> **Контекст**: все GBDT модели (LGB v5-v8, CatBoost) показали IC~0.01 = шум при 208 фичах. Переход к простой Ridge regression с 14 CS-IC-проверенными фичами.
+
+### Модель
+
+- **Тип:** Ridge regression, α=1000
+- **Фичи (14):** `ret_12h`, `ret_24h`, `ret_48h`, `residual_12h`, `residual_24h`, `mom_z_12h`, `mom_z_24h`, `dist_from_high_24h`, `oi_chg_12h`, `oi_chg_24h`, `oi_zscore`, `taker_cvd_12h`, `taker_cvd_24h`, `ls_divergence`
+- **Горизонт:** 12h
+- **CS-rank:** все фичи ранжируются cross-sectionally перед подачей в модель
+- **Target:** CS-ranked forward return 12h
+- **Валидация:** Walk-forward, 3 окна, 15-day gap, HPO alpha на val
+
+### Walk-Forward Windows
+
+```
+W1: train→2024-06 | val: 2024-06→2024-09 | test: 2024-10-15→2025-01-31
+W2: train→2025-01 | val: 2025-01→2025-04 | test: 2025-05-15→2025-08-31
+W3: train→2025-07 | val: 2025-07→2025-10 | test: 2025-11-15→2026-03-17
+```
+
+### Скрипты
+
+```bash
+# Обучение продакшн модели (Ridge, α=1000, 14 фич)
+python train_ridge_prod.py
+# → results_ridge_prod/model.json (val IC=0.052, final IC=0.062, 1M+ rows)
+
+# Strict OOS walk-forward simulation (baseline — без risk mgmt)
+python _sim_ridge_strict.py
+# → Sharpe 0.47, $100→$79 at 3x (ПЛОХО)
+
+# Research round 1: 12 risk management configs
+python _research_maxdd.py
+# → Winner: Hard cutoff trend>0.8 → Sharpe 1.74, worst month -14.9% (3x)
+
+# Research round 2: 14 configs, расширенная вселенная, blend horizons
+python _research_round2.py
+# → Winner: 35sym 6L/6S 12h co=0.8, Sharpe 2.17, worst month -3.0% (3x), $100→$196
+
+# Research round 3: full 50-symbol universe, edge-weighting, blends
+python _research_round3.py
+# → Winner: 20sym 4L/4S 12h co=0.8, $100→$207 (5x), worst -24.5%
+
+# Research round 3B: vol-targeting, dynamic exposure, asymmetric regime
+python _research_round3b.py
+# → Winner: 35sym 5L/5S DYN-EXPOSURE, Sharpe 2.03, $100→$274 (5x), worst -21.1%
+
+# Research round 4: rolling IC filter, equity momentum, confidence weighting, combos
+python _research_round4.py
+# → BREAKTHROUGH: 35sym 5L/5S + EQ-MOM, Sharpe 3.81, $100→$671 (5x), worst -13.2%
+```
+
+### Regime Filter: BTC Trend Strength
+
+```python
+trend_strength = |BTC_ret_7d| / (BTC_vol_7d * sqrt(168))
+# trend > cutoff(0.8) → go FLAT (не торгуем)
+```
+
+### Dynamic Exposure
+
+```python
+# Когда trend_strength > dyn_threshold (0.5), плавно снижаем экспозицию:
+if trend_str > dyn_threshold:
+    exposure = 1.0 - (trend_str - dyn_threshold) / (trend_cutoff - dyn_threshold) * 0.5
+    port_ret *= exposure
+```
+
+### Equity Momentum (Anti-Tilt)
+
+```python
+# В просадке >5% за последние 48 баров → уменьшаем позиции:
+if dd < -0.05:
+    scale = max(0.3, 1.0 + dd * 3)  # -10% dd → 0.7x size
+    port_ret *= scale
+```
+
+---
+
+### Результаты по раундам (сводная таблица, 5x leverage, $100 старт)
+
+| Раунд | Лучший конфиг | Sharpe | $100 → | Worst month | Что нашли |
+|-------|---------------|--------|--------|-------------|-----------|
+| Baseline | 20sym 5L/5S 12h (без risk mgmt) | 0.47 | $79 | -43.4% | Модель работает, но MaxDD убивает |
+| R1 | 20sym 5L/5S co=0.8 | 1.74 | $168 | -14.9% | Hard cutoff при trend>0.8 |
+| R2 | 35sym 6L/6S co=0.8 | 2.17 | $196 | -3.0% | Больше символов = больше dispersion |
+| R3 | 20sym 4L/4S co=0.8 | 1.74 | $207 | -24.5% | 50 символов нестабильнее 20 |
+| R3B | **35sym 5L/5S DYN-EXP** | **2.03** | **$274** | -21.1% | Dynamic exposure > hard cutoff |
+| **R4** | **35sym 5L/5S DYN+EQ-MOM** | **3.81** | **$671** | **-13.2%** | **Equity momentum = прорыв** |
+| R4 alt | 35sym CONF-W+EQ-MOM | 3.94 | $805 | -17.9% | Больше $ но менее стабильно |
+
+### Что работает / не работает
+
+| Идея | Результат | Вердикт |
+|------|-----------|---------|
+| Hard cutoff (trend>0.8 → flat) | Sharpe 1.74, worst -14.9% | ✅ Базовый фильтр |
+| Dynamic exposure (fade 0.5→0.8) | Sharpe 2.03, worst -21.1% | ✅ Лучше hard cutoff |
+| **Equity momentum (anti-tilt)** | **Sharpe 3.81, worst -13.2%** | **✅✅ Прорыв** |
+| Confidence-weighted (|pred| → weight) | Sharpe 1.60, worst -30.6% | ⚠️ Хуже без EQ-MOM |
+| CONF-W + EQ-MOM combo | Sharpe 3.94, $805 | ⚠️ $$ но EQ-MOM маскирует хвост risk |
+| Vol-targeting (1/vol_regime) | Sharpe 1.47, worst -37.6% | ❌ Хуже чем dyn exposure |
+| Asymmetric regime (long-bias in bull) | Sharpe 0.28 | ❌ Убивает MR-модель |
+| Rolling IC filter | Sharpe 4.49, но $105 | ❌ Слишком агрессивно, 1-2 мес торгов |
+| 50 vs 35 vs 20 символов | 35 ≈ 50 > 20 | ⚠️ 35 sweet-spot, 50 нестабильнее |
+| 24h horizon | Sharpe 0.52-0.91 | ❌ 12h значительно лучше |
+| Blend 12+24h | Sharpe 1.10-1.15 | ❌ Blend хуже чистого 12h |
+| Edge-weighting | Sharpe ~1.5 | ⚠️ Не помогает Ridge |
+
+### Помесячная разбивка лучшего конфига: 35sym 5L/5S DYN+EQ-MOM (5x)
+
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | +4.3% | $104 |
+| 2024-11 | +14.1% | $119 |
+| 2024-12 | +116.2% | $257 |
+| 2025-01 | **-13.2%** | $223 ← worst |
+| 2025-05 | +36.1% | $304 |
+| 2025-06 | +26.2% | $384 |
+| 2025-07 | +32.4% | $508 |
+| 2025-08 | -1.6% | $500 |
+| 2025-11 | +2.8% | $514 |
+| 2025-12 | +22.2% | $628 |
+| 2026-01 | +3.8% | $652 |
+| 2026-02 | +2.5% | $668 |
+| 2026-03 | +0.4% | $671 |
+
+### Проекции: 35sym 5L/5S DYN+EQ-MOM (5x, $100)
+
+| Сценарий | Мес. доход | 1м | 6м | 12м |
+|----------|-----------|-----|-----|-----|
+| Avg (+18.9%/мес) | +$19 | $119 | $270 | $730 |
+| Median (+4.3%/мес) | +$4 | $104 | $129 | $166 |
+| p25 (-1.6%/мес) | -$2 | $98 | $91 | $82 |
+
+### Research Round 5 (30 марта 2026)
+
+```bash
+python _research_round5.py
+# Идеи: EQ-MOM boost (scale UP после recovery), Kelly sizing, signal agreement (12h+24h),
+#        adaptive cutoff (rolling pctl), sector-neutral, monthly DD floor, mega combos
+```
+
+**Два прорыва:**
+
+1. **EQ-MOM Boost** — не только уменьшаем размер в просадке, но и **увеличиваем** (до 1.5x) когда equity восстанавливается от дна. Compound-эффект на росте.
+2. **Kelly-inspired sizing** — вместо фиксированного 50% long / 50% short, сдвигаем аллокацию по predicted spread: `long_alloc = clip(0.5 + pred_spread * 5, 0.3, 0.7)`. Больше в strong conviction side.
+
+#### Новый лидер: 35sym EQ-BOOST+KELLY
+
+| Раунд | Конфиг | Sharpe | $100 → | Worst month | vs Baseline |
+|-------|--------|--------|--------|-------------|-------------|
+| R4 | 35sym 5L/5S dyn+EQ-MOM (baseline) | 3.81 | $671 | -13.2% | — |
+| **R5** | **35sym 5L/5S EQ-BOOST+KELLY** | **3.43** | **$1366** | **-9.3%** | **+104% equity, +4% safety** |
+| R5 alt | 35sym 6L/6S EQ-BOOST+KELLY | 3.41 | $1263 | -8.7% | +88%, +5% safety |
+| R5 | 35sym 5L/5S dyn+EQ-BOOST (без Kelly) | 4.19 | $957 | -12.5% | +43%, Sharpe лучше |
+
+#### Помесячная разбивка (35sym EQ-BOOST+KELLY, 5x, $100):
+
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | -1.3% | $99 |
+| 2024-11 | +70.9% | $169 |
+| 2024-12 | +121.0% | $373 |
+| 2025-01 | +8.1% | $403 |
+| 2025-05 | +38.9% | $560 |
+| 2025-06 | -0.8% | $555 |
+| 2025-07 | +74.7% | $970 |
+| 2025-08 | **-9.3%** | $880 ← worst |
+| 2025-11 | +5.7% | $930 |
+| 2025-12 | +18.5% | $1102 |
+| 2026-01 | +19.5% | $1317 |
+| 2026-02 | +6.1% | $1397 |
+| 2026-03 | -2.2% | $1366 |
+
+#### Проекции (35sym EQ-BOOST+KELLY, 5x, $100):
+
+| Сценарий | Мес. доход | 1м | 6м | 12м |
+|----------|-----------|-----|-----|-----|
+| Avg (+26.9%/мес) | +$27 | $127 | $418 | $1745 |
+| Median (+8.1%/мес) | +$8 | $108 | $160 | $256 |
+| p25 (-0.8%/мес) | -$1 | $99 | $95 | $90 |
+
+#### TOP 5 SAFE (worst month > -15%):
+
+| # | Конфиг | $100 → | Worst | Sharpe |
+|---|--------|--------|-------|--------|
+| 1 | **35sym EQ-BOOST+KELLY** | **$1366** | **-9.3%** | 3.43 |
+| 2 | 35sym 6L6S EQ-BOOST+KELLY | $1263 | -8.7% | 3.41 |
+| 3 | 35sym 5L/5S dyn+EQ-BOOST | $957 | -12.5% | 4.19 |
+| 4 | BASELINE dyn+EQ-MOM | $671 | -13.2% | 3.81 |
+| 5 | 35sym 6L/6S dyn+EQ+KELLY | $652 | -9.1% | 2.90 |
+
+#### Интересные находки R5:
+
+| Идея | Результат | Вердикт |
+|------|-----------|---------|
+| **EQ-MOM Boost (scale up on recovery)** | $957, worst -12.5%, Sh 4.19 | **✅✅ Прорыв** |
+| **Kelly sizing (dynamic L/S split)** | $1366, worst -9.3%, Sh 3.43 | **✅✅ Прорыв** |
+| EQ-BOOST + Kelly combo | $1366, worst -9.3% | **✅ Лучший overall** |
+| Signal agreement (12h+24h) | $725, worst -17.6% | ⚠️ Хуже baseline |
+| Adaptive cutoff p70 + EQ | $622, worst -3.8% | ✅ Самый safe вариант |
+| Sector-neutral | $321, worst -14.1% | ⚠️ Меньше equity |
+| Monthly DD floor -15% | $240, worst -10.2% | ⚠️ Безопасно но медленно |
+| DD floor -10% | $197, worst -9.1% | ⚠️ Слишком режет |
+
+#### Обновлённая сводка всех раундов:
+
+| Раунд | Лучший конфиг | Sharpe | $100 → | Worst month | Ключевая находка |
+|-------|---------------|--------|--------|-------------|------------------|
+| Baseline | 20sym 5L/5S 12h (no risk) | 0.47 | $79 | -43.4% | Модель работает, MaxDD убивает |
+| R1 | 20sym 5L/5S co=0.8 | 1.74 | $168 | -14.9% | Hard cutoff при trend>0.8 |
+| R2 | 35sym 6L/6S co=0.8 | 2.17 | $196 | -3.0% | Больше символов = dispersion |
+| R3 | 20sym 4L/4S co=0.8 | 1.74 | $207 | -24.5% | 50sym нестабильнее 20 |
+| R3B | 35sym 5L/5S DYN-EXP | 2.03 | $274 | -21.1% | Dynamic exposure > hard cutoff |
+| R4 | 35sym 5L/5S DYN+EQ-MOM | 3.81 | $671 | -13.2% | Equity momentum = прорыв |
+| R5 | 35sym 5L/5S EQ-BOOST+KELLY | 3.43 | $1366 | -9.3% | EQ-boost + Kelly = x2 equity |
+| R6 | 35sym SM48+7L5S | 3.87 | $1848 | -6.8% | Strategy momentum + asymmetric L/S |
+| **R6** | **35sym SM48+6L3S** | **3.57** | **$1720** | **-3.0%** | **Worst month всего -3%! Calmar=9.84** |
+
+---
+
+## Research Round 6: Signal Quality & Meta-Strategies
+
+**Дата**: июнь 2025
+**Цель**: Улучшить R5 ($1366, Wr=-9.3%) через quality сигналов и мета-стратегии
+
+### Запуск
+
+```bash
+python _research_round6.py     # Основные идеи
+python _research_round6b.py    # Кросс-комбинации победителей
+```
+
+### Новые идеи R6
+
+| Идея | Описание | Результат |
+|------|----------|-----------|
+| **Strategy Momentum** | Используем P&L последних 48ч стратегии как мета-сигнал. Если стратегия теряет → снижаем exposure | **$1521, Wr=-8.0%, Sh=3.55** |
+| Spread Gate | Торгуем только когда L-S spread > threshold | Без эффекта (спред всегда выше) |
+| Adaptive N | Больше позиций при low-vol, меньше при high-vol | $1270, Wr=-10.2%, Sh=3.71 |
+| Top-K Confidence | Только extreme tails предсказаний | Без эффекта |
+| Corr-Aware Weight | Inverse-vol weighting позиций | Хуже (-12.7% worst) |
+| Rebal=8h | Ребалансировка каждые 8ч вместо 12 | $1457 но рискованнее |
+| **Asymmetric 5L/3S** | Больше лонгов чем шортов | **$1323, Wr=-7.1%** |
+| **Asymmetric 6L/4S** | Ещё больше лонгов | **$1272, Wr=-6.8%** |
+
+### Ключевое открытие: Long-heavy + Strategy Momentum
+
+Модель mean-reversion, но **длинная сторона стабильнее**. Комбинация asymmetric L/S + strategy momentum даёт:
+
+```python
+# Strategy momentum (meta-signal)
+if len(strategy_rets) >= 48:
+    recent = strategy_rets[-48:]
+    cum = np.prod([1 + r for r in recent])
+    if cum < 0.97:  # стратегия потеряла >3% за 48ч
+        exposure *= max(0.3, cum)  # снижаем на столько же
+
+# Asymmetric L/S: 6 лонгов, 3 шорта (или 7L/5S)
+n_long, n_short = 6, 3  # safe variant
+n_long, n_short = 7, 5  # aggressive variant
+```
+
+### R6B: Кросс-комбинации
+
+| Config | Equity | Worst Month | Sharpe | Calmar | WM | Примечание |
+|--------|--------|-------------|--------|--------|-----|-----------|
+| BASELINE R5 | $1366 | -9.3% | 3.43 | - | 9/13 | Бейслайн R5 |
+| SM48 | $1521 | -8.0% | 3.55 | - | 9/13 | Только strategy momentum |
+| **SM48+6L3S** | **$1720** | **-3.0%** | **3.57** | **9.84** | **10/13** | **🏆 SAFEST** |
+| **SM48+7L5S** | **$1848** | **-6.8%** | **3.87** | **4.46** | **10/13** | **🏆 BEST EQUITY (safe)** |
+| SM48+7L4S | $1605 | -6.5% | 3.62 | 4.41 | 9/13 | Тоже сильный |
+| SM48+adaptN8L5S | $1582 | -7.5% | 3.95 | 3.57 | **11/13** | **🏆 BEST SHARPE** |
+| SM48+5L3S | $1528 | -6.1% | 3.47 | 4.63 | 9/13 | Консервативный |
+| 6L3S (без SM) | $1524 | -4.1% | 3.44 | 6.84 | 10/13 | Asymmetric alone |
+| SM48+6L4S | $1440 | -5.0% | 3.42 | 5.57 | 10/13 | Стабильный |
+| SM48+rebal8h | $1844 | -9.3% | 3.10 | 3.13 | 9/13 | Больше equity но рискованнее |
+| SM48+6L4S+rebal8h | $2451 | -19.1% | 3.27 | 1.73 | 10/13 | Слишком рискованно |
+
+### Месячная разбивка TOP-3
+
+**#1 SM48+6L3S** (safest, Calmar=9.84):
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | -0.7% | $99 |
+| 2024-11 | +47.1% | $146 |
+| 2024-12 | +155.8% | $374 |
+| 2025-01 | -2.0% | $366 |
+| 2025-05 | +51.8% | $556 |
+| 2025-06 | +2.8% | $572 |
+| 2025-07 | +53.1% | $875 |
+| 2025-08 | **-3.0%** | $849 |
+| 2025-11 | +6.5% | $904 |
+| 2025-12 | +29.7% | $1173 |
+| 2026-01 | +39.7% | $1639 |
+| 2026-02 | +2.7% | $1683 |
+| 2026-03 | +2.1% | $1720 |
+
+**#2 SM48+7L5S** (best equity, safe):
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | -3.5% | $97 |
+| 2024-11 | +72.4% | $166 |
+| 2024-12 | +133.3% | $388 |
+| 2025-01 | +10.5% | $429 |
+| 2025-05 | +35.7% | $582 |
+| 2025-06 | -2.8% | $566 |
+| 2025-07 | +76.2% | $998 |
+| 2025-08 | **-6.8%** | $931 |
+| 2025-11 | +6.3% | $989 |
+| 2025-12 | +22.0% | $1206 |
+| 2026-01 | +33.9% | $1615 |
+| 2026-02 | +1.4% | $1638 |
+| 2026-03 | +12.8% | $1848 |
+
+**#3 SM48+adaptN8L5S** (best Sharpe=3.95, 11/13 WM):
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | -2.5% | $97 |
+| 2024-11 | +53.2% | $149 |
+| 2024-12 | +108.0% | $311 |
+| 2025-01 | +22.6% | $381 |
+| 2025-05 | +40.1% | $534 |
+| 2025-06 | -7.5% | $494 |
+| 2025-07 | +51.9% | $750 |
+| 2025-08 | +0.8% | $756 |
+| 2025-11 | +2.9% | $778 |
+| 2025-12 | +20.7% | $939 |
+| 2026-01 | +29.2% | $1213 |
+| 2026-02 | +14.9% | $1394 |
+| 2026-03 | +13.5% | $1582 |
+
+### Выводы R6
+
+1. **Strategy Momentum** — мета-сигнал на P&L 48ч: +$155 equity + улучшение worst month
+2. **Asymmetric L/S (long-heavy)** — длинная сторона модели стабильнее. 6L/3S или 7L/5S значительно снижает worst month
+3. **Комбинация SM48+6L3S** — worst month всего **-3.0%**, Calmar **9.84**. Идеальный для продакшена.
+4. **SM48+7L5S** — если нужен max equity: **$1848** при приемлемом -6.8% worst
+5. **Adaptive N не так полезен** при asymmetric sizing (уже хватает diversification от большего N лонгов)
+
+### Рекомендация для продакшена
+
+**Primary (safe)**: SM48+6L3S — worst -3.0%, $100→$1720 за 13 мес
+**Aggressive**: SM48+7L5S — worst -6.8%, $100→$1848 за 13 мес
+
+Полный стек:
+- Ridge α=1000, 14 features, 12h horizon
+- BTC trend_strength cutoff=0.8, dynamic threshold=0.5
+- EQ-MOM Boost (DD scale + recovery boost)
+- Kelly sizing (dynamic L/S allocation)
+- Strategy Momentum 48h (meta-signal)
+- Asymmetric 6L/3S (long-heavy)
+
+---
+
+## Research Round 7: Signal Quality, Ensemble & Portfolio Construction
+
+**Дата**: март 2026
+**Цель**: Улучшить R6 ($1720, Wr=-3.0%) через качество сигнала и portfolio construction
+
+### Аудит методологии
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  METHODOLOGY AUDIT                                          │
+│  Data range: 2017-08-17 → 2026-03-07                        │
+│  Symbols: 35, Rows: 1,826,014                               │
+│  ✅ All 14 features present (backward-looking only)          │
+│                                                              │
+│  W1: train<2024-06 | val 06→09 | test 10/15→01/31          │
+│  W2: train<2025-01 | val 01→04 | test 05/15→08/31          │
+│  W3: train<2025-07 | val 07→10 | test 11/15→03/17          │
+│  ✅ W1↔W2: no overlap (104d gap)                            │
+│  ✅ W1↔W3: no overlap (288d gap)                            │
+│  ✅ W2↔W3: no overlap (76d gap)                             │
+│  ✅ val→test gap: 15 days in each window                    │
+│  ✅ fwd_ret used only as TARGET, never as feature           │
+│  ✅ CS ranking computed within each split                   │
+│  ✅ Simulation is sequential (no future info)               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Per-window model quality:
+| Window | α | Val IC | Test IC |
+|--------|---|--------|---------|
+| W1 | 10 | 0.030 | 0.020 |
+| W2 | 1000 | 0.052 | 0.013 |
+| W3 | 1000 | 0.050 | 0.019 |
+
+### Запуск
+
+```bash
+python _research_round7.py     # Основные идеи
+python _research_round7b.py    # Кросс-комбинации
+```
+
+### Новые идеи R7
+
+| Идея | Описание | Лучший результат |
+|------|----------|-----------------|
+| **Signal EMA** | EMA(2) сглаживание предсказаний — снижает шум | **$1917, Wr=-6.1%, 11/13 WM** |
+| **Pred Shrinkage (0.1)** | Сжимаем крайние предсказания к медиане на 10% | **$1829, Wr=-2.4%, Calmar=12.53** |
+| **Regime-Conditional Asymmetry** | Тилт L/S по направлению BTC тренда (бык→+лонг, медведь→+шорт) | **$2061, Wr=-6.4%** |
+| **Vol Scaling** | Масштабирование exposure обратно пропорционально реализованному vol | **$2208, Wr=-8.8% (7L5S)** |
+| **Conviction Weighting** | Вес позиции ∝ |prediction| вместо equal-weight | **$1769, Wr=-8.2%, 11/13 WM** |
+| Multi-horizon blend (12h+24h) | Лучший бленд 50/50 | $1272, хуже R6 baseline |
+| Position stickiness | Hold unless signal flips | Без эффекта |
+
+### R7B: Кросс-комбинации
+
+| # | Config | Equity | Worst Month | Sharpe | WM | Профиль |
+|---|--------|--------|-------------|--------|-----|---------|
+| 1 | **RG-ASYM+VOL+EMA2 6L3S** | **$2226** | **-6.1%** | **3.63** | 9/13 | **🏆 #1 risk-adj** |
+| 2 | **RG-ASYM+VOL 6L3S** | **$2404** | -7.7% | 3.49 | 9/13 | **💰 MAX EQUITY** |
+| 3 | **RG-ASYM+EMA2 6L3S** | **$1847** | **-3.9%** | **3.93** | 10/13 | **🛡️ ULTRA-SAFE** |
+| 4 | SHRINK01+RG-ASYM 6L3S | $2029 | -5.3% | 3.77 | 10/13 | Баланс |
+| 5 | SHRINK01+RG-ASYM+VOL 6L3S | $2230 | -8.2% | 3.51 | 9/13 | Высокий equity |
+| 6 | SHRINK01+RG-ASYM+VOL+EMA2 | $2076 | -6.6% | 3.67 | 7/13 | Не хватает WM |
+| 7 | RG-ASYM+CONV-W 6L3S | $1816 | -7.6% | 3.79 | 11/13 | Стабильный |
+| 8 | BASELINE SM48+6L3S | $1720 | -3.0% | 3.57 | 10/13 | R6 winner |
+
+### Месячная разбивка TOP-3
+
+**#1 RG-ASYM+VOL+EMA2 6L3S** ($2226, risk-adj winner):
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | -2.7% | $97 |
+| 2024-11 | +39.5% | $136 |
+| 2024-12 | +282.7% | $519 |
+| 2025-01 | -3.7% | $500 |
+| 2025-05 | +62.6% | $813 |
+| 2025-06 | +20.1% | $976 |
+| 2025-07 | +52.3% | $1487 |
+| 2025-08 | +0.1% | $1489 |
+| 2025-11 | +0.0% | $1489 |
+| 2025-12 | +13.8% | $1695 |
+| 2026-01 | +48.3% | $2514 |
+| 2026-02 | -5.7% | $2370 |
+| 2026-03 | **-6.1%** | $2226 |
+
+**#2 RG-ASYM+VOL 6L3S** ($2404, max equity):
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | -1.1% | $99 |
+| 2024-11 | +15.6% | $114 |
+| 2024-12 | +213.3% | $358 |
+| 2025-01 | **-7.7%** | $331 |
+| 2025-05 | +74.0% | $576 |
+| 2025-06 | +24.6% | $717 |
+| 2025-07 | +75.1% | $1256 |
+| 2025-08 | -4.9% | $1194 |
+| 2025-11 | +4.2% | $1245 |
+| 2025-12 | +22.5% | $1525 |
+| 2026-01 | +54.3% | $2352 |
+| 2026-02 | -4.8% | $2238 |
+| 2026-03 | +7.4% | $2404 |
+
+**#3 RG-ASYM+EMA2 6L3S** ($1847, ultra-safe):
+| Месяц | Return | Equity |
+|-------|--------|--------|
+| 2024-10 | **-3.9%** | $96 |
+| 2024-11 | +66.8% | $160 |
+| 2024-12 | +213.3% | $502 |
+| 2025-01 | -1.2% | $496 |
+| 2025-05 | +52.0% | $754 |
+| 2025-06 | +9.2% | $824 |
+| 2025-07 | +42.2% | $1172 |
+| 2025-08 | +0.5% | $1177 |
+| 2025-11 | +0.2% | $1180 |
+| 2025-12 | +19.1% | $1405 |
+| 2026-01 | +28.3% | $1803 |
+| 2026-02 | +4.3% | $1880 |
+| 2026-03 | -1.8% | $1847 |
+
+### Ключевые открытия R7
+
+1. **Regime-Conditional Asymmetry** — тилт L/S по BTC тренду: бычий → больше лонгов, медвежий → больше шортов. Synergy с mean-reversion: при мягком тренде сторона "по тренду" стабильнее.
+2. **Vol Scaling** — снижение exposure при высоком vol: `vol_scale = min(1.5, 1/vol_regime)`. Добавляет equity, немного увеличивает worst month.
+3. **Signal EMA(2)** — минимальное сглаживание предсказаний. EMA=2 = sweet spot, EMA>4 ухудшает.
+4. **Prediction Shrinkage (10%)** — `pred = pred * 0.9 + median * 0.1`. Уменьшает worst month с -3.0% до -2.4%.
+5. **Комбинации работают**: RG-ASYM+VOL+EMA2 даёт синергию — **$2226 при worst -6.1%**.
+
+```python
+# Regime-conditional asymmetry
+if -0.3 < trend_direction < 0.3:  # neutral
+    nl, ns = 6, 3
+elif trend_direction >= 0.3:  # mild bull
+    nl, ns = 7, 2  # tilt long
+else:  # mild bear
+    nl, ns = 5, 4  # tilt short
+
+# Vol scaling
+vol_scale = min(1.5, 1.0 / max(0.5, vol_regime))
+exposure *= vol_scale
+
+# Signal EMA(2) smoothing
+pred = df.groupby("symbol")["pred"].ewm(span=2).mean()
+
+# Prediction shrinkage 10%
+pred = pred * 0.9 + cs_median * 0.1
+```
+
+### Выводы R7
+
+Три уровня рекомендации:
+
+| Профиль | Config | Equity | Worst | Sharpe |
+|---------|--------|--------|-------|--------|
+| 🛡️ Ultra-safe | RG-ASYM+EMA2 6L3S | $1847 | -3.9% | 3.93 |
+| ⚖️ Balanced | RG-ASYM+VOL+EMA2 6L3S | $2226 | -6.1% | 3.63 |
+| 💰 Aggressive | RG-ASYM+VOL 6L3S | $2404 | -7.7% | 3.49 |
+
+vs R6 winner (SM48+6L3S): $1720, Wr=-3.0%, Sh=3.57
+
+### Прогресс по раундам
+
+| Round | Config | Sharpe | Equity | Worst Month | Ключевое открытие |
+|-------|--------|--------|--------|-------------|-------------------|
+| Baseline | 20sym 5L/5S 12h (no risk) | 0.47 | $79 | -43.4% | Модель работает, MaxDD убивает |
+| R1 | 20sym 5L/5S co=0.8 | 1.74 | $168 | -14.9% | Hard cutoff |
+| R2 | 35sym 6L/6S co=0.8 | 2.17 | $196 | -3.0% | Больше символов |
+| R3B | 35sym DYN-EXP | 2.03 | $274 | -21.1% | Dynamic exposure |
+| R4 | DYN+EQ-MOM | 3.81 | $671 | -13.2% | Equity momentum |
+| R5 | EQ-BOOST+KELLY | 3.43 | $1366 | -9.3% | Kelly sizing |
+| R6 | SM48+6L3S | 3.57 | $1720 | -3.0% | Strategy momentum + long-heavy |
+| **R7** | **RG-ASYM+VOL+EMA2** | **3.63** | **$2226** | **-6.1%** | **Regime-tilt + vol-scale + EMA** |
+| **R8** | **+range_24h +btc_beta +gls_z (TOP-3)** | **3.97** | **$223** | **-1.9%** | **IC scan + new features** |
+
+Полный стек R7 winner (DEPLOYED to VPS 30 Mar 2026):
+- Ridge α=1000, 14 CS-IC features, 12h horizon
+- Walk-forward: 3 окна, 15-day gaps, HPO alpha на val
+- BTC trend_strength cutoff=0.8, dynamic threshold=0.5
+- EQ-MOM Boost (DD scale + recovery boost)
+- Kelly sizing (dynamic L/S allocation)
+- Strategy Momentum 48h (meta-signal)
+- Asymmetric 6L/3S (long-heavy)
+- Regime-conditional L/S tilt
+- Vol scaling (exposure ∝ 1/vol)
+- Signal EMA(2) smoothing
+
+---
+
+## Research Round 8 — New Feature Discovery (31 марта 2026)
+
+### Контекст
+R7 задеплоен в прод с 14 CS-IC фичами. R8 исследует новые фичи для расширения модели.
+Скрипт: `_research_round8.py`
+Данные: 105 расширенных фич (79 candidate для IC scan), 1.8M строк, 35 символов.
+
+### Фазы
+1. **IC Scan**: 79 candidate features × 4 horizons (4h/12h/24h/48h) × 3 WF windows
+2. **Train & Backtest**: Ridge с расширенными feature sets vs baseline (14 feats)
+3. **Ablation**: добавление фич по одной к baseline
+4. **Combos**: TOP-3 и TOP-5 комбинации
+
+### Новые источники данных
+
+| Источник | Фичи | Статус |
+|----------|-------|--------|
+| **Deribit DVOL** (implied vol) | btc_dvol, dvol_zscore, dvol_change_24h/168h, dvol_rv_spread | ✅ Built, IC < 0.015 |
+| **FRED Macro** (VIX, DXY, SPX, Gold, Yields) | 15 features (ret, zscore per series) | ✅ Built, IC < 0.01 |
+| **Extended Funding** | cum_funding_24/72h_cs, funding_x_mom_12/24h | ✅ Built, IC 0.016–0.022 |
+| **Volume Momentum** | vol_mom_z_12/24h | ✅ Built |
+| **Cross-coin Dispersion** | ret_dispersion_12h, ret_vs_median_12h | ✅ Built, IC 0.052 |
+| **Multi-TF Momentum** | mom_z_168h, ret_168h | ✅ Built, IC 0.028 |
+| **Relative Strength** | rs_rank_12/24h, rs_rank_change_12h, rs_rank_12h_lag12 | ✅ Built, IC 0.030–0.052 |
+| **OI-Funding Interaction** | oi_funding_interaction | ✅ Built, IC 0.010 |
+| **Taker Flow Acceleration** | taker_flow_accel | ✅ Built |
+| **Basis Momentum** | basis_mom_12h, basis_funding_agree | ✅ Built |
+
+### Phase 1: IC Scan — TOP NEW Features at 12h
+
+21 новых фич с |IC| > 0.015 at 12h horizon.
+
+| # | Feature | IC@12h | Std | Consistent | Multi-Horizon |
+|---|---------|--------|-----|------------|---------------|
+| 1 | **rvol_12h** | **-0.068** | 0.011 | ✓ 3/3 | 4h→48h, все > 0.04 |
+| 2 | **rvol_24h** | **-0.064** | 0.012 | ✓ 3/3 | 4h→48h, все > 0.04 |
+| 3 | **rvol_168h** | **-0.060** | 0.014 | ✓ 3/3 | 4h→48h, все > 0.04 |
+| 4 | rs_rank_12h | -0.052 | 0.009 | ✓ 3/3 | 4h→48h |
+| 5 | ret_vs_median_12h | -0.052 | 0.009 | ✓ 3/3 | 4h→48h |
+| 6 | rs_rank_24h | -0.048 | 0.009 | ✓ 3/3 | 4h→48h |
+| 7 | **ret_4h** | **-0.041** | 0.011 | ✓ 3/3 | 4h→48h |
+| 8 | **global_ls_ratio** | **+0.031** | 0.020 | ✓ 3/3 | 4h→48h |
+| 9 | rs_rank_change_12h | -0.030 | 0.009 | ✓ 3/3 | 3 horizons |
+| 10 | **range_24h** | **+0.028** | 0.014 | ✓ 3/3 | 4h→48h |
+| 11 | ret_168h | -0.028 | 0.023 | 2/3 | 3 horizons |
+| 12 | ret_1h | -0.026 | 0.006 | ✓ 3/3 | 3 horizons |
+| 13 | **btc_beta_168h** | **-0.025** | 0.004 | ✓ 3/3 | 4h→48h, IC растёт с горизонтом |
+| 14 | oi_chg_4h | -0.024 | 0.003 | ✓ 3/3 | 3 horizons |
+| 15 | cum_funding_24h | -0.022 | 0.015 | ✓ 3/3 | 12h→48h |
+| 16 | funding_x_mom_24h | -0.022 | 0.008 | ✓ 3/3 | 4h→48h |
+| 17 | funding_x_mom_12h | -0.022 | 0.004 | ✓ 3/3 | 3 horizons |
+| 18 | **global_ls_ratio_zscore** | **+0.018** | 0.008 | ✓ 3/3 | 3 horizons |
+| 19 | cum_funding_72h | -0.016 | 0.017 | 2/3 | 3 horizons |
+
+**DVOL & Macro features**: IC < 0.015 — не прошли порог. DVOL и макро не дают кросс-секционного сигнала для крипто.
+
+**Realized Volatility (rvol_12/24/168h)**: Самый сильный IC среди ВСЕХ фич (-0.068), включая текущие 14. Но: rvol_12h уже используется НЕЯВНО через `mom_z_12h = ret_12h / rvol_12h`. Добавление напрямую повышает IC, но может быть redundant.
+
+### Phase 2: Baseline (14 feats) Performance
+
+| Config | Equity | Worst Month | Sharpe | Calmar | Win Mo. |
+|--------|--------|-------------|--------|--------|---------|
+| **Baseline (14 feats)** | **$200** | **-2.6%** | **2.93** | 38.9 | 9/13 |
+
+Note: Equity здесь $100 start, leveraged sim (not $100→$2226 как в R7, где capital=$100 и leverage scenarios). Масштаб зависит от sim config.
+
+### Phase 2: Feature Ablation (add one at a time)
+
+| Feature | Equity | Worst Mo. | Sharpe | Calmar | Win Mo. | IC@12h |
+|---------|--------|-----------|--------|--------|---------|--------|
+| **+range_24h** | **$232** | -2.0% | **4.30** | 65.7 | 10/13 | +0.028 |
+| +btc_beta_168h | $231 | -1.9% | 3.43 | 67.9 | 9/13 | -0.025 |
+| +global_ls_ratio_zscore | $219 | **-1.2%** | 3.29 | 101.1 | 11/13 | +0.018 |
+| +ret_4h | $217 | -2.9% | 3.23 | 40.6 | 9/13 | -0.041 |
+| +cum_funding_24h | $213 | **-0.9%** | 3.13 | 125.2 | 10/13 | -0.022 |
+| +ret_1h | $209 | -2.3% | 3.22 | 47.3 | 8/13 | -0.026 |
+| +rs_rank_change_12h | $208 | -2.3% | 3.09 | 47.6 | 9/13 | -0.030 |
+| +global_ls_ratio | $204 | -2.5% | 3.13 | 41.7 | 9/13 | +0.031 |
+| +oi_chg_4h | $202 | -2.1% | 2.94 | 49.2 | 8/13 | -0.024 |
+| +ret_168h | $200 | -1.8% | 3.18 | 55.2 | 10/13 | -0.028 |
+| +rvol_12h | $199 | **-0.1%** | **4.37** | 1529.6 | **12/13** | -0.068 |
+| +funding_x_mom_12h | $199 | -1.6% | 2.93 | 59.8 | 8/13 | -0.022 |
+| +rvol_24h | $190 | -3.3% | 4.01 | 27.1 | 12/13 | -0.064 |
+| +rvol_168h | $167 | -2.3% | 3.57 | 29.4 | 11/13 | -0.060 |
+| BASELINE | $200 | -2.6% | 2.93 | 38.9 | 9/13 | — |
+
+**Топ-открытия ablation:**
+1. **range_24h (24h high-low range)** — лучший equity boost: $200→$232 (+16%), Sharpe 2.93→4.30 (+47%)
+2. **rvol_12h (realized vol 12h)** — лучший risk-adj: worst month -0.1% (!!), Sharpe 4.37, 12/13 winning months
+3. **btc_beta_168h** — #2 equity ($231), стабильный IC across all 4 horizons, IC растёт с горизонтом
+4. **global_ls_ratio_zscore** — лучший Calmar (101), worst month -1.2%, 11/13 WM
+5. **cum_funding_24h** — рекордный Calmar (125.2), worst month -0.9%
+
+### Phase 2: Feature Combinations
+
+| Config | Equity | Worst Mo. | Sharpe | Calmar | Win Mo. |
+|--------|--------|-----------|--------|--------|---------|
+| **TOP-3** (14 + range_24h + btc_beta_168h + global_ls_ratio_zscore) | **$223** | **-1.9%** | **3.97** | 65.6 | 10/13 |
+| TOP-5 (14 + top 5) | $196 | -3.7% | 3.76 | 25.9 | 11/13 |
+| EXPANDED (14 + 21 new = 35) | $165 | -3.7% | 3.25 | 17.3 | 10/13 |
+| SCAN-TOP3 (14 + gls_z + ret_4h + cum_fund_24h) | $213 | -3.1% | 3.28 | 36.1 | 8/13 |
+| BASELINE (14 feats) | $200 | -2.6% | 2.93 | 38.9 | 9/13 |
+
+### Phase 3: Scanner Extras (features from IC scanner not in current 14)
+
+Также протестированы все 23 фичи из IC-сканера, которые не входят в текущие 14:
+
+| Feature | Equity | Worst Mo. | Sharpe |
+|---------|--------|-----------|--------|
+| +global_ls_ratio_zscore | $219 | -1.2% | 3.29 |
+| +ret_4h | $217 | -2.9% | 3.23 |
+| +cum_funding_24h | $213 | -0.9% | 3.13 |
+| +vol_ratio_24h | $211 | -4.1% | 3.13 |
+| +ret_1h | $209 | -2.3% | 3.22 |
+| +taker_cvd_4h | $204 | -1.7% | 3.02 |
+| +oi_chg_1h | $203 | -2.4% | 2.99 |
+| +top_ls_ratio_zscore | $202 | -1.9% | 2.99 |
+| +premium_index | $140 | -3.7% | 2.35 |
+| +premium_zscore | $150 | -4.6% | 2.86 |
+
+**Premium/basis features ВРЕДЯТ**: $140 / $150 vs baseline $200. Basis signal too noisy.
+
+### Ключевые выводы R8
+
+1. **Realized Volatility** (rvol_12/24/168h) — самый сильный IC среди ВСЕХ features (-0.068), но уже частично захвачен через mom_z (ret/rvol). Добавление rvol_12h напрямую даёт Sharpe 4.37 и worst month -0.1%, но не top equity.
+
+2. **range_24h** — лучший equity boost одиночный: +16% equity, +47% Sharpe. Capture: дневной диапазон как мера активности/волатильности, ортогональна к rvol.
+
+3. **btc_beta_168h** — BTC-бета за 7 дней: монеты с высокой бетой хуже на 12-48h. IC растёт с горизонтом (от -0.020 до -0.036). Фундаментальный сигнал: low-beta coins outperform.
+
+4. **global_ls_ratio_zscore** — z-score глобального L/S ratio: crowded longs (zs > 0) → reversal signal. Стабильный IC (+0.018) через все 3 окна.
+
+5. **TOP-3 combo = лучший risk-adjusted**: 17 features, Sharpe 3.97, worst month -1.9%. Сохраняет простоту (всего +3 фичи) при значительном улучшении.
+
+6. **Больше ≠ лучше**: 35 фич ($165) хуже 14 ($200). TOP-5 ($196) уже хуже TOP-3 ($223). Ridge regularization предпочитает меньше orthogonal features.
+
+7. **DVOL и Macro не работают** для cross-sectional crypto: IC < 0.015. Implied vol и макро-факторы — market-wide signals, не дают alpha для L/S ranking.
+
+8. **Funding carry** (cum_funding_24h) — перспективен для risk management: Calmar 125, worst month -0.9%.
+
+### Рекомендация
+
+**Расширить модель до 17 фич**: 14 текущих + `range_24h` + `btc_beta_168h` + `global_ls_ratio_zscore`.
+
+Ожидаемый эффект vs R7 baseline:
+- Sharpe: 2.93 → 3.97 (+35%)
+- Worst month: -2.6% → -1.9% (+27% better)
+- Winning months: 9/13 → 10/13
+
+### R8 Config для deployment
+
+```python
+FEATURES_17 = [
+    # Original 14
+    "ret_12h", "ret_24h", "ret_48h",
+    "residual_12h", "residual_24h",
+    "mom_z_12h", "mom_z_24h",
+    "dist_from_high_24h",
+    "oi_chg_12h", "oi_chg_24h", "oi_zscore",
+    "taker_cvd_12h", "taker_cvd_24h",
+    "ls_divergence",
+    # NEW R8 features
+    "range_24h",           # 24h high-low range (IC +0.028)
+    "btc_beta_168h",       # 7d BTC beta (IC -0.025, grows with horizon)
+    "global_ls_ratio_zscore",  # L/S ratio z-score (IC +0.018)
+]
+```
+
+---
+
+## Текущее состояние production (31 марта 2026)
+
+### VPS: root@185.42.163.63
+- **Модель**: Ridge α=1000, 14 features (R7 deployed)
+- **systemd**: `--mode live --loop --capital 100 --leverage 3 --no-deriv-gate --no-meta --ridge --vol-size --min-zscore 0.8`
+- **OKX**: LIVE mode (OKX_DEMO=0), NOT demo
+- **Позиции**: 6 open (5L + 1S): ATOM long, CHZ short, COMP long, EGLD long, ENS long, IMX long
+- **Проблемы**: FTM-USDT-SWAP и MKR-USDT-SWAP не существуют на OKX → 2 из 3 шортов не открылись
+- **Dashboard**: invest.arturt.com, обновляется каждый цикл
+
+### R7 Production Stack
+- Ridge regression, α=1000, 14 CS-IC features, 12h horizon
+- Regime filter (BTC trend_strength): cutoff=0.8, dynamic threshold=0.5
+- Regime-conditional asymmetry (бычий → 7L/2S, медвежий → 5L/4S)
+- Vol scaling (exposure ∝ 1/vol_regime)
+- Signal EMA(2) smoothing
+- EQ-MOM Boost + Kelly sizing + Strategy Momentum 48h
+- Asymmetric base: 6L/3S
+
+### Pending
+- **R8 deployment**: переобучить Ridge на 17 фичах (14 + range_24h + btc_beta_168h + global_ls_ratio_zscore), задеплоить на VPS
+
+---

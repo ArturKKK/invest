@@ -1,7 +1,7 @@
 # Project Progress — AI Crypto Trading System
 
-**Последнее обновление:** 2026-03-07  
-**Статус:** Phase 4 — Sentiment pipeline DONE. LGB v5 кластер: LS Sharpe net 1.35 (3 окна). HIST v2 кластер: Rank IC 0.074, LS Sharpe net 1.23. Ensemble v2 скрипт готов. Ждём ensemble run.
+**Последнее обновление:** 2026-03-31  
+**Статус:** Phase 5 — LIVE trading. Ridge α=1000 (R7) deployed on VPS. R8 research done: 17-feature model (Sharpe 3.97) ready for deployment.
 
 ---
 
@@ -536,3 +536,42 @@ VAL_END = '2025-07-01'    # Val: TRAIN_END to VAL_END
 2. Запустить `run_risk_study.py` на ensemble predictions
 3. Paper trading на OKX demo (минимум 2 недели)
 4. Live с $100-500 при DDStop Sharpe > 1.0
+
+---
+
+## LIVE Trading — Production (30 марта 2026)
+
+**Модель:** Ridge α=1000, 14 CS-IC features, 12h horizon  
+**VPS:** root@185.42.163.63 (SOCKS5 proxy)  
+**Exchange:** OKX LIVE (NOT demo), isolated margin  
+**Capital:** $100, leverage 3x  
+**Service:** systemd `run_trading.py --mode live --loop --capital 100 --leverage 3 --no-deriv-gate --no-meta --ridge --vol-size --min-zscore 0.8`  
+**Dashboard:** invest.arturt.com
+
+### R7 Deployed Stack
+- Ridge regression α=1000, 14 CS-IC features, 12h horizon
+- Walk-forward: 3 windows, 15-day gaps, HPO alpha on val
+- BTC regime filter (trend_strength cutoff=0.8, dynamic threshold=0.5)
+- Regime-conditional asymmetry (bull → 7L/2S, bear → 5L/4S)
+- Vol scaling (exposure ∝ 1/vol)
+- Signal EMA(2) smoothing
+- EQ-MOM Boost + Kelly sizing + Strategy Momentum 48h
+- Asymmetric base: 6L/3S
+
+### Позиции (30 марта 2026)
+6 open: ATOM long, CHZ short, COMP long, EGLD long, ENS long, IMX long  
+(FTM-USDT-SWAP и MKR-USDT-SWAP не существуют на OKX → 2 шорта не открылись)
+
+---
+
+## R8 Research — New Feature Discovery (31 марта 2026)
+
+**Скрипт:** `_research_round8.py`  
+**Результат:** TOP-3 combo (17 features) = Sharpe 3.97, Equity $223, Worst month -1.9%
+
+Новые фичи для модели: `range_24h`, `btc_beta_168h`, `global_ls_ratio_zscore`
+
+IC scan выявил 21 фичу с |IC| > 0.015 из 79 кандидатов. DVOL и макро-фичи не прошли порог.
+Ablation подтвердил: добавление >3 фич ухудшает модель (Ridge предпочитает меньше orthogonal features).
+
+**Pending:** переобучить модель на 17 фичах и задеплоить на VPS.
