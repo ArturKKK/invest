@@ -5,9 +5,7 @@
     "ret_48h",
     "residual_12h",
     "residual_24h",
-    "mom_z_12h",
     "mom_z_24h",
-    "dist_from_high_24h",
     "oi_chg_12h",
     "oi_chg_24h",
     "oi_zscore",
@@ -15,7 +13,7 @@
     "taker_cvd_24h",
     "ls_divergence"
   ],
-  "num_leaves": 31,
+  "num_leaves": 63,
   "seeds": [
     0,
     7,
@@ -27,5 +25,5 @@
   "train_rows": 998026,
   "signal_ema": null,
   "trained_through": "2026-03-07",
-  "note": "R9B: LGB EMA=None, 5-seed ensemble. Better IC than Ridge (0.06-0.07 vs 0.013-0.020). Validated in _verify_lgb.py."
+  "note": "R13: 12f pruned, nl=63, lr=0.03, L2=1.0. Walk-forward Sh=4.81, WM=13/13, Wr=+2.4%. Leakage audit passed (R12)."
 }

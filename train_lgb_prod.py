@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-Train LightGBM ensemble for production deployment (R9 research result).
+Train LightGBM ensemble for production deployment.
 
 Validates on walk-forward windows, then trains FINAL model on ALL data.
 Saves models to results_lgb_prod/lgb_model_seed_*.txt
 
-Key design decisions (from _verify_lgb.py):
-  - num_leaves=31 (stable, no overfit warnings across all windows)
+R13 config (validated R12F+R13-4 combo, Sh=4.81, WM=13/13, Wr=+2.4%):
+  - num_leaves=63, lr=0.03, lambda_l2=1.0
+  - 12 features (pruned: dropped dist_from_high_24h, mom_z_12h)
   - 5 seeds [0, 7, 13, 42, 99] → ensemble averaged at inference
-  - Features: same 14 CS-IC features as Ridge R7 production
   - Feature naming: CS-ranked IN-PLACE (same names as production inference)
-  - EMA smoothing: NONE (LGB signal is already high quality, EMA hurts)
-  - IC train/test ratio: 1.3–2.1x (acceptable for boosted trees)
+  - EMA smoothing: NONE (LGB signal already high quality, EMA hurts)
 
 Usage:
   python train_lgb_prod.py
@@ -40,11 +39,22 @@ from _ic_scanner import load_ohlcv, load_derivatives, build_features_minimal
 
 OUTPUT_DIR = "results_lgb_prod"
 SEEDS = [0, 7, 13, 42, 99]
-NUM_LEAVES = 31
-LR = 0.05
+NUM_LEAVES = 63
+LR = 0.03
 N_ROUNDS = 500
 EARLY_STOP = 30
 MIN_CHILD = 100
+REG_L2 = 1.0
+
+# R13: 12 features (FEATURES_14 minus dist_from_high_24h, mom_z_12h)
+FEATURES_12 = [
+    "ret_12h", "ret_24h", "ret_48h",
+    "residual_12h", "residual_24h",
+    "mom_z_24h",
+    "oi_chg_12h", "oi_chg_24h", "oi_zscore",
+    "taker_cvd_12h", "taker_cvd_24h",
+    "ls_divergence",
+]
 
 LEVERAGE = 5
 CAPITAL = 100
@@ -84,6 +94,7 @@ def train_lgb_fold(df_train, df_val, df_test, feats, seed, fwd_col="fwd_ret_12h"
         "learning_rate": LR, "num_leaves": NUM_LEAVES,
         "min_child_samples": MIN_CHILD,
         "subsample": 0.8, "colsample_bytree": 0.8,
+        "lambda_l2": REG_L2,
         "verbose": -1, "n_jobs": -1, "seed": seed,
     }
     model = lgb.train(
@@ -220,6 +231,7 @@ def train_final_models(df, feats, output_dir):
             "learning_rate": LR, "num_leaves": NUM_LEAVES,
             "min_child_samples": MIN_CHILD,
             "subsample": 0.8, "colsample_bytree": 0.8,
+            "lambda_l2": REG_L2,
             "verbose": -1, "n_jobs": -1, "seed": seed,
         }
         model = lgb.train(
@@ -247,7 +259,7 @@ def train_final_models(df, feats, output_dir):
         "train_rows": n_train,
         "signal_ema": None,
         "trained_through": str(df_full["timestamp"].max().date()),
-        "note": "R9B: LGB EMA=None, 5-seed ensemble. Better IC than Ridge (0.06-0.07 vs 0.013-0.020). Validated in _verify_lgb.py.",
+        "note": "R13: 12f pruned, nl=63, lr=0.03, L2=1.0. Walk-forward Sh=4.81, WM=13/13, Wr=+2.4%. Leakage audit passed (R12).",
     }
     with open(os.path.join(output_dir, "meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
@@ -289,10 +301,10 @@ def main():
     OUTPUT_DIR = args.output_dir
 
     print("=" * 60)
-    print("  TRAIN LGB PRODUCTION MODELS (R9B)")
+    print("  TRAIN LGB PRODUCTION MODELS (R13)")
     print("=" * 60)
     print(f"  Seeds: {SEEDS}")
-    print(f"  num_leaves: {NUM_LEAVES}")
+    print(f"  num_leaves: {NUM_LEAVES}  lr: {LR}  L2: {REG_L2}")
     print(f"  n_rounds: {N_ROUNDS}  early_stop: {EARLY_STOP}")
     print(f"  Output: {OUTPUT_DIR}/")
 
@@ -302,7 +314,7 @@ def main():
     ohlcv  = ohlcv[ohlcv["symbol"].isin(SYM_35)]
     derivs = load_derivatives()
     df     = build_features_minimal(ohlcv, derivs)
-    feats  = [f for f in FEATURES_14 if f in df.columns]
+    feats  = [f for f in FEATURES_12 if f in df.columns]
     print(f"   df: {df.shape}, symbols: {df['symbol'].nunique()}")
     print(f"   date range: {df['timestamp'].min().date()} → {df['timestamp'].max().date()}")
     print(f"   features ({len(feats)}): {feats}")
