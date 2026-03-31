@@ -1,0 +1,777 @@
+nohup: ignoring input
+[11:59:38] ╔══════════════════════════════════════════════════════════════╗
+[11:59:38] ║  FEATURE A/B TEST: old features vs new features            ║
+[11:59:38] ║  Model: CatBoost huber (mega3 champion)                    ║
+[11:59:38] ║  New: market-mode (8) + liquidity (7) features             ║
+[11:59:38] ╚══════════════════════════════════════════════════════════════╝
+[11:59:38] 
+[11:59:38] 📦 Backing up production models...
+[11:59:38]    Backed up results_v6_prod
+[11:59:38]    Backed up results_v7_prod
+[11:59:38]    Backed up results_catboost_prod
+[11:59:38]    Backed up results_xgboost_prod
+[11:59:38] ################################################################
+[11:59:38]   PHASE 1: ОБУЧЕНИЕ (3 окна × CatBoost huber)
+[11:59:38] ################################################################
+[11:59:38] 
+[11:59:38] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[11:59:38]   WINDOW A: train_end=2024-04-30  label=WinA
+[11:59:38] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+======================================================================
+  CATBOOST CRYPTO ALPHA MODEL
+  12h Target + Ordered Boosting + Walk-Forward
+======================================================================
+
+📊 Loading data...
+   Shape: (2565321, 107), Symbols: 50
+   🎯 Adding targets...
+   🌐 Adding cross-asset features...
+   🔗 Adding market-mode features...
+   ✅ Added 6 market-mode features
+   💧 Adding liquidity features...
+   ✅ Added 7 liquidity features
+   🔰 Adding advanced regime features...
+   🕐 Adding 12h-specific features...
+   ✅ Added ~10 features for 12h holding period
+   📅 Adding calendar features...
+   ✅ Added 9 calendar features
+   🏛️ Adding macro features...
+      Macro raw: 9 cols, derived: 29, total new: 38
+   📰 Adding sentiment features... (news_mode=none)
+      FNG: 2018-02-01 → 2026-03-11, mean=48.3
+      Funding: 96,393 non-zero rows (3.8%)
+      LS ratio: 0 non-missing rows
+      Synthetic positioning features...
+      ⏭️  Skipping news features (news_mode=none)
+   ✅ Sentiment features added: 187 → 212 total
+   📊 Adding derivatives features (Binance Futures)...
+      Loaded metrics: 1,800,870 rows, 50 symbols, 2021-12-01 → 2026-03-12
+      OI: 1,785,559 rows (69.6%), 9 features
+      Taker: 1,648,976 rows (64.3%), 6 features
+      Top L/S: 1,433,710 rows (55.9%), 5 features
+      Global L/S: 3 features
+      Binance funding: 2,239,209 rows (87.3%)
+      Funding surprise: computed from OKX funding data
+      Market-wide aggregates: 4 features
+      Basis/Premium: 448,115 rows (17.5%), 6 features
+      ⚠️  No liquidation data (run download_binance_futures.py)
+      DVOL: 13 features (BTC range: 2021-04-01 → 2026-03-15)
+   ✅ Derivatives features: +48 features
+   Features: 260
+   📐 Cross-sectional rank normalization...
+   ✅ Ranked 173 CS features, preserved 87 unranked
+   Final shape: (2564721, 279)
+   Date range: 2017-09-16 09:00:00+00:00 → 2026-03-07 03:00:00+00:00
+
+🔴 PRODUCTION MODE — max training data, models go to live trading
+   Train: start → 2024-04-30
+   Val:   2024-05-08 → 2024-06-24
+   Test:  (none — live trading)
+
+======================================================================
+  ROLLING WALK-FORWARD (1 windows)
+======================================================================
+
+──────────────────────────────────────────────────────────────────────
+  Window 1/1: PROD (max data)
+  Train: → 2024-04-30
+  Val:   2024-05-08 → 2024-06-24
+  Test:  2024-06-24 → 2026-12-31
+──────────────────────────────────────────────────────────────────────
+   Train: 1,780,779 | Val: 56,400 | Test: 717,942
+   🛡️  Huber loss enabled (delta=1.0)
+0:	learn: 0.5868046	test: 0.5813990	best: 0.5813990 (0)	total: 14.6ms	remaining: 1m 12s
+200:	learn: 0.2951381	test: 0.2948670	best: 0.2948670 (200)	total: 1.51s	remaining: 36.1s
+400:	learn: 0.2864021	test: 0.2873754	best: 0.2873754 (400)	total: 3.04s	remaining: 34.8s
+600:	learn: 0.2856023	test: 0.2870837	best: 0.2870827 (596)	total: 4.58s	remaining: 33.5s
+800:	learn: 0.2850325	test: 0.2869344	best: 0.2869344 (800)	total: 6.11s	remaining: 32s
+1000:	learn: 0.2845435	test: 0.2868501	best: 0.2868501 (1000)	total: 7.63s	remaining: 30.5s
+1200:	learn: 0.2840876	test: 0.2867943	best: 0.2867938 (1193)	total: 9.15s	remaining: 28.9s
+1400:	learn: 0.2836507	test: 0.2867348	best: 0.2867308 (1396)	total: 10.7s	remaining: 27.4s
+bestTest = 0.2867188028
+bestIteration = 1481
+Shrink model to first 1482 iterations.
+   🔪 Feature selection: 260 → 208
+
+   🌱 CatBoost multi-seed ensemble (5 seeds)...
+      Seed 42 (1/5)... 0:	learn: 0.5868054	test: 0.5814006	best: 0.5814006 (0)	total: 6.96ms	remaining: 34.8s
+200:	learn: 0.2951297	test: 0.2949129	best: 0.2949129 (200)	total: 1.29s	remaining: 30.8s
+400:	learn: 0.2864096	test: 0.2873752	best: 0.2873752 (400)	total: 2.62s	remaining: 30s
+600:	learn: 0.2856080	test: 0.2870694	best: 0.2870694 (600)	total: 3.94s	remaining: 28.8s
+800:	learn: 0.2850450	test: 0.2869525	best: 0.2869442 (777)	total: 5.24s	remaining: 27.5s
+1000:	learn: 0.2845464	test: 0.2868408	best: 0.2868369 (989)	total: 6.55s	remaining: 26.2s
+1200:	learn: 0.2840921	test: 0.2867798	best: 0.2867730 (1187)	total: 7.86s	remaining: 24.9s
+1400:	learn: 0.2836518	test: 0.2867234	best: 0.2867231 (1391)	total: 9.16s	remaining: 23.5s
+1600:	learn: 0.2832173	test: 0.2867129	best: 0.2867004 (1508)	total: 10.5s	remaining: 22.2s
+bestTest = 0.2867003682
+bestIteration = 1508
+Shrink model to first 1509 iterations.
+iters=1508
+      Seed 123 (2/5)... 0:	learn: 0.5868059	test: 0.5813917	best: 0.5813917 (0)	total: 7.29ms	remaining: 36.4s
+200:	learn: 0.2951094	test: 0.2948885	best: 0.2948885 (200)	total: 1.28s	remaining: 30.6s
+400:	learn: 0.2864052	test: 0.2873802	best: 0.2873802 (400)	total: 2.59s	remaining: 29.7s
+600:	learn: 0.2856042	test: 0.2870743	best: 0.2870731 (594)	total: 3.92s	remaining: 28.7s
+800:	learn: 0.2850477	test: 0.2869512	best: 0.2869512 (800)	total: 5.23s	remaining: 27.4s
+1000:	learn: 0.2845494	test: 0.2868332	best: 0.2868332 (1000)	total: 6.54s	remaining: 26.1s
+1200:	learn: 0.2840907	test: 0.2868042	best: 0.2867826 (1150)	total: 7.85s	remaining: 24.8s
+bestTest = 0.2867825977
+bestIteration = 1150
+Shrink model to first 1151 iterations.
+iters=1150
+      Seed 456 (3/5)... 0:	learn: 0.5868080	test: 0.5813978	best: 0.5813978 (0)	total: 6.53ms	remaining: 32.6s
+200:	learn: 0.2951373	test: 0.2949209	best: 0.2949209 (200)	total: 1.27s	remaining: 30.4s
+400:	learn: 0.2864135	test: 0.2873447	best: 0.2873447 (400)	total: 2.59s	remaining: 29.7s
+600:	learn: 0.2855950	test: 0.2870353	best: 0.2870353 (600)	total: 3.91s	remaining: 28.7s
+800:	learn: 0.2850490	test: 0.2869181	best: 0.2869160 (780)	total: 5.22s	remaining: 27.4s
+1000:	learn: 0.2845567	test: 0.2868165	best: 0.2868137 (993)	total: 6.55s	remaining: 26.2s
+1200:	learn: 0.2841013	test: 0.2867633	best: 0.2867599 (1189)	total: 7.85s	remaining: 24.8s
+1400:	learn: 0.2836535	test: 0.2867374	best: 0.2867373 (1373)	total: 9.14s	remaining: 23.5s
+1600:	learn: 0.2832127	test: 0.2867243	best: 0.2867099 (1556)	total: 10.4s	remaining: 22.2s
+bestTest = 0.2867099254
+bestIteration = 1556
+Shrink model to first 1557 iterations.
+iters=1556
+      Seed 789 (4/5)... 0:	learn: 0.5868070	test: 0.5813967	best: 0.5813967 (0)	total: 7.11ms	remaining: 35.5s
+200:	learn: 0.2951320	test: 0.2948520	best: 0.2948520 (200)	total: 1.3s	remaining: 31s
+400:	learn: 0.2864025	test: 0.2873511	best: 0.2873511 (400)	total: 2.63s	remaining: 30.2s
+600:	learn: 0.2856088	test: 0.2870901	best: 0.2870897 (599)	total: 3.95s	remaining: 28.9s
+800:	learn: 0.2850434	test: 0.2869249	best: 0.2869240 (799)	total: 5.27s	remaining: 27.6s
+1000:	learn: 0.2845577	test: 0.2868140	best: 0.2868117 (997)	total: 6.58s	remaining: 26.3s
+1200:	learn: 0.2840941	test: 0.2867147	best: 0.2867139 (1193)	total: 7.88s	remaining: 24.9s
+1400:	learn: 0.2836456	test: 0.2866871	best: 0.2866806 (1389)	total: 9.18s	remaining: 23.6s
+1600:	learn: 0.2832034	test: 0.2866079	best: 0.2866079 (1600)	total: 10.5s	remaining: 22.2s
+1800:	learn: 0.2827830	test: 0.2865905	best: 0.2865837 (1745)	total: 11.7s	remaining: 20.9s
+bestTest = 0.2865836938
+bestIteration = 1745
+Shrink model to first 1746 iterations.
+iters=1745
+      Seed 2024 (5/5)... 0:	learn: 0.5868124	test: 0.5814405	best: 0.5814405 (0)	total: 7.56ms	remaining: 37.8s
+200:	learn: 0.2951285	test: 0.2948757	best: 0.2948757 (200)	total: 1.27s	remaining: 30.3s
+400:	learn: 0.2864022	test: 0.2873755	best: 0.2873755 (400)	total: 2.59s	remaining: 29.7s
+600:	learn: 0.2856081	test: 0.2870771	best: 0.2870770 (599)	total: 3.91s	remaining: 28.6s
+800:	learn: 0.2850472	test: 0.2869237	best: 0.2869185 (784)	total: 5.22s	remaining: 27.4s
+1000:	learn: 0.2845476	test: 0.2868210	best: 0.2868169 (955)	total: 6.54s	remaining: 26.1s
+1200:	learn: 0.2840895	test: 0.2867793	best: 0.2867743 (1167)	total: 7.86s	remaining: 24.9s
+1400:	learn: 0.2836467	test: 0.2867033	best: 0.2867025 (1399)	total: 9.16s	remaining: 23.5s
+bestTest = 0.2866997794
+bestIteration = 1410
+Shrink model to first 1411 iterations.
+iters=1410
+   💾 Saved 5 CatBoost models + feature names
+
+   📈 Window 1 Results:
+      IC                             0.0158
+      Rank_IC                        0.0293
+      ICIR                           0.3242
+      Rank_ICIR                      0.4986
+      LS_Sharpe_raw                  3.54
+      LS_Sharpe_net                  2.2
+      LS_Ann_Return_net_%            85.3
+      LS_MaxDD_net_%                 -93.8
+      LS_Total_net_%                 783148902.9
+      LS_VolTarget_Sharpe            2.67
+      LS_VolTarget_MaxDD_%           -97.8
+      LS_VolTarget_Total_%           108022387218086.8
+      LS_DDStop_Sharpe               3.64
+      LS_DDStop_MaxDD_%              -25.0
+      LS_DDStop_Total_%              720514907.1
+      LO5_Sharpe                     0.51
+      LO10_Sharpe                    0.21
+      N_periods                      14908
+      Cost_per_period_bps            3.5
+
+======================================================================
+  AGGREGATE RESULTS (1 windows)
+======================================================================
+
+   📈 Combined Results (all windows):
+      Periods: 14908
+      LS Net:       Sharpe=2.20, MaxDD=-93.8%, Total=783148902.9%
+      LS VolTarget: Sharpe=2.67, MaxDD=-97.8%, Total=108022387218086.7%
+      LS DDStop:    Sharpe=3.64, MaxDD=-25.0%, Total=720514907.1%
+
+🏆 Top 30 Features (CatBoost, last window):
+      gk_vol_168h                              2.7
+      btc_vol_24h                              2.4
+      vix_close_chg_1d                         2.1
+      close_ma720_ratio                        2.0
+      atr_48                                   1.9
+      ret_std_168h                             1.9
+      close_ma6_ratio                          1.7
+      gk_vol_48h                               1.7
+      close_ma336_ratio                        1.6
+      vol_price_corr_24h                       1.6
+      vol_trend_12_48                          1.6
+      atr_24                                   1.5
+      spx_close_chg_1d                         1.4
+   📰 funding_rate_binance                     1.4
+   📰 btc_beta_168h                            1.4
+      spx_close_chg_20d                        1.4
+      ret_sharpe_168h                          1.4
+      close_ma12_ratio                         1.3
+      regime_breadth_bullish                   1.3
+      vol_12h_cs_rank                          1.2
+      breadth_pct_positive                     1.2
+      gk_vol_24h                               1.1
+      ret_std_48h                              1.1
+   📰 btc_beta_48h                             1.1
+      close_ma24_ratio                         1.0
+      range_per_dv_24h                         1.0
+      mom_accel_12h                            1.0
+      ret_sharpe_24h                           0.9
+      spx_close                                0.9
+      cci_48                                   0.8
+
+   📰 Sentiment features in top 30: 3/30
+
+======================================================================
+  FINAL SUMMARY — CatBoost (12h target)
+======================================================================
+   Rank IC (avg):            +0.0293
+   Rank ICIR (avg):          +0.4986
+   LS Sharpe net (avg):      +2.20
+   LS MaxDD net (avg):       -93.8%
+   LS VolTarget Sharpe:      +2.67
+   LS DDStop Sharpe:         +3.64
+   Cost model:               0.03% taker + 0.01% slip + 0.005%/8h funding
+======================================================================
+🟡 DECENT — CatBoost adds diversity, useful as ensemble member.
+
+✅ Results saved to results/feature_comparison/models/WinA/catboost_huber_new_feats/
+   Models: cb_model_seed_*.cbm
+   Run ensemble: python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --edge-boost
+[12:05:33]    ✅ Done: WinA/catboost_huber_new_feats (355s)
+[12:05:33] 
+[12:05:33] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[12:05:33]   WINDOW B: train_end=2024-10-31  label=WinB
+[12:05:33] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+======================================================================
+  CATBOOST CRYPTO ALPHA MODEL
+  12h Target + Ordered Boosting + Walk-Forward
+======================================================================
+
+📊 Loading data...
+   Shape: (2565321, 107), Symbols: 50
+   🎯 Adding targets...
+   🌐 Adding cross-asset features...
+   🔗 Adding market-mode features...
+   ✅ Added 6 market-mode features
+   💧 Adding liquidity features...
+   ✅ Added 7 liquidity features
+   🔰 Adding advanced regime features...
+   🕐 Adding 12h-specific features...
+   ✅ Added ~10 features for 12h holding period
+   📅 Adding calendar features...
+   ✅ Added 9 calendar features
+   🏛️ Adding macro features...
+      Macro raw: 9 cols, derived: 29, total new: 38
+   📰 Adding sentiment features... (news_mode=none)
+      FNG: 2018-02-01 → 2026-03-11, mean=48.3
+      Funding: 96,393 non-zero rows (3.8%)
+      LS ratio: 0 non-missing rows
+      Synthetic positioning features...
+      ⏭️  Skipping news features (news_mode=none)
+   ✅ Sentiment features added: 187 → 212 total
+   📊 Adding derivatives features (Binance Futures)...
+      Loaded metrics: 1,800,870 rows, 50 symbols, 2021-12-01 → 2026-03-12
+      OI: 1,785,559 rows (69.6%), 9 features
+      Taker: 1,648,976 rows (64.3%), 6 features
+      Top L/S: 1,433,710 rows (55.9%), 5 features
+      Global L/S: 3 features
+      Binance funding: 2,239,209 rows (87.3%)
+      Funding surprise: computed from OKX funding data
+      Market-wide aggregates: 4 features
+      Basis/Premium: 448,115 rows (17.5%), 6 features
+      ⚠️  No liquidation data (run download_binance_futures.py)
+      DVOL: 13 features (BTC range: 2021-04-01 → 2026-03-15)
+   ✅ Derivatives features: +48 features
+   Features: 260
+   📐 Cross-sectional rank normalization...
+   ✅ Ranked 173 CS features, preserved 87 unranked
+   Final shape: (2564721, 279)
+   Date range: 2017-09-16 09:00:00+00:00 → 2026-03-07 03:00:00+00:00
+
+🔴 PRODUCTION MODE — max training data, models go to live trading
+   Train: start → 2024-10-31
+   Val:   2024-11-08 → 2024-12-24
+   Test:  (none — live trading)
+
+======================================================================
+  ROLLING WALK-FORWARD (1 windows)
+======================================================================
+
+──────────────────────────────────────────────────────────────────────
+  Window 1/1: PROD (max data)
+  Train: → 2024-10-31
+  Val:   2024-11-08 → 2024-12-24
+  Test:  2024-12-24 → 2026-12-31
+──────────────────────────────────────────────────────────────────────
+   Train: 2,000,342 | Val: 54,096 | Test: 500,875
+   🛡️  Huber loss enabled (delta=1.0)
+0:	learn: 0.5862278	test: 0.5815809	best: 0.5815809 (0)	total: 15ms	remaining: 1m 14s
+200:	learn: 0.2952100	test: 0.2949284	best: 0.2949284 (200)	total: 1.64s	remaining: 39.1s
+400:	learn: 0.2865568	test: 0.2870735	best: 0.2870735 (400)	total: 3.29s	remaining: 37.8s
+600:	learn: 0.2858072	test: 0.2866284	best: 0.2866284 (600)	total: 4.97s	remaining: 36.4s
+800:	learn: 0.2852782	test: 0.2863784	best: 0.2863784 (800)	total: 6.64s	remaining: 34.8s
+1000:	learn: 0.2848079	test: 0.2861963	best: 0.2861963 (1000)	total: 8.31s	remaining: 33.2s
+1200:	learn: 0.2843856	test: 0.2860586	best: 0.2860549 (1196)	total: 9.94s	remaining: 31.5s
+1400:	learn: 0.2839781	test: 0.2859464	best: 0.2859464 (1400)	total: 11.6s	remaining: 29.7s
+1600:	learn: 0.2835859	test: 0.2858181	best: 0.2858181 (1600)	total: 13.2s	remaining: 28s
+1800:	learn: 0.2831901	test: 0.2857180	best: 0.2857168 (1796)	total: 14.8s	remaining: 26.3s
+2000:	learn: 0.2828208	test: 0.2856821	best: 0.2856717 (1938)	total: 16.4s	remaining: 24.6s
+2200:	learn: 0.2824603	test: 0.2856198	best: 0.2856120 (2171)	total: 18s	remaining: 22.9s
+2400:	learn: 0.2821090	test: 0.2855795	best: 0.2855681 (2346)	total: 19.6s	remaining: 21.2s
+2600:	learn: 0.2817670	test: 0.2855335	best: 0.2855155 (2523)	total: 21.2s	remaining: 19.6s
+bestTest = 0.2855155206
+bestIteration = 2523
+Shrink model to first 2524 iterations.
+   🔪 Feature selection: 260 → 208
+
+   🌱 CatBoost multi-seed ensemble (5 seeds)...
+      Seed 42 (1/5)... 0:	learn: 0.5862254	test: 0.5815831	best: 0.5815831 (0)	total: 6.81ms	remaining: 34s
+200:	learn: 0.2952100	test: 0.2949405	best: 0.2949405 (200)	total: 1.39s	remaining: 33.2s
+400:	learn: 0.2865544	test: 0.2870750	best: 0.2870750 (400)	total: 2.81s	remaining: 32.2s
+600:	learn: 0.2858048	test: 0.2866512	best: 0.2866512 (600)	total: 4.25s	remaining: 31.1s
+800:	learn: 0.2852709	test: 0.2864371	best: 0.2864371 (800)	total: 5.68s	remaining: 29.8s
+1000:	learn: 0.2848018	test: 0.2863090	best: 0.2863090 (1000)	total: 7.1s	remaining: 28.4s
+1200:	learn: 0.2843631	test: 0.2861440	best: 0.2861440 (1200)	total: 8.52s	remaining: 26.9s
+1400:	learn: 0.2839479	test: 0.2859805	best: 0.2859805 (1400)	total: 9.9s	remaining: 25.4s
+1600:	learn: 0.2835560	test: 0.2858378	best: 0.2858368 (1597)	total: 11.3s	remaining: 24s
+1800:	learn: 0.2831601	test: 0.2857552	best: 0.2857546 (1799)	total: 12.7s	remaining: 22.5s
+2000:	learn: 0.2827907	test: 0.2857220	best: 0.2857214 (1960)	total: 14.1s	remaining: 21.1s
+2200:	learn: 0.2824300	test: 0.2856334	best: 0.2856304 (2198)	total: 15.5s	remaining: 19.7s
+2400:	learn: 0.2820798	test: 0.2855506	best: 0.2855450 (2394)	total: 16.8s	remaining: 18.2s
+2600:	learn: 0.2817365	test: 0.2855147	best: 0.2855144 (2594)	total: 18.2s	remaining: 16.8s
+2800:	learn: 0.2814030	test: 0.2855019	best: 0.2854914 (2724)	total: 19.6s	remaining: 15.4s
+bestTest = 0.2854913667
+bestIteration = 2724
+Shrink model to first 2725 iterations.
+iters=2724
+      Seed 123 (2/5)... 0:	learn: 0.5862286	test: 0.5815823	best: 0.5815823 (0)	total: 7.92ms	remaining: 39.6s
+200:	learn: 0.2951874	test: 0.2949845	best: 0.2949845 (200)	total: 1.39s	remaining: 33.1s
+400:	learn: 0.2865600	test: 0.2871017	best: 0.2871017 (400)	total: 2.81s	remaining: 32.2s
+600:	learn: 0.2858063	test: 0.2866949	best: 0.2866949 (600)	total: 4.26s	remaining: 31.2s
+800:	learn: 0.2852824	test: 0.2864898	best: 0.2864888 (796)	total: 5.68s	remaining: 29.8s
+1000:	learn: 0.2848182	test: 0.2863123	best: 0.2863123 (1000)	total: 7.1s	remaining: 28.4s
+1200:	learn: 0.2843832	test: 0.2861177	best: 0.2861177 (1200)	total: 8.53s	remaining: 27s
+1400:	learn: 0.2839663	test: 0.2860010	best: 0.2860010 (1400)	total: 9.92s	remaining: 25.5s
+1600:	learn: 0.2835644	test: 0.2859130	best: 0.2859092 (1591)	total: 11.3s	remaining: 24s
+1800:	learn: 0.2831762	test: 0.2858273	best: 0.2858273 (1800)	total: 12.7s	remaining: 22.5s
+2000:	learn: 0.2827993	test: 0.2857717	best: 0.2857575 (1967)	total: 14.1s	remaining: 21.1s
+2200:	learn: 0.2824458	test: 0.2856737	best: 0.2856732 (2199)	total: 15.5s	remaining: 19.7s
+2400:	learn: 0.2820969	test: 0.2856151	best: 0.2856114 (2393)	total: 16.8s	remaining: 18.2s
+2600:	learn: 0.2817521	test: 0.2855436	best: 0.2855377 (2587)	total: 18.2s	remaining: 16.8s
+2800:	learn: 0.2814149	test: 0.2855034	best: 0.2854825 (2764)	total: 19.6s	remaining: 15.4s
+bestTest = 0.2854824824
+bestIteration = 2764
+Shrink model to first 2765 iterations.
+iters=2764
+      Seed 456 (3/5)... 0:	learn: 0.5862284	test: 0.5815819	best: 0.5815819 (0)	total: 7.39ms	remaining: 36.9s
+200:	learn: 0.2951724	test: 0.2949163	best: 0.2949163 (200)	total: 1.4s	remaining: 33.5s
+400:	learn: 0.2865492	test: 0.2870969	best: 0.2870969 (400)	total: 2.82s	remaining: 32.3s
+600:	learn: 0.2858015	test: 0.2866833	best: 0.2866805 (599)	total: 4.25s	remaining: 31.1s
+800:	learn: 0.2852803	test: 0.2864567	best: 0.2864567 (800)	total: 5.67s	remaining: 29.7s
+1000:	learn: 0.2848074	test: 0.2862822	best: 0.2862812 (999)	total: 7.1s	remaining: 28.4s
+1200:	learn: 0.2843802	test: 0.2861823	best: 0.2861727 (1197)	total: 8.51s	remaining: 26.9s
+1400:	learn: 0.2839752	test: 0.2860545	best: 0.2860540 (1399)	total: 9.91s	remaining: 25.4s
+1600:	learn: 0.2835737	test: 0.2859346	best: 0.2859301 (1591)	total: 11.3s	remaining: 24s
+1800:	learn: 0.2831802	test: 0.2858782	best: 0.2858751 (1790)	total: 12.7s	remaining: 22.6s
+2000:	learn: 0.2828067	test: 0.2857691	best: 0.2857678 (1998)	total: 14.1s	remaining: 21.1s
+2200:	learn: 0.2824420	test: 0.2857064	best: 0.2857048 (2190)	total: 15.5s	remaining: 19.7s
+2400:	learn: 0.2820872	test: 0.2856301	best: 0.2856301 (2400)	total: 16.9s	remaining: 18.2s
+bestTest = 0.2856124791
+bestIteration = 2421
+Shrink model to first 2422 iterations.
+iters=2421
+      Seed 789 (4/5)... 0:	learn: 0.5862305	test: 0.5815846	best: 0.5815846 (0)	total: 8.35ms	remaining: 41.8s
+200:	learn: 0.2951970	test: 0.2948905	best: 0.2948905 (200)	total: 1.4s	remaining: 33.4s
+400:	learn: 0.2865508	test: 0.2870637	best: 0.2870637 (400)	total: 2.83s	remaining: 32.5s
+600:	learn: 0.2858016	test: 0.2866589	best: 0.2866589 (600)	total: 4.27s	remaining: 31.3s
+800:	learn: 0.2852744	test: 0.2864290	best: 0.2864289 (799)	total: 5.7s	remaining: 29.9s
+1000:	learn: 0.2848048	test: 0.2862842	best: 0.2862816 (998)	total: 7.14s	remaining: 28.5s
+1200:	learn: 0.2843802	test: 0.2861649	best: 0.2861649 (1200)	total: 8.54s	remaining: 27s
+1400:	learn: 0.2839697	test: 0.2860795	best: 0.2860766 (1393)	total: 9.95s	remaining: 25.6s
+1600:	learn: 0.2835628	test: 0.2859897	best: 0.2859883 (1584)	total: 11.3s	remaining: 24.1s
+1800:	learn: 0.2831612	test: 0.2858958	best: 0.2858958 (1797)	total: 12.7s	remaining: 22.6s
+2000:	learn: 0.2827835	test: 0.2858299	best: 0.2858299 (2000)	total: 14.1s	remaining: 21.2s
+bestTest = 0.2858296827
+bestIteration = 2003
+Shrink model to first 2004 iterations.
+iters=2003
+      Seed 2024 (5/5)... 0:	learn: 0.5862379	test: 0.5816210	best: 0.5816210 (0)	total: 6.86ms	remaining: 34.3s
+200:	learn: 0.2951945	test: 0.2949343	best: 0.2949343 (200)	total: 1.39s	remaining: 33.1s
+400:	learn: 0.2865503	test: 0.2870934	best: 0.2870934 (400)	total: 2.82s	remaining: 32.3s
+600:	learn: 0.2857886	test: 0.2866493	best: 0.2866493 (600)	total: 4.25s	remaining: 31.1s
+800:	learn: 0.2852602	test: 0.2864326	best: 0.2864326 (800)	total: 5.68s	remaining: 29.8s
+1000:	learn: 0.2847891	test: 0.2862872	best: 0.2862859 (998)	total: 7.1s	remaining: 28.4s
+1200:	learn: 0.2843553	test: 0.2861248	best: 0.2861229 (1196)	total: 8.51s	remaining: 26.9s
+1400:	learn: 0.2839442	test: 0.2859837	best: 0.2859837 (1400)	total: 9.91s	remaining: 25.5s
+1600:	learn: 0.2835388	test: 0.2858495	best: 0.2858495 (1600)	total: 11.3s	remaining: 24s
+1800:	learn: 0.2831505	test: 0.2857672	best: 0.2857652 (1781)	total: 12.7s	remaining: 22.6s
+2000:	learn: 0.2827742	test: 0.2856777	best: 0.2856777 (2000)	total: 14.1s	remaining: 21.1s
+2200:	learn: 0.2824135	test: 0.2855985	best: 0.2855965 (2178)	total: 15.5s	remaining: 19.7s
+2400:	learn: 0.2820619	test: 0.2855579	best: 0.2855526 (2398)	total: 16.9s	remaining: 18.3s
+2600:	learn: 0.2817235	test: 0.2855277	best: 0.2855265 (2561)	total: 18.3s	remaining: 16.8s
+2800:	learn: 0.2813810	test: 0.2854932	best: 0.2854786 (2756)	total: 19.7s	remaining: 15.4s
+bestTest = 0.2854786409
+bestIteration = 2756
+Shrink model to first 2757 iterations.
+iters=2756
+   💾 Saved 5 CatBoost models + feature names
+
+   📈 Window 1 Results:
+      IC                             0.0188
+      Rank_IC                        0.028
+      ICIR                           0.3116
+      Rank_ICIR                      0.4704
+      LS_Sharpe_raw                  3.56
+      LS_Sharpe_net                  2.2
+      LS_Ann_Return_net_%            84.4
+      LS_MaxDD_net_%                 -95.9
+      LS_Total_net_%                 6537710.9
+      LS_VolTarget_Sharpe            2.78
+      LS_VolTarget_MaxDD_%           -97.0
+      LS_VolTarget_Total_%           93554067951.8
+      LS_DDStop_Sharpe               4.14
+      LS_DDStop_MaxDD_%              -24.9
+      LS_DDStop_Total_%              7503112.5
+      LO5_Sharpe                     -0.25
+      LO10_Sharpe                    -0.58
+      N_periods                      10516
+      Cost_per_period_bps            3.5
+
+======================================================================
+  AGGREGATE RESULTS (1 windows)
+======================================================================
+
+   📈 Combined Results (all windows):
+      Periods: 10516
+      LS Net:       Sharpe=2.20, MaxDD=-95.9%, Total=6537710.9%
+      LS VolTarget: Sharpe=2.78, MaxDD=-97.0%, Total=93554067951.8%
+      LS DDStop:    Sharpe=4.14, MaxDD=-24.9%, Total=7503112.5%
+
+🏆 Top 30 Features (CatBoost, last window):
+   📰 btc_beta_168h                            2.6
+      gk_vol_168h                              2.5
+      btc_vol_24h                              2.3
+      close_ma336_ratio                        2.2
+      vix_close_chg_1d                         2.0
+      close_ma720_ratio                        1.8
+      atr_48                                   1.7
+      gk_vol_48h                               1.6
+      ret_sharpe_168h                          1.5
+      ret_std_168h                             1.5
+      vol_12h_cs_rank                          1.4
+      spx_close_chg_1d                         1.4
+   📰 funding_rate_binance                     1.3
+      gk_vol_24h                               1.2
+      vol_price_corr_24h                       1.1
+   📰 fng_momentum                             1.1
+      vol_trend_12_48                          1.1
+   📰 btc_beta_48h                             1.0
+      breadth_pct_positive                     1.0
+      dxy_close                                1.0
+      range_per_dv_24h                         1.0
+      real_rate_chg_5d                         0.9
+      macd_signal                              0.9
+      atr_24                                   0.9
+      ret_std_48h                              0.9
+      spx_close_chg_20d                        0.9
+      close_ma12_ratio                         0.9
+      close_ma6_ratio                          0.9
+      ret_sharpe_24h                           0.8
+      vix_close_chg_20d                        0.8
+
+   📰 Sentiment features in top 30: 4/30
+
+======================================================================
+  FINAL SUMMARY — CatBoost (12h target)
+======================================================================
+   Rank IC (avg):            +0.0280
+   Rank ICIR (avg):          +0.4704
+   LS Sharpe net (avg):      +2.20
+   LS MaxDD net (avg):       -95.9%
+   LS VolTarget Sharpe:      +2.78
+   LS DDStop Sharpe:         +4.14
+   Cost model:               0.03% taker + 0.01% slip + 0.005%/8h funding
+======================================================================
+🟡 DECENT — CatBoost adds diversity, useful as ensemble member.
+
+✅ Results saved to results/feature_comparison/models/WinB/catboost_huber_new_feats/
+   Models: cb_model_seed_*.cbm
+   Run ensemble: python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --edge-boost
+[12:12:17]    ✅ Done: WinB/catboost_huber_new_feats (404s)
+[12:12:17] 
+[12:12:18] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[12:12:18]   WINDOW C: train_end=2025-04-30  label=WinC
+[12:12:18] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+======================================================================
+  CATBOOST CRYPTO ALPHA MODEL
+  12h Target + Ordered Boosting + Walk-Forward
+======================================================================
+
+📊 Loading data...
+   Shape: (2565321, 107), Symbols: 50
+   🎯 Adding targets...
+   🌐 Adding cross-asset features...
+   🔗 Adding market-mode features...
+   ✅ Added 6 market-mode features
+   💧 Adding liquidity features...
+   ✅ Added 7 liquidity features
+   🔰 Adding advanced regime features...
+   🕐 Adding 12h-specific features...
+   ✅ Added ~10 features for 12h holding period
+   📅 Adding calendar features...
+   ✅ Added 9 calendar features
+   🏛️ Adding macro features...
+      Macro raw: 9 cols, derived: 29, total new: 38
+   📰 Adding sentiment features... (news_mode=none)
+      FNG: 2018-02-01 → 2026-03-11, mean=48.3
+      Funding: 96,393 non-zero rows (3.8%)
+      LS ratio: 0 non-missing rows
+      Synthetic positioning features...
+      ⏭️  Skipping news features (news_mode=none)
+   ✅ Sentiment features added: 187 → 212 total
+   📊 Adding derivatives features (Binance Futures)...
+      Loaded metrics: 1,800,870 rows, 50 symbols, 2021-12-01 → 2026-03-12
+      OI: 1,785,559 rows (69.6%), 9 features
+      Taker: 1,648,976 rows (64.3%), 6 features
+      Top L/S: 1,433,710 rows (55.9%), 5 features
+      Global L/S: 3 features
+      Binance funding: 2,239,209 rows (87.3%)
+      Funding surprise: computed from OKX funding data
+      Market-wide aggregates: 4 features
+      Basis/Premium: 448,115 rows (17.5%), 6 features
+      ⚠️  No liquidation data (run download_binance_futures.py)
+      DVOL: 13 features (BTC range: 2021-04-01 → 2026-03-15)
+   ✅ Derivatives features: +48 features
+   Features: 260
+   📐 Cross-sectional rank normalization...
+   ✅ Ranked 173 CS features, preserved 87 unranked
+   Final shape: (2564721, 279)
+   Date range: 2017-09-16 09:00:00+00:00 → 2026-03-07 03:00:00+00:00
+
+🔴 PRODUCTION MODE — max training data, models go to live trading
+   Train: start → 2025-04-30
+   Val:   2025-05-08 → 2025-06-24
+   Test:  (none — live trading)
+
+======================================================================
+  ROLLING WALK-FORWARD (1 windows)
+======================================================================
+
+──────────────────────────────────────────────────────────────────────
+  Window 1/1: PROD (max data)
+  Train: → 2025-04-30
+  Val:   2025-05-08 → 2025-06-24
+  Test:  2025-06-24 → 2026-12-31
+──────────────────────────────────────────────────────────────────────
+   Train: 2,210,617 | Val: 54,144 | Test: 290,744
+   🛡️  Huber loss enabled (delta=1.0)
+0:	learn: 0.5858039	test: 0.5817754	best: 0.5817754 (0)	total: 16.2ms	remaining: 1m 21s
+200:	learn: 0.2952212	test: 0.2950866	best: 0.2950866 (200)	total: 1.75s	remaining: 41.9s
+400:	learn: 0.2866016	test: 0.2873823	best: 0.2873823 (400)	total: 3.51s	remaining: 40.2s
+600:	learn: 0.2858826	test: 0.2872181	best: 0.2872031 (564)	total: 5.3s	remaining: 38.8s
+bestTest = 0.2872031352
+bestIteration = 564
+Shrink model to first 565 iterations.
+   🔪 Feature selection: 260 → 208
+
+   🌱 CatBoost multi-seed ensemble (5 seeds)...
+      Seed 42 (1/5)... 0:	learn: 0.5858047	test: 0.5817798	best: 0.5817798 (0)	total: 7.53ms	remaining: 37.6s
+200:	learn: 0.2951975	test: 0.2951256	best: 0.2951256 (200)	total: 1.47s	remaining: 35.1s
+400:	learn: 0.2866020	test: 0.2873990	best: 0.2873990 (400)	total: 3.01s	remaining: 34.5s
+600:	learn: 0.2858883	test: 0.2872146	best: 0.2872112 (594)	total: 4.54s	remaining: 33.2s
+bestTest = 0.287205867
+bestIteration = 623
+Shrink model to first 624 iterations.
+iters=623
+      Seed 123 (2/5)... 0:	learn: 0.5858032	test: 0.5817660	best: 0.5817660 (0)	total: 8.84ms	remaining: 44.2s
+200:	learn: 0.2952297	test: 0.2950867	best: 0.2950867 (200)	total: 1.5s	remaining: 35.9s
+400:	learn: 0.2866188	test: 0.2873937	best: 0.2873937 (400)	total: 3.01s	remaining: 34.6s
+600:	learn: 0.2858872	test: 0.2872276	best: 0.2872212 (598)	total: 4.55s	remaining: 33.3s
+bestTest = 0.2872212211
+bestIteration = 598
+Shrink model to first 599 iterations.
+iters=598
+      Seed 456 (3/5)... 0:	learn: 0.5858034	test: 0.5817709	best: 0.5817709 (0)	total: 8.3ms	remaining: 41.5s
+200:	learn: 0.2951927	test: 0.2951260	best: 0.2951260 (200)	total: 1.5s	remaining: 35.8s
+400:	learn: 0.2865964	test: 0.2874063	best: 0.2874063 (400)	total: 3.03s	remaining: 34.7s
+600:	learn: 0.2858691	test: 0.2872432	best: 0.2872246 (560)	total: 4.56s	remaining: 33.4s
+bestTest = 0.2872245649
+bestIteration = 560
+Shrink model to first 561 iterations.
+iters=560
+      Seed 789 (4/5)... 0:	learn: 0.5858058	test: 0.5817697	best: 0.5817697 (0)	total: 8.48ms	remaining: 42.4s
+200:	learn: 0.2952405	test: 0.2951108	best: 0.2951108 (200)	total: 1.48s	remaining: 35.4s
+400:	learn: 0.2866157	test: 0.2874105	best: 0.2874105 (400)	total: 3.01s	remaining: 34.5s
+600:	learn: 0.2858896	test: 0.2872484	best: 0.2872484 (600)	total: 4.55s	remaining: 33.3s
+bestTest = 0.2872439524
+bestIteration = 609
+Shrink model to first 610 iterations.
+iters=609
+      Seed 2024 (5/5)... 0:	learn: 0.5858048	test: 0.5817779	best: 0.5817779 (0)	total: 8.3ms	remaining: 41.5s
+200:	learn: 0.2951988	test: 0.2951510	best: 0.2951510 (200)	total: 1.48s	remaining: 35.4s
+400:	learn: 0.2866088	test: 0.2874339	best: 0.2874339 (400)	total: 3s	remaining: 34.4s
+600:	learn: 0.2858783	test: 0.2872744	best: 0.2872604 (569)	total: 4.54s	remaining: 33.2s
+bestTest = 0.2872603875
+bestIteration = 569
+Shrink model to first 570 iterations.
+iters=569
+   💾 Saved 5 CatBoost models + feature names
+
+   📈 Window 1 Results:
+      IC                             0.0066
+      Rank_IC                        0.0217
+      ICIR                           0.2637
+      Rank_ICIR                      0.4437
+      LS_Sharpe_raw                  2.23
+      LS_Sharpe_net                  1.01
+      LS_Ann_Return_net_%            43.2
+      LS_MaxDD_net_%                 -94.9
+      LS_Total_net_%                 1643.9
+      LS_VolTarget_Sharpe            1.97
+      LS_VolTarget_MaxDD_%           -97.1
+      LS_VolTarget_Total_%           356978.1
+      LS_DDStop_Sharpe               2.21
+      LS_DDStop_MaxDD_%              -24.8
+      LS_DDStop_Total_%              1362.4
+      LO5_Sharpe                     -0.54
+      LO10_Sharpe                    -0.81
+      N_periods                      6148
+      Cost_per_period_bps            3.5
+
+======================================================================
+  AGGREGATE RESULTS (1 windows)
+======================================================================
+
+   📈 Combined Results (all windows):
+      Periods: 6148
+      LS Net:       Sharpe=1.01, MaxDD=-94.9%, Total=1643.9%
+      LS VolTarget: Sharpe=1.97, MaxDD=-97.1%, Total=356978.1%
+      LS DDStop:    Sharpe=2.21, MaxDD=-24.8%, Total=1362.4%
+
+🏆 Top 30 Features (CatBoost, last window):
+      close_ma6_ratio                          2.7
+      close_ma336_ratio                        2.7
+      vix_close_chg_1d                         2.5
+      atr_48                                   2.5
+      gk_vol_168h                              2.4
+      btc_vol_24h                              2.4
+      gk_vol_48h                               2.3
+   📰 funding_rate                             2.2
+      atr_24                                   2.1
+      ret_std_168h                             1.9
+      gk_vol_24h                               1.9
+      close_ma12_ratio                         1.9
+      ret_std_48h                              1.8
+      regime_breadth_bullish                   1.8
+      spx_close_chg_1d                         1.7
+      close_ma720_ratio                        1.6
+      ret_std_24h                              1.5
+      dollar_volume_12h                        1.4
+      vol_trend_12_48                          1.4
+      range_per_dv_24h                         1.3
+      vol_price_corr_24h                       1.3
+      oi_zscore_7d                             1.2
+      dollar_volume_24h_cs                     1.2
+      btc_regime_24                            1.1
+      atr_14                                   1.1
+      ret_2h                                   1.1
+   📰 funding_vs_market                        1.1
+   📰 btc_beta_168h                            1.1
+   📰 funding_surprise                         1.1
+      breadth_pct_positive                     0.9
+
+   📰 Sentiment features in top 30: 4/30
+
+======================================================================
+  FINAL SUMMARY — CatBoost (12h target)
+======================================================================
+   Rank IC (avg):            +0.0217
+   Rank ICIR (avg):          +0.4437
+   LS Sharpe net (avg):      +1.01
+   LS MaxDD net (avg):       -94.9%
+   LS VolTarget Sharpe:      +1.97
+   LS DDStop Sharpe:         +2.21
+   Cost model:               0.03% taker + 0.01% slip + 0.005%/8h funding
+======================================================================
+🟠 MARGINAL — CatBoost may still help via decorrelation in ensemble.
+
+✅ Results saved to results/feature_comparison/models/WinC/catboost_huber_new_feats/
+   Models: cb_model_seed_*.cbm
+   Run ensemble: python run_fast_sim.py --ensemble --leverage 3 --rebal 24 --edge-boost
+[12:17:40]    ✅ Done: WinC/catboost_huber_new_feats (322s)
+[12:17:40] 
+[12:17:40] ✅ Phase 1 complete: All models trained
+[12:17:40]    ⏱️  Phase took 18m 2s
+[12:17:40] 
+[12:17:40] ################################################################
+[12:17:40]   PHASE 2: СИМУЛЯЦИИ (3 окна × 2 leverage = 6 симов)
+[12:17:40] ################################################################
+[12:17:40] 
+[12:17:40] ╔══════════════════════════════════════════════════════════════╗
+[12:17:40] ║  SIMULATING WinA: 2024-07-01 → 2024-12-31
+[12:17:40] ╚══════════════════════════════════════════════════════════════╝
+[12:17:40] SIM #1: WinA__cb_huber_new_feats__1x_base
+[12:17:40] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --start-date 2024-07-01 --end-date 2024-12-31 --days 660 --leverage 1 --edge-boost --no-ddstop --ensemble
+[12:20:57]   => Return=+125.1%  HAC=+6.72  MaxDD=-2.3%  WR=67%  PF=3.24
+[12:20:57] SIM #2: WinA__cb_huber_new_feats__3x_base
+[12:20:57] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --start-date 2024-07-01 --end-date 2024-12-31 --days 660 --leverage 3 --edge-boost --no-ddstop --ensemble
+[12:24:13]   => Return=+859.1%  HAC=+5.47  MaxDD=-7.2%  WR=67%  PF=3.47
+[12:24:13] 
+[12:24:13] ╔══════════════════════════════════════════════════════════════╗
+[12:24:13] ║  SIMULATING WinB: 2025-01-01 → 2025-06-30
+[12:24:13] ╚══════════════════════════════════════════════════════════════╝
+[12:24:13] SIM #3: WinB__cb_huber_new_feats__1x_base
+[12:24:13] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --start-date 2025-01-01 --end-date 2025-06-30 --days 476 --leverage 1 --edge-boost --no-ddstop --ensemble
+[12:27:29]   => Return=+134.5%  HAC=+9.06  MaxDD=-3.3%  WR=69%  PF=2.92
+[12:27:29] SIM #4: WinB__cb_huber_new_feats__3x_base
+[12:27:29] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --start-date 2025-01-01 --end-date 2025-06-30 --days 476 --leverage 3 --edge-boost --no-ddstop --ensemble
+[12:30:46]   => Return=+988.9%  HAC=+7.69  MaxDD=-9.9%  WR=68%  PF=2.54
+[12:30:46] 
+[12:30:46] ╔══════════════════════════════════════════════════════════════╗
+[12:30:46] ║  SIMULATING WinC: 2025-07-01 → 2025-12-31
+[12:30:46] ╚══════════════════════════════════════════════════════════════╝
+[12:30:46] SIM #5: WinC__cb_huber_new_feats__1x_base
+[12:30:46] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --start-date 2025-07-01 --end-date 2025-12-31 --days 295 --leverage 1 --edge-boost --no-ddstop --ensemble
+[12:34:00]   => Return=+66.5%  HAC=+7.19  MaxDD=-4.1%  WR=67%  PF=2.25
+[12:34:00] SIM #6: WinC__cb_huber_new_feats__3x_base
+[12:34:00] CMD: python run_fast_sim.py --data data/features/crypto_features_1h.parquet --start-date 2025-07-01 --end-date 2025-12-31 --days 295 --leverage 3 --edge-boost --no-ddstop --ensemble
+[12:37:12]   => Return=+292.1%  HAC=+6.64  MaxDD=-12.8%  WR=65%  PF=2.26
+[12:37:12] 
+[12:37:12] ✅ Phase 2 complete
+[12:37:12]    ⏱️  Phase took 19m 32s
+[12:37:12] 
+[12:37:12] ################################################################
+[12:37:12]   PHASE 3: РЕЗУЛЬТАТЫ
+[12:37:12] ################################################################
+[12:37:12] 
+[12:37:12] ╔══════════════════════════════════════════════════════════════╗
+[12:37:12] ║  BASELINE (mega3: cb_solo_huber)                            ║
+[12:37:12] ╠══════════════════════════════════════════════════════════════╣
+[12:37:12] ║  WinA 1x: Ret=+127.0%  HAC=+6.91  MaxDD=-2.3%  PF=3.31   ║
+[12:37:12] ║  WinB 1x: Ret=+133.6%  HAC=+9.22  MaxDD=-3.3%  PF=2.96   ║
+[12:37:12] ║  WinC 1x: Ret=+66.0%   HAC=+7.17  MaxDD=-4.6%  PF=2.23   ║
+[12:37:12] ╚══════════════════════════════════════════════════════════════╝
+[12:37:12] 
+[12:37:12] 📊 New features results:
+window|model|sim_cfg|ret|hac|maxdd|wr|pf|calmar|trades|costs
+WinA|cb_huber_new_feats|1x_base|+125.1|+6.72|-2.3|67|3.24|29.69|7594|17.7
+WinA|cb_huber_new_feats|3x_base|+859.1|+5.47|-7.2|67|3.47|66.35|7594|140.7
+WinB|cb_huber_new_feats|1x_base|+134.5|+9.06|-3.3|69|2.92|31.65|7932|22.5
+WinB|cb_huber_new_feats|3x_base|+988.9|+7.69|-9.9|68|2.54|76.75|7932|256.7
+WinC|cb_huber_new_feats|1x_base|+66.5|+7.19|-4.1|67|2.25|20.16|7676|16.5
+WinC|cb_huber_new_feats|3x_base|+292.1|+6.64|-12.8|65|2.26|28.15|7676|100.9
+[12:37:12] 
+[12:37:12] 📄 Full log: results/feature_comparison/feature_comparison_20260323_1159.log
+[12:37:12] 📄 Summary CSV: results/feature_comparison/summary_20260323_1159.csv
+[12:37:12] 📄 Detail log: results/feature_comparison/detail_20260323_1159.log
+[12:37:12] ♻️  Restoring production models...
+[12:37:12]    Restored results_v6_prod
+[12:37:12]    Restored results_v7_prod
+[12:37:12]    Restored results_catboost_prod
+[12:37:12]    Restored results_xgboost_prod
+[12:37:12] 
+[12:37:12] 🏁 Feature comparison complete!
+[12:37:12]    Total time: 37 minutes
