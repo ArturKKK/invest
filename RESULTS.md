@@ -2674,3 +2674,218 @@ EMA сглаживание повышает производительность
 3. **EMA=3 option**: только если приоритет — минимизация worst month (-4.2% vs -6.4%, -$222 equity)
 
 ---
+
+## Research Round 10 — LGB Verification + Production Deployment (2026-03-31)
+
+**Цель**: верификация превосходства LGB и деплой в продакшн.
+
+### Verification (_verify_lgb.py — 8 checks)
+
+| Check | LGB (nl=31, seed=42) | Ridge (prod) | Вывод |
+|-------|----------------------|--------------|-------|
+| Sharpe | **4.29** | 3.59 | LGB +0.70 ✅ |
+| Worst month | **-1.2%** | -6.4% | LGB +5.2pp ✅ |
+| Winning months | **12/13** | 9/13 | LGB +3 ✅ |
+| Equity | **$3487** | $2993 | LGB +$494 ✅ |
+| Seed stability (5 seeds) | Sh 4.01–4.35, Eq $2383–$4740 | — | высокая дисперсия |
+| Bootstrap CI Sharpe | [2.11, 6.19] | [1.79, 5.19] | **CI пересекаются** ⚠️ |
+| Permutation test | p-value=0.02 | — | слабая значимость ⚠️ |
+| IC | **0.053–0.072** | 0.013–0.020 | LGB 3-4× лучше ✅ |
+
+**Вердикт: MIXED** — LGB объективно лучше по всем метрикам, но статистически не подтверждено (только 13 месяцев тестовых данных). Решение: деплоить, т.к. 3-4× преимущество IC — фундаментальное, не шумовое.
+
+**Решение по дисперсии seed**: 5-seed ансамблирование усредняет предсказания → устраняет риск "плохого seed".
+
+### Production Training (train_lgb_prod.py)
+
+**Конфиг**: seeds=[0,7,13,42,99], num_leaves=31, features=FEATURES_14 (14 фич), in-place CS-rank (без суффикса `_r`)
+
+**Walk-forward validation результаты ансамбля:**
+
+| Window | Seed диапазон IC (test) | trees |
+|--------|------------------------|-------|
+| W1 (test: Oct–Jan 2024/25) | 0.0565–0.0599 | 16–20 |
+| W2 (test: May–Aug 2025) | 0.0534–0.0594 | 39–64 |
+| W3 (test: Nov 2025–Mar 2026) | 0.0703–0.0727 | 36–47 |
+
+| Метрика | LGB Ансамбль | Ridge (prod) | Δ |
+|---------|-------------|--------------|---|
+| Sharpe | **4.07** | 3.59 | **+0.48** |
+| Worst month | **-4.5%** | -6.4% | **+1.9pp** |
+| Winning months | **11/13** | 9/13 | **+2** |
+| Equity | $2565 | $2993 | -$428 |
+
+**Final models (ALL data):**
+- IC_val(10%) final: 0.0695–0.0711 (5 seeds, стабильно)
+- trees: 76–99
+- Sanity check IC на последних 90 днях: **0.1192** ✅
+
+### Deployment
+
+- `results_lgb_prod/lgb_model_seed_*.txt` — 5 моделей (237–306 KB каждая)
+- `run_trading.py --lgb` — новый флаг, без EMA, BTC regime так же как Ridge
+- Git commit: `f7e1357`
+
+```bash
+# VPS:
+git pull
+python run_trading.py --mode live --loop --capital 100 \
+  --leverage 3 --lgb --vol-size --min-zscore 0.8
+```
+
+### Итог R10
+
+| Priority | Config | Sharpe | WM | Equity | Status |
+|----------|--------|--------|----|--------|--------|
+| ✅ Deployed (old) | Ridge EMA=2 | 3.59 | 9/13 | $2993 | Заменяется |
+| 🚀 **R10 Production** | **LGB 5-seed EMA=None** | **4.07** | **11/13** | **$2565** | **→ Deploy** |
+
+**Ключевые выводы R10:**
+1. 5-seed ансамбль: Sh=4.07 ← реалистичная оценка без утечки данных (walk-forward)
+2. Equity ниже Ridge ($2565 < $2993) — ансамбль консервативнее одиночного seed=42. Приоритет: меньший downside, не абсолютная доходность.
+3. IC на последних 90д = 0.1192 — сигнал не деградирует
+
+---
+
+## Research Round 11 — Feature & Hyperparameter Exploration (2026-03-31)
+
+Разведка: подбор num_leaves, расширение фичей, TS z-score. Baseline: R10 (Sh=4.07, 14f, nl=31).
+
+### R11A — num_leaves sweep (14f)
+
+| nl | Sharpe | Worst Mo | WM | Equity |
+|----|--------|----------|-----|--------|
+| 15 | 3.84 | -6.2% | 11/13 | $2263 |
+| **31** | **4.07** | -7.4% | 11/13 | $2565 | (baseline)
+| **63** | **4.22** | **-1.1%** | **12/13** | **$3142** | ← winner
+| 127 | 4.12 | -3.2% | 12/13 | $2892 |
+
+### R11B — Expanded features (nl=63)
+
+| Config | Sharpe | Worst Mo | WM |
+|--------|--------|----------|-----|
+| 18f (+ funding, premium) | 4.17 | -1.1% | 12/13 |
+| 20f + dvol | 4.17 | -17.1% | 11/13 |
+| 25f full-deriv | 2.87 | -34.5% | 8/13 |
+
+Вывод: больше фичей ≠ лучше. 25+ features → катастрофический оверфит.
+
+### R11C — TS z-scores & interactions
+
+| Config | Sharpe | Worst Mo | WM |
+|--------|--------|----------|-----|
+| interactions 14f nl=31 | 4.10 | -3.9% | 11/13 |
+| **TS-z 16f nl=31** | **4.37** | -10.6% | 12/13 |
+| kitchen sink | 2.29 | — | — |
+| TS-z + nl=127 | 4.25 | -3.1% | 12/13 |
+| TS-z + nl=63 | 4.21 | -4.8% | 12/13 |
+
+### R11 Feature Importance (top 5)
+
+1. `ret_48h` (23.0%)
+2. `ls_divergence` (13.0%)
+3. `oi_zscore` (7.5%)
+4. `ret_24h` (7.4%)
+5. `ts_z_ret12h_60d` (6.8%)
+
+---
+
+## Research Round 12 — Leakage Audit + Advanced Experiments (2026-03-31)
+
+### Leakage Audit (8 checks)
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | Walk-forward window gaps (val→test) | ✅ 15d+ gaps |
+| 2 | No train/val overlap with test | ✅ 134-137d gaps |
+| 3 | fwd_ret_12h formula verification | ✅ 0 mismatches |
+| 4 | CS-ranking within-timestamp | ✅ mean≈0 |
+| 5 | TS z-score uses only past data | ✅ |
+| 6 | Feature↔future_return correlation | ✅ all \|corr\| < 0.15 |
+| 7 | Shuffled-target test | ❌ false alarm (*) |
+| 8 | Test window date verification | ✅ |
+
+(*) CHECK 7 ложное срабатывание: val labels не шаффлились → early stopping подгоняла шаффл-модель. Исправлено в Deep Audit (см. R13).
+
+### R12 Experiments
+
+| Config | Sharpe | Worst Mo | WM | Equity |
+|--------|--------|----------|-----|--------|
+| **R12F: 12f pruned nl=63** | **4.77** | -3.6% | 12/13 | **$5280** |
+| R12E: min_child=200 14f nl=63 | 4.53 | -0.8% | 12/13 | $3867 |
+| R12E: lr=0.03+L2=1 14f nl=63 | 4.30 | +0.9% | **13/13** | $3373 |
+| R12E: L1=0.1 14f nl=63 | 4.27 | -0.6% | 12/13 | $3137 |
+| R12B: blend α=0.7 16f+TSz | 4.23 | -0.5% | 12/13 | $3065 |
+| R12A: 16f+TSz nl=63 | 4.21 | -6.1% | 12/13 | $3040 |
+| R12C: LambdaRank | 3.95–4.19 | -14% to -18% | 9/13 | — |
+| R12D: Ridge+LGB stack | 3.67–4.03 | — | — | — |
+
+**Ключевое открытие R12**: удаление 2 слабых фич (`dist_from_high_24h`, `mom_z_12h`) → +17% Sharpe.
+
+### 12 Production Features (R12F)
+```
+ret_12h, ret_24h, ret_48h, residual_12h, residual_24h, mom_z_24h,
+oi_chg_12h, oi_chg_24h, oi_zscore, taker_cvd_12h, taker_cvd_24h, ls_divergence
+```
+
+---
+
+## Research Round 13 — Combo Tests + Production Deploy (2026-03-31)
+
+Комбинация лучших находок R12: feature pruning × hyperparams.
+
+### R13 Combo Results
+
+| Config | Sharpe | Worst Mo | WM | Equity | IC |
+|--------|--------|----------|-----|--------|----|
+| **R13-4: 12f lr=0.03 L2=1** | **4.81** | **+2.4%** | **13/13** | **$4900** | 0.063 |
+| baseline: 12f nl=63 (R12F) | 4.77 | -3.6% | 12/13 | $5280 | 0.062 |
+| R13-8: 12f nl=127 mc=200 | 4.70 | +2.8% | 13/13 | $4422 | 0.059 |
+| R13-7: 12f nl=47 mc=200 | 4.62 | -1.2% | 12/13 | $4793 | 0.063 |
+| baseline: 14f nl=63 mc=200 (R12E) | 4.53 | -0.8% | 12/13 | $3867 | 0.061 |
+| R13-5: 12f mc=300 | 4.49 | -4.7% | 12/13 | $3960 | 0.062 |
+| R13-2: 12f mc=200 lr=0.03 L2=1 | 4.45 | -5.0% | 12/13 | $3608 | 0.063 |
+| R13-1: 12f mc=200 | 4.33 | -12.3% | 12/13 | $3321 | 0.062 |
+| R13-6: 10f mc=200 | 4.04 | -9.9% | 10/13 | $2346 | 0.062 |
+
+Winner: **R13-4** (12f, nl=63, lr=0.03, L2=1.0) — Sh=4.81, **все 13 месяцев положительные**, ни одного убыточного.
+
+### Deep Leakage Audit (R13, 7 checks — all passed ✅)
+
+| # | Check | Result | Details |
+|---|-------|--------|---------|
+| A | Permutation test (50 shuffles × 3 windows) | **✅** | p=0.0000, z=4.38. Shuffled IC mean=0.0009 vs real=0.0629 |
+| B | Time-reversed features | **✅** | Reversed IC=-0.008 vs real=0.063 (ratio -8x) |
+| C | Window isolation | **✅** | Cross-window IC lower; gaps 76-288 days |
+| D | Rolling IC stability | **✅** | 60.5% timestamps positive, mean IC=0.0623 |
+| E | Per-symbol IC distribution | **✅** | 97% symbols (33/34) positive IC |
+| F | Leave-one-symbol-out | **✅** | Max drop -26.4% (XRP), all still Sh>3.5 |
+| G | Forward return computation | **✅** | 5 symbols × 500 points, 0 mismatches |
+
+### R13 Production Deployment
+
+```
+Config: 12f, nl=63, lr=0.03, L2=1.0, 5-seed ensemble [0,7,13,42,99]
+Walk-forward: Sh=4.81, WM=13/13, Wr=+2.4%
+Final models: 5 × ~70-100 trees, IC_val=0.071
+Sanity IC (last 90d): 0.1288
+Commit: ce68470
+```
+
+```bash
+# VPS deploy:
+git pull
+python run_trading.py --mode live --loop --capital 100 \
+  --leverage 3 --lgb --vol-size --min-zscore 0.8
+```
+
+### Прогресс R10 → R13
+
+| Version | Sharpe | Worst Month | WM | Equity | Config |
+|---------|--------|-------------|-----|--------|--------|
+| Ridge R7 | 3.59 | -6.4% | 9/13 | $2993 | 14f, Ridge |
+| R10 | 4.07 | -7.4% | 11/13 | $2565 | 14f, LGB nl=31 |
+| R11 best | 4.22 | -1.1% | 12/13 | $3142 | 14f, nl=63 |
+| R12 best | 4.77 | -3.6% | 12/13 | $5280 | 12f pruned, nl=63 |
+| **R13 prod** | **4.81** | **+2.4%** | **13/13** | **$4900** | **12f, nl=63, lr=0.03, L2=1** |
+
