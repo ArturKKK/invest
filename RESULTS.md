@@ -3151,3 +3151,92 @@ COLSAMPLE = 0.8
 SEEDS = [0, 7, 13, 42, 99]
 ```
 
+---
+
+## ⚠️ Round 16 — CRITICAL AUDIT: Bugs Found (R16)
+
+**Дата**: 2026-03-31
+**Цель**: Глубокий аудит кода — поиск багов, утечек, завышения результатов.
+**Вердикт**: Найдены 2 критических бага. **Sharpe 4.81 завышен до ~1.75**.
+
+### Что ПРОВЕРЕНО и прошло OK
+
+| Check | Результат |
+|-------|-----------|
+| **fwd_ret_12h** расчёт | ✅ Корректен: `pct_change(h).shift(-h)` = будущий ретёрн. 20/20 числовых проверок. |
+| **Train/val граница** | ✅ `< train_end` vs `>= val_start` — нет пересечения |
+| **CS-rank per split** | ✅ Ранг внутри таймстемпа (35 символов), uniform по конструкции |
+| **Realized vol** | ✅ Включает текущий bar — стандартная практика, не look-ahead |
+| **Funding rate ffill** | ✅ Forward-fill последнего известного рейта — корректно |
+| **Permutation test** | ✅ p=0.0000, z=2.48 — сигнал модели **реален** |
+| **Long/Short attribution** | ✅ Обе ноги работают: Long 54% / Short 46% contribution |
+
+### ❌ БАГ 1: Over-Annualization Sharpe
+
+`eval_config()` использует `ppy = 8760/12 = 730` (=730 12h-периодов в год). Но regime filter (`trend_cutoff=0.8`) **пропускает 36.7% таймстемпов**!
+
+| Метод расчёта | Sharpe |
+|---------------|--------|
+| `eval_config` (ppy=730, ошибочный) | **4.81** |
+| Actual obs frequency (299/yr) | **3.08** |
+| Calendar CAGR/vol | **2.68** |
+
+**Причина**: `sqrt(730)` vs `sqrt(299)` → завышение Sharpe на **56%!**
+
+### ❌ БАГ 2: eq_mom_boost Look-Ahead Bias
+
+`simulate()` обрабатывает КАЖДЫЙ часовой таймстемп, вычисляя 12h-return, обновляя `equity_curve` каждый час. Затем `iloc[::12]` отбирает каждый 12-й.
+
+**Проблема**: На таймстемпе T=12, `equity_curve` содержит записи T=0..T=11, каждая с ПОЛНЫМ 12h forward return (от T до T+12). Return из T=11 покрывает T=11→T=23, что **перекрывается** на 11 часов с T=12→T=24.
+
+Когда `eq_mom_boost` на T=12 проверяет drawdown, он использует **будущую ценовую информацию** через overlapping returns.
+
+**Масштаб**: eq_mom_boost **один** добавляет +2.61 Sharpe в бэктесте! С рандомными предсказаниями portfolio overlay даёт Sh=2.67.
+
+### CHECK C: Decomposition Portfolio Enhancements
+
+| Конфигурация | Sh (buggy) | Sh (fixed) |
+|-------------|-----------|-----------|
+| Bare-bones (простой L/S) | 2.18 | **1.75** |
+| + kelly | — | 1.35 |
+| + regime filter | 3.33 | 0.97 |
+| + vol scaling | 2.43 | 0.84 |
+| + eq_mom_boost | **4.79** | 0.76 |
+| + strat_momentum | — | 0.75 |
+| **Full config** | **4.81** | **0.75** |
+
+**Вывод**: В корректной реализации (без look-ahead) ВСЕ portfolio overlay-и **ухудшают** результат! Barebone L/S = оптимум.
+
+### CHECK G: Per-Window Results (Fixed)
+
+| Window | Period | Sh (buggy) | Sh (fixed) | Win Mo | IC |
+|--------|--------|-----------|-----------|--------|-----|
+| W1 | Oct 2024–Jan 2025 | +5.90 | +1.41 | 3/4 | 0.036 |
+| W2 | May 2025–Aug 2025 | +4.84 | **-1.01** | **0/4** | 0.018 |
+| W3 | Nov 2025–Mar 2026 | +3.25 | +1.58 | 1/5 | 0.033 |
+
+**W2 ОТРИЦАТЕЛЬНЫЙ!** Это было скрыто buggy eq_mom_boost и over-annualization.
+
+### Реальная Картина
+
+| Компонент | Sharpe |
+|-----------|--------|
+| Чистый сигнал (barebone L/S, correct ann.) | **~1.75** |
+| Сигнал + portfolio overlays (correct) | ~0.75 |
+| Ранее отчитывавшийся R13 | ~~4.81~~ |
+
+**Sharpe ~1.75** (barebone) — это всё ещё **положительный edge** для крипто L/S. Permutation test подтверждает: сигнал реально лучше случайного (z=2.48, p=0.0000). Но это НЕ 4.81.
+
+### R16 Рекомендации
+
+1. **Исправить `simulate()`** — обрабатывать только rebalance timestamps, не hourly
+2. **Исправить `eval_config()`** — аннуализировать по реальной частоте наблюдений
+3. **Убрать eq_mom_boost** — в корректной реализации он не помогает
+4. **Убрать strat_momentum** — та же проблема с look-ahead
+5. **Пересчитать все R11-R15** — Sharpe во всех предыдущих раундах завышен
+6. **Оценить жизнеспособность** стратегии при Sh≈1.75 (без леверейджа)
+
+### Скрипты аудита
+
+- `_audit_r16_deep.py` — 9 проверок (fwd_ret, subsampling, enhancements, regime bias, autocorrelation, permutation, per-window, Sharpe verification, L/S attribution)
+- `_audit_r16b_fix.py` — Fixed simulation + recalculation
