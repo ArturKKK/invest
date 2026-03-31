@@ -258,19 +258,16 @@ def simulate(merged, regime_df, horizon, cfg):
     n_short = cfg.get("n_short", 3)
     trend_cutoff = cfg.get("trend_cutoff", 0.8)
     dyn_threshold = cfg.get("dyn_threshold", 0.5)
-    eq_mom_boost = cfg.get("eq_mom_boost", True)
-    kelly_sizing = cfg.get("kelly_sizing", True)
-    strategy_momentum = cfg.get("strategy_momentum", True)
-    strat_mom_lookback = cfg.get("strat_mom_lookback", 48)
+    kelly_sizing = cfg.get("kelly_sizing", False)
+    vol_scaling = cfg.get("vol_scaling", False)
+    regime_asym = cfg.get("regime_asym", False)
+    rebal_hours = cfg.get("rebal_hours", 12)
 
-    # R7 new ideas
-    signal_ema = cfg.get("signal_ema", None)           # EMA span for smoothing
-    conviction_weight = cfg.get("conviction_weight", False)  # weight by |pred|
-    vol_scaling = cfg.get("vol_scaling", False)        # scale by inverse vol
-    vol_target = cfg.get("vol_target", 0.02)           # target hourly vol
-    stickiness = cfg.get("stickiness", None)           # min signal change to flip
-    regime_asym = cfg.get("regime_asym", False)        # conditional L/S tilt
-    pred_shrinkage = cfg.get("pred_shrinkage", None)   # shrink preds (0-1, 1=max shrink)
+    # R7 ideas (kept but defaults off)
+    signal_ema = cfg.get("signal_ema", None)
+    conviction_weight = cfg.get("conviction_weight", False)
+    stickiness = cfg.get("stickiness", None)
+    pred_shrinkage = cfg.get("pred_shrinkage", None)
 
     # Pre-compute signal EMA if requested
     if signal_ema is not None:
@@ -286,15 +283,16 @@ def simulate(merged, regime_df, horizon, cfg):
         merged["pred"] = merged["pred"] * (1 - pred_shrinkage) + ts_medians * pred_shrinkage
 
     all_rets = []
-    equity_curve = [1.0]
-    strategy_rets = []
     prev_longs = set()
     prev_shorts = set()
 
     timestamps_sorted = sorted(merged["timestamp"].unique())
     grouped = {ts: grp for ts, grp in merged.groupby("timestamp")}
 
-    for ts in timestamps_sorted:
+    # FIX R16: process only rebalance-spaced timestamps (no overlapping returns)
+    rebal_timestamps = timestamps_sorted[::rebal_hours]
+
+    for ts in rebal_timestamps:
         if ts not in regime_df.index or ts not in grouped:
             continue
         row = regime_df.loc[ts]
@@ -309,18 +307,10 @@ def simulate(merged, regime_df, horizon, cfg):
         n = len(grp)
 
         # Dynamic exposure
+        exposure = 1.0
         if dyn_threshold is not None and trend_str > dyn_threshold:
             exposure = max(0.1, 1.0 - (trend_str - dyn_threshold) /
                           (trend_cutoff - dyn_threshold + 1e-10) * 0.5)
-        else:
-            exposure = 1.0
-
-        # Strategy momentum
-        if strategy_momentum and len(strategy_rets) >= strat_mom_lookback:
-            recent = strategy_rets[-strat_mom_lookback:]
-            cum = np.prod([1 + r for r in recent])
-            if cum < 0.97:
-                exposure *= max(0.3, cum)
 
         # Vol scaling: scale down when vol is elevated
         if vol_scaling and not np.isnan(vol_regime_val) and vol_regime_val > 0:
@@ -406,32 +396,11 @@ def simulate(merged, regime_df, horizon, cfg):
 
         port_ret *= exposure
 
-        # EQ-MOM boost
-        if eq_mom_boost and len(equity_curve) > 48:
-            recent_eq = equity_curve[-1]
-            peak_eq = max(equity_curve[-48:])
-            dd = (recent_eq - peak_eq) / (peak_eq + 1e-10)
-            if dd < -0.05:
-                scale = max(0.3, 1.0 + dd * 3)
-                port_ret *= scale
-            elif dd > -0.01:
-                trough_eq = min(equity_curve[-48:])
-                recovery = (recent_eq - trough_eq) / (trough_eq + 1e-10)
-                if recovery > 0.05:
-                    boost = min(1.5, 1.0 + recovery * 0.5)
-                    port_ret *= boost
-
         all_rets.append({"timestamp": ts, "portfolio_ret": port_ret})
-        equity_curve.append(equity_curve[-1] * (1 + port_ret))
-        strategy_rets.append(port_ret)
 
     if not all_rets:
         return None
-    port = pd.DataFrame(all_rets).sort_values("timestamp")
-    # Only keep every Nth row to avoid overlapping positions
-    # (12h model → take every 12th timestamp)
-    rebal_hours = cfg.get("rebal_hours", 12)
-    return port.iloc[::rebal_hours]
+    return pd.DataFrame(all_rets).sort_values("timestamp")
 
 
 def eval_config(sub, horizon, name, leverage=5, capital=100):
@@ -439,7 +408,12 @@ def eval_config(sub, horizon, name, leverage=5, capital=100):
         return None
 
     rets = sub["portfolio_ret"]
-    ppy = 8760 / horizon
+    # FIX R16: use actual observation frequency, not assumed ppy
+    ts_range = (sub["timestamp"].max() - sub["timestamp"].min())
+    total_hours = ts_range.total_seconds() / 3600
+    years = total_hours / 8760
+    n_obs = len(rets)
+    ppy = n_obs / years if years > 0 else 730
     sharpe = rets.mean() / (rets.std() + 1e-10) * np.sqrt(ppy)
     cum = (1 + rets).cumprod()
 
