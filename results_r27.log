@@ -1,0 +1,113 @@
+================================================================================
+  R27 — Multi-Horizon & Target Engineering
+  Base: R26 winner 6L3S-dt0.7, Sh=3.39, Eq=$3632
+================================================================================
+
+  Loading data...
+  Base: 1,826,014 rows, 35 symbols
+
+  Building features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  FEATURES_23: 23/23
+  Adding relative returns (vs BTC)...
+    fwd_ret_4h_vs_btc: 1,825,862 valid
+    fwd_ret_12h_vs_btc: 1,825,582 valid
+    fwd_ret_24h_vs_btc: 1,825,162 valid
+
+================================================================================
+  EXP-A: Multi-Horizon Signal Blending
+================================================================================
+  Training LGB binary → 4h...
+  Training XGB binary → 4h...
+  Training LGB binary → 12h...
+  Training XGB binary → 12h...
+  Training LGB binary → 24h...
+  Training XGB binary → 24h...
+  ✅ A-ens-4h                                                   Sh=+2.42 Wr= -13.1% WM=9/13 → $1074
+  ✅ A-ens-12h                                                  Sh=+3.39 Wr=  -3.0% WM=10/13 → $3632
+  ❌ A-ens-24h                                                  Sh=+1.17 Wr= -33.8% WM=7/13 → $238
+  ✅ A-ctrl-6L3S                                                Sh=+3.39 Wr=  -3.0% WM=10/13 → $3632
+  ❌ A-blend-4+12                                               Sh=+2.42 Wr= -26.8% WM=10/13 → $1121
+  ⚠️ A-blend-12+24                                              Sh=+2.39 Wr= -15.1% WM=11/13 → $1194
+  ⚠️ A-blend-4+12+24                                            Sh=+2.88 Wr= -21.3% WM=11/13 → $2029
+  ✅ A-blend-eq-3h                                              Sh=+2.90 Wr=  -8.4% WM=10/13 → $2069
+  ❌ A-blend-4+12-eq                                            Sh=+2.61 Wr= -34.6% WM=10/13 → $1373
+  ❌ A-blend-12+24-eq                                           Sh=+2.03 Wr= -36.5% WM=10/13 → $750
+  Training 24h ensemble for 24h rebalance...
+  ❌ A-24h-rebal24                                              Sh=+1.11 Wr= -34.7% WM=7/13 → $221
+
+================================================================================
+  EXP-B: Temporal Sample Weighting (exponential decay)
+================================================================================
+  Training LGB + XGB with half-life=90d...
+  ❌ B-decay-90d                                                Sh=+0.50 Wr= -37.7% WM=6/13 → $100
+  Training LGB + XGB with half-life=180d...
+  ❌ B-decay-180d                                               Sh=+1.54 Wr= -29.0% WM=7/13 → $394
+  Training LGB + XGB with half-life=360d...
+  ❌ B-decay-360d                                               Sh=+2.07 Wr= -28.1% WM=9/13 → $774
+
+================================================================================
+  EXP-C: Relative Return Target (coin - BTC)
+================================================================================
+  Training LGB + XGB on fwd_ret_12h_vs_btc...
+  ❌ C-rel-12h                                                  Sh=+0.67 Wr= -42.4% WM=7/13 → $135
+  Training LGB + XGB on fwd_ret_24h_vs_btc...
+  ❌ C-rel-24h                                                  Sh=+0.17 Wr= -38.4% WM=4/13 → $77
+  Training absolute baseline for blending...
+  ❌ C-abs70+rel30                                              Sh=+2.88 Wr= -36.7% WM=11/13 → $2133
+  ❌ C-abs50+rel50                                              Sh=+2.43 Wr= -34.4% WM=11/13 → $1178
+  ❌ C-abs30+rel70                                              Sh=+2.39 Wr= -34.9% WM=11/13 → $1042
+
+================================================================================
+  EXP-D: Multi-Horizon + Relative Return combined
+================================================================================
+  Training relative 12h LGB+XGB...
+  ❌ D-4+12+rel                                                 Sh=+2.18 Wr= -32.1% WM=9/13 → $925
+  ❌ D-12+24+rel                                                Sh=+1.77 Wr= -38.1% WM=11/13 → $553
+  ❌ D-all4                                                     Sh=+2.00 Wr= -40.2% WM=10/13 → $714
+  ❌ D-all4-eq                                                  Sh=+1.89 Wr= -28.6% WM=9/13 → $620
+
+================================================================================
+  EXP-E: Meta-Stacking (L1 → L2)
+================================================================================
+  Training L1 relative models...
+  L1 models: 8 — ['lgb_4h', 'xgb_4h', 'lgb_12h', 'xgb_12h', 'lgb_24h', 'xgb_24h', 'lgb_rel12', 'xgb_rel12']
+  Merged L1 rows: 261,404
+  ✅ E-meta-stack                                               Sh=+2.22 Wr= -10.1% WM=7/9 → $356
+  ❌ E-rank-avg-all                                             Sh=+1.96 Wr= -34.9% WM=9/13 → $681
+
+================================================================================
+  FINAL RANKINGS — R27 ALL EXPERIMENTS
+================================================================================
+
+  TOP-20 CONFIGURATIONS (of 25):
+  # 1: A-ens-12h                       Sh=+3.39  Eq=$3632  Worst=-3.0%  WM=10/13
+  # 2: A-ctrl-6L3S                     Sh=+3.39  Eq=$3632  Worst=-3.0%  WM=10/13
+  # 3: A-blend-eq-3h                   Sh=+2.90  Eq=$2069  Worst=-8.4%  WM=10/13
+  # 4: A-blend-4+12+24                 Sh=+2.88  Eq=$2029  Worst=-21.3%  WM=11/13
+  # 5: C-abs70+rel30                   Sh=+2.88  Eq=$2133  Worst=-36.7%  WM=11/13
+  # 6: A-blend-4+12-eq                 Sh=+2.61  Eq=$1373  Worst=-34.6%  WM=10/13
+  # 7: C-abs50+rel50                   Sh=+2.43  Eq=$1178  Worst=-34.4%  WM=11/13
+  # 8: A-blend-4+12                    Sh=+2.42  Eq=$1121  Worst=-26.8%  WM=10/13
+  # 9: A-ens-4h                        Sh=+2.42  Eq=$1074  Worst=-13.1%  WM=9/13
+  #10: C-abs30+rel70                   Sh=+2.39  Eq=$1042  Worst=-34.9%  WM=11/13
+  #11: A-blend-12+24                   Sh=+2.39  Eq=$1194  Worst=-15.1%  WM=11/13
+  #12: E-meta-stack                    Sh=+2.22  Eq=$356  Worst=-10.1%  WM=7/9
+  #13: D-4+12+rel                      Sh=+2.18  Eq=$925  Worst=-32.1%  WM=9/13
+  #14: B-decay-360d                    Sh=+2.07  Eq=$774  Worst=-28.1%  WM=9/13
+  #15: A-blend-12+24-eq                Sh=+2.03  Eq=$750  Worst=-36.5%  WM=10/13
+  #16: D-all4                          Sh=+2.00  Eq=$714  Worst=-40.2%  WM=10/13
+  #17: E-rank-avg-all                  Sh=+1.96  Eq=$681  Worst=-34.9%  WM=9/13
+  #18: D-all4-eq                       Sh=+1.89  Eq=$620  Worst=-28.6%  WM=9/13
+  #19: D-12+24+rel                     Sh=+1.77  Eq=$553  Worst=-38.1%  WM=11/13
+  #20: B-decay-180d                    Sh=+1.54  Eq=$394  Worst=-29.0%  WM=7/13
+
+  Total time: 63.2 min
+  DONE.
