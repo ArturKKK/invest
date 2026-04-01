@@ -243,6 +243,13 @@ def train_focal_lgb(df, feats, gamma=2.0, seeds=SEEDS):
     tz = df["timestamp"].dt.tz
     fobj = focal_loss_objective(gamma)
 
+    def feval_logloss(preds, dataset):
+        labels = dataset.get_label()
+        p = 1.0 / (1.0 + np.exp(-preds))  # sigmoid
+        p = np.clip(p, 1e-7, 1 - 1e-7)
+        ll = -np.mean(labels * np.log(p) + (1 - labels) * np.log(1 - p))
+        return "logloss", ll, False  # name, value, is_higher_better
+
     for seed in seeds:
         seed_preds = []
         for w in WINDOWS:
@@ -275,7 +282,8 @@ def train_focal_lgb(df, feats, gamma=2.0, seeds=SEEDS):
                  "objective": fobj},
                 dtrain, num_boost_round=600, valid_sets=[dval],
                 callbacks=[lgb.early_stopping(40, verbose=False),
-                           lgb.log_evaluation(-1)])
+                           lgb.log_evaluation(-1)],
+                feval=feval_logloss)
 
             test_c = test[avail + ["target_binary", "timestamp", "symbol"]].dropna()
             if len(test_c) == 0:
