@@ -1,0 +1,199 @@
+================================================================================
+  R25 — ENSEMBLE & FEATURE ENGINEERING FOR CLASSIFICATION
+================================================================================
+  Base: R24-E — LGB-binary-23f, 5L/3S → Sh=2.98, Eq=$2208
+  Experiments: A(ensemble) B(feat-select) C(threshold) D(multi-horizon)
+               E(weighting) F(5L3S-sweep) G(tree-depth) H(val-HPO)
+
+  Loading data...
+  Base: 1,826,014 rows, 35 symbols
+
+  Building features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  FEATURES_23: 23/23
+
+================================================================================
+  EXP-F: 5L/3S Combined Sweep
+================================================================================
+  ⚠️ F-5L3S-base                                                Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+  ⚠️ F-5L3S-dyn0.4                                              Sh=+2.98 Wr= -17.7% WM=10/13 → $1969
+  ⚠️ F-5L3S-dyn0.5                                              Sh=+2.99 Wr= -16.9% WM=10/13 → $2148
+  ⚠️ F-5L3S-dyn0.65                                             Sh=+2.95 Wr= -16.1% WM=10/13 → $2283
+  ⚠️ F-5L3S-dyn0.75                                             Sh=+2.90 Wr= -16.0% WM=10/13 → $2229
+  ⚠️ F-5L3S-cut0.85                                             Sh=+2.95 Wr= -16.6% WM=10/13 → $2075
+  ⚠️ F-5L3S-cut0.95                                             Sh=+2.81 Wr= -17.6% WM=10/13 → $1864
+  ✅ F-5L3S-reb24                                               Sh=+1.85 Wr= -14.0% WM=10/13 → $358
+  ✅ F-4L-3S                                                    Sh=+3.16 Wr=  -6.6% WM=10/13 → $2911
+  ❌ F-5L-2S                                                    Sh=+2.37 Wr= -29.5% WM=10/13 → $1402
+  ❌ F-6L-2S                                                    Sh=+2.32 Wr= -32.6% WM=10/13 → $1282
+
+================================================================================
+  EXP-C: Target Threshold (binary on ret > k)
+================================================================================
+  ⚠️ C-thr-0.005                                                Sh=+1.33 Wr= -23.9% WM=9/13 → $302
+  ❌ C-thr-0.002                                                Sh=+2.32 Wr= -25.6% WM=10/13 → $990
+  ⚠️ C-thr+0.000                                                Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+  ✅ C-thr+0.002                                                Sh=+2.56 Wr= -14.6% WM=11/13 → $951
+  ❌ C-thr+0.005                                                Sh=-0.10 Wr= -44.9% WM=6/13 → $56
+  ❌ C-thr+0.010                                                Sh=-0.67 Wr= -39.3% WM=3/13 → $20
+
+================================================================================
+  EXP-B: Feature Selection for Classification
+================================================================================
+  Computing feature importance for binary classifier...
+  Feature importance ranking:
+    ls_divergence             11770
+    oi_zscore                 9458
+    atr_14                    9130
+    taker_cvd_24h             8707
+    gk_vol_24h                8406
+    ret_48h                   8325
+    rvol_24h                  6688
+    mom_z_24h                 6456
+    oi_chg_24h                6212
+    ret_24h                   6142
+    rvol_12h                  4877
+    pct_coins_up_12h          4600
+    taker_cvd_12h             4501
+    residual_24h              3735
+    oi_chg_12h                3490
+    iv_rv_spread              3168
+    residual_12h              2422
+    ret_12h                   2170
+    pct_coins_up_1h           664
+    hour_sin                  85
+    hour_cos                  50
+    dow_sin                   0
+    dow_cos                   0
+  ❌ B-top10f                                                   Sh=+2.06 Wr= -32.6% WM=9/13 → $678
+  ❌ B-top13f                                                   Sh=+2.39 Wr= -29.5% WM=10/13 → $1007
+  ❌ B-top16f                                                   Sh=+3.23 Wr= -25.7% WM=10/13 → $2379
+  ⚠️ B-top19f                                                   Sh=+2.68 Wr= -22.5% WM=10/13 → $1383
+  ⚠️ B-top23f                                                   Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+  ⚠️ B-drop3                                                    Sh=+3.16 Wr= -21.2% WM=11/13 → $2385
+  ✅ B-drop5                                                    Sh=+2.56 Wr= -14.6% WM=9/13 → $1212
+
+================================================================================
+  EXP-E: Sample Weighting
+================================================================================
+
+  E-wt-absret:
+  ❌ E-wt-absret                                                Sh=+0.74 Wr= -41.9% WM=9/13 → $140
+
+  E-wt-sqrtret:
+  ⚠️ E-wt-sqrtret                                               Sh=+1.43 Wr= -18.3% WM=7/13 → $311
+
+  E-wt-recent365:
+  ❌ E-wt-recent365                                             Sh=+2.05 Wr= -28.9% WM=10/13 → $786
+
+  E-wt-recent180:
+  ❌ E-wt-recent180                                             Sh=+0.81 Wr= -36.7% WM=8/13 → $149
+
+================================================================================
+  EXP-G: Tree Depth + Regularization
+================================================================================
+  ⚠️ G-leaves31                                                 Sh=+2.57 Wr= -24.9% WM=9/13 → $1436
+  ⚠️ G-leaves63                                                 Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+  ❌ G-leaves127                                                Sh=+2.22 Wr= -27.2% WM=10/13 → $812
+  ✅ G-leaves255                                                Sh=+2.70 Wr= -13.3% WM=11/13 → $1302
+  ⚠️ G-minchild50                                               Sh=+3.40 Wr= -22.8% WM=11/13 → $3554
+  ✅ G-minchild200                                              Sh=+2.82 Wr= -11.0% WM=10/13 → $1736
+  ❌ G-l2-0.1                                                   Sh=+2.89 Wr= -30.2% WM=11/13 → $2098
+  ❌ G-l2-5.0                                                   Sh=+2.67 Wr= -29.3% WM=10/13 → $1475
+  ⚠️ G-l2-10.0                                                  Sh=+2.55 Wr= -24.8% WM=10/13 → $1340
+  ⚠️ G-lr0.01                                                   Sh=+2.35 Wr= -24.4% WM=10/13 → $955
+  ❌ G-lr0.05                                                   Sh=+2.63 Wr= -30.3% WM=10/13 → $1447
+  ✅ G-lr0.1                                                    Sh=+3.37 Wr= -14.4% WM=10/13 → $2828
+  ⚠️ G-sub0.6                                                   Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+  ❌ G-col0.6                                                   Sh=+2.36 Wr= -25.7% WM=10/13 → $1094
+  ⚠️ G-deep                                                     Sh=+2.59 Wr= -15.2% WM=8/13 → $1236
+  ❌ G-shallow                                                  Sh=+2.37 Wr= -30.1% WM=9/13 → $1103
+
+================================================================================
+  EXP-D: Multi-Horizon Classification
+================================================================================
+  Training classifier for 12h...
+  ⚠️ D-cls-12h                                                  Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+  Training classifier for 24h...
+  ⚠️ D-cls-24h                                                  Sh=+1.22 Wr= -19.1% WM=9/13 → $250
+  Training classifier for 48h...
+  ❌ D-cls-48h                                                  Sh=+0.54 Wr= -33.5% WM=6/13 → $113
+  ❌ D-multi-eq                                                 Sh=+1.72 Wr= -25.9% WM=8/13 → $426
+  ❌ D-multi-12h-heavy                                          Sh=+1.74 Wr= -25.1% WM=10/13 → $489
+  ⚠️ D-multi-12h-24h                                            Sh=+2.23 Wr= -19.5% WM=10/13 → $963
+
+================================================================================
+  EXP-A: Classifier Ensemble (LGB + XGB + CatBoost)
+================================================================================
+  Training LGB classifier...
+  Training XGB classifier...
+  Training CatBoost classifier...
+  ⚠️ A-lgb-cls                                                  Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+  ✅ A-xgb-cls                                                  Sh=+3.14 Wr= -10.6% WM=10/13 → $2960
+  ✅ A-cb-cls                                                   Sh=+2.53 Wr=  -8.6% WM=10/13 → $1391
+  ⚠️ A-ens-eq-3                                                 Sh=+2.55 Wr= -22.4% WM=10/13 → $1488
+  ⚠️ A-ens-lgb-heavy                                            Sh=+2.72 Wr= -15.4% WM=11/13 → $1746
+  ✅ A-ens-lgb-xgb                                              Sh=+3.36 Wr=  -5.7% WM=10/13 → $3371
+  ⚠️ A-ens-lgb-cb                                               Sh=+2.72 Wr= -22.3% WM=11/13 → $1930
+
+================================================================================
+  EXP-H: Proper Val-Based HPO (no test leakage)
+================================================================================
+
+  Best trial: AUC=0.5194
+  Best params: {'lr': 0.035481909361533066, 'leaves': 42, 'min_child': 168, 'subsample': 0.8406493367075943, 'colsample': 0.5750743438670493, 'l2': 0.37627769624100255, 'l1': 0.3900703017514633, 'max_depth': 2}
+
+  Full eval with best params (5 seeds)...
+  ❌ H-val-hpo-best                                             Sh=+2.37 Wr= -36.3% WM=11/13 → $1349
+       2024-10   +11.7%  eq=$     112
+       2024-11   -36.3%  eq=$      71
+       2024-12   +89.8%  eq=$     135
+       2025-01   +13.8%  eq=$     154
+       2025-05   +29.2%  eq=$     199
+       2025-06   +72.0%  eq=$     342
+       2025-07   +4.5%  eq=$     357
+       2025-08   +29.7%  eq=$     463
+       2025-11   +23.3%  eq=$     571
+       2025-12   +77.4%  eq=$    1013
+       2026-01   +24.1%  eq=$    1257
+       2026-02   +20.2%  eq=$    1510
+       2026-03   -10.7%  eq=$    1349
+
+  Control (default params, 5L/3S):
+  ⚠️ H-default-5L3S                                             Sh=+2.98 Wr= -16.5% WM=10/13 → $2208
+
+================================================================================
+  FINAL RANKINGS — R25 ALL EXPERIMENTS
+================================================================================
+
+  TOP-20 CONFIGURATIONS:
+  # 1: ?                               Sh=3.40  Eq=$3554  Worst=-22.8%  WM=11/13
+  # 2: ?                               Sh=3.37  Eq=$2828  Worst=-14.4%  WM=10/13
+  # 3: ?                               Sh=3.36  Eq=$3371  Worst=-5.7%  WM=10/13
+  # 4: ?                               Sh=3.23  Eq=$2379  Worst=-25.7%  WM=10/13
+  # 5: ?                               Sh=3.16  Eq=$2911  Worst=-6.6%  WM=10/13
+  # 6: ?                               Sh=3.16  Eq=$2385  Worst=-21.2%  WM=11/13
+  # 7: ?                               Sh=3.14  Eq=$2960  Worst=-10.6%  WM=10/13
+  # 8: ?                               Sh=2.99  Eq=$2148  Worst=-16.9%  WM=10/13
+  # 9: ?                               Sh=2.98  Eq=$2208  Worst=-16.5%  WM=10/13
+  #10: ?                               Sh=2.98  Eq=$2208  Worst=-16.5%  WM=10/13
+  #11: ?                               Sh=2.98  Eq=$2208  Worst=-16.5%  WM=10/13
+  #12: ?                               Sh=2.98  Eq=$2208  Worst=-16.5%  WM=10/13
+  #13: ?                               Sh=2.98  Eq=$2208  Worst=-16.5%  WM=10/13
+  #14: ?                               Sh=2.98  Eq=$2208  Worst=-16.5%  WM=10/13
+  #15: ?                               Sh=2.98  Eq=$2208  Worst=-16.5%  WM=10/13
+  #16: ?                               Sh=2.98  Eq=$1969  Worst=-17.7%  WM=10/13
+  #17: ?                               Sh=2.95  Eq=$2075  Worst=-16.6%  WM=10/13
+  #18: ?                               Sh=2.95  Eq=$2283  Worst=-16.1%  WM=10/13
+  #19: ?                               Sh=2.90  Eq=$2229  Worst=-16.0%  WM=10/13
+  #20: ?                               Sh=2.89  Eq=$2098  Worst=-30.2%  WM=11/13
+
+  Total time: 139.0 min
+  DONE.
