@@ -1,0 +1,325 @@
+================================================================================
+  R23 — DEEP TRAINING & SIGNAL EXPERIMENTS
+================================================================================
+  Base: R20-C — LGB-23f, cutoff=0.9, 12h rebal → Sh=2.80, Eq=$2096
+  Experiments: A(individual feats) B(time-weight) C(riskadjust)
+               D(confidence) E(rolling) F(ema/shrink) G(classification)
+
+  Loading data...
+  Base: 1,826,014 rows, 35 symbols
+
+  Building features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  FEATURES_23: 23/23, new feats: 18
+
+================================================================================
+  EXP-F: Signal EMA + Prediction Shrinkage
+================================================================================
+  ❌ F-ema0-shrink0                                             Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+  ❌ F-ema0-shrink0.1                                           Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+  ❌ F-ema0-shrink0.2                                           Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+  ❌ F-ema0-shrink0.3                                           Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+  ❌ F-ema2-shrink0                                             Sh=+2.18 Wr= -30.1% WM=9/13 → $962
+  ❌ F-ema2-shrink0.1                                           Sh=+2.18 Wr= -30.1% WM=9/13 → $962
+  ❌ F-ema2-shrink0.2                                           Sh=+2.18 Wr= -30.1% WM=9/13 → $962
+  ❌ F-ema2-shrink0.3                                           Sh=+2.18 Wr= -30.1% WM=9/13 → $962
+  ⚠️ F-ema3-shrink0                                             Sh=+2.30 Wr= -18.7% WM=9/13 → $1112
+  ⚠️ F-ema3-shrink0.1                                           Sh=+2.30 Wr= -18.7% WM=9/13 → $1112
+  ⚠️ F-ema3-shrink0.2                                           Sh=+2.30 Wr= -18.7% WM=9/13 → $1112
+  ⚠️ F-ema3-shrink0.3                                           Sh=+2.30 Wr= -18.7% WM=9/13 → $1112
+  ⚠️ F-ema5-shrink0                                             Sh=+2.28 Wr= -19.0% WM=9/13 → $1072
+  ⚠️ F-ema5-shrink0.1                                           Sh=+2.28 Wr= -19.0% WM=9/13 → $1072
+  ⚠️ F-ema5-shrink0.2                                           Sh=+2.28 Wr= -19.0% WM=9/13 → $1072
+  ⚠️ F-ema5-shrink0.3                                           Sh=+2.28 Wr= -19.0% WM=9/13 → $1072
+
+================================================================================
+  EXP-D: Signal Confidence Filter
+================================================================================
+
+  D-spread0.0:
+    Confidence filter: 7882/7882 timestamps kept (spread threshold=0.0000)
+  ❌ D-conf0.0                                                  Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+
+  D-spread0.3:
+    Confidence filter: 7882/7882 timestamps kept (spread threshold=0.0139)
+  ❌ D-conf0.3                                                  Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+
+  D-spread0.5:
+    Confidence filter: 7833/7882 timestamps kept (spread threshold=0.0231)
+  ✅ D-conf0.5                                                  Sh=+1.94 Wr=  -8.9% WM=10/13 → $673
+
+  D-spread0.7:
+    Confidence filter: 7036/7882 timestamps kept (spread threshold=0.0323)
+  ❌ D-conf0.7                                                  Sh=+1.59 Wr= -33.2% WM=8/13 → $402
+
+  D-spread0.9:
+    Confidence filter: 5088/7882 timestamps kept (spread threshold=0.0416)
+  ❌ D-conf0.9                                                  Sh=+0.98 Wr= -33.0% WM=7/13 → $185
+
+================================================================================
+  EXP-G: Classification Target (predict direction)
+================================================================================
+  ✅ G-classification                                           Sh=+2.94 Wr= -13.8% WM=10/13 → $1997
+       2024-10   +44.6%  eq=$     145
+       2024-11   -10.4%  eq=$     130
+       2024-12   +86.8%  eq=$     242
+       2025-01   +15.8%  eq=$     280
+       2025-05   +45.5%  eq=$     408
+       2025-06   +38.1%  eq=$     563
+       2025-07   -13.8%  eq=$     485
+       2025-08   +38.2%  eq=$     671
+       2025-11   +11.0%  eq=$     744
+       2025-12   +56.4%  eq=$    1164
+       2026-01   +33.3%  eq=$    1552
+       2026-02   +33.2%  eq=$    2067
+       2026-03   -3.4%  eq=$    1997
+
+================================================================================
+  EXP-C: Risk-Adjusted Target (ret/vol)
+================================================================================
+  ❌ C-riskadjusted                                             Sh=+0.52 Wr= -60.2% WM=10/13 → $109
+       2024-10   +14.0%  eq=$     114
+       2024-11   -60.2%  eq=$      45
+       2024-12   +36.8%  eq=$      62
+       2025-01   +25.7%  eq=$      78
+       2025-05   -8.9%  eq=$      71
+       2025-06   +3.9%  eq=$      74
+       2025-07   +1.1%  eq=$      75
+       2025-08   +6.6%  eq=$      80
+       2025-11   +7.4%  eq=$      85
+       2025-12   +12.0%  eq=$      96
+       2026-01   +2.1%  eq=$      98
+       2026-02   +30.7%  eq=$     128
+       2026-03   -14.6%  eq=$     109
+  ❌ C-winsorized                                               Sh=+2.19 Wr= -39.3% WM=9/13 → $992
+       2024-10   +28.8%  eq=$     129
+       2024-11   -39.3%  eq=$      78
+       2024-12   +57.1%  eq=$     123
+       2025-01   -3.9%  eq=$     118
+       2025-05   +44.6%  eq=$     171
+       2025-06   +59.4%  eq=$     272
+       2025-07   -0.3%  eq=$     271
+       2025-08   +75.3%  eq=$     475
+       2025-11   +15.3%  eq=$     548
+       2025-12   +24.3%  eq=$     681
+       2026-01   +29.7%  eq=$     884
+       2026-02   +16.1%  eq=$    1027
+       2026-03   -3.4%  eq=$     992
+
+================================================================================
+  EXP-B: Time-Weighted Training
+================================================================================
+
+  B-hl90d: half_life=90 days...
+  ❌ B-hl90d                                                    Sh=+1.59 Wr= -40.5% WM=10/13 → $431
+
+  B-hl180d: half_life=180 days...
+  ❌ B-hl180d                                                   Sh=+1.30 Wr= -45.4% WM=7/13 → $289
+       2024-10   +25.0%  eq=$     125
+       2024-11   -45.4%  eq=$      68
+       2024-12   +86.4%  eq=$     127
+       2025-01   -14.9%  eq=$     108
+       2025-05   +18.9%  eq=$     129
+       2025-06   +61.1%  eq=$     207
+       2025-07   -22.4%  eq=$     161
+       2025-08   +45.8%  eq=$     235
+       2025-11   +16.3%  eq=$     273
+       2025-12   +34.0%  eq=$     365
+       2026-01   -0.3%  eq=$     364
+       2026-02   -13.5%  eq=$     315
+       2026-03   -8.2%  eq=$     289
+
+  B-hl365d: half_life=365 days...
+  ❌ B-hl365d                                                   Sh=+2.08 Wr= -42.0% WM=8/13 → $866
+
+  B-hl730d: half_life=730 days...
+  ❌ B-hl730d                                                   Sh=+2.46 Wr= -31.9% WM=9/13 → $1460
+
+================================================================================
+  EXP-E: Rolling Window Training
+================================================================================
+
+  E-roll180d: last 180 days of training data...
+  ❌ E-roll180d                                                 Sh=+0.68 Wr= -48.9% WM=7/13 → $124
+
+  E-roll365d: last 365 days of training data...
+  ❌ E-roll365d                                                 Sh=+1.38 Wr= -51.5% WM=9/13 → $321
+       2024-10   +10.9%  eq=$     111
+       2024-11   -51.5%  eq=$      54
+       2024-12   +56.0%  eq=$      84
+       2025-01   -10.0%  eq=$      76
+       2025-05   +29.5%  eq=$      98
+       2025-06   +51.6%  eq=$     148
+       2025-07   -9.3%  eq=$     135
+       2025-08   +44.5%  eq=$     194
+       2025-11   +24.0%  eq=$     241
+       2025-12   +22.0%  eq=$     294
+       2026-01   +13.6%  eq=$     334
+       2026-02   +3.5%  eq=$     346
+       2026-03   -7.2%  eq=$     321
+
+  E-roll540d: last 540 days of training data...
+  ❌ E-roll540d                                                 Sh=+1.89 Wr= -40.2% WM=10/13 → $650
+
+  E-roll730d: last 730 days of training data...
+  ❌ E-roll730d                                                 Sh=+1.79 Wr= -46.2% WM=9/13 → $603
+
+================================================================================
+  EXP-A: Individual Feature Addition (1 at a time)
+================================================================================
+
+  A0: Control (23f)...
+  ❌ A-ctrl-23f                                                 Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+
+  A-oi_velocity: 23f + oi_velocity = 24f...
+  ❌ A-+oi_velocity                                             Sh=+2.25 Wr= -48.6% WM=9/13 → $1103
+    ❌ Δ=-0.55
+
+  A-taker_imb_z: 23f + taker_imb_z = 24f...
+  ❌ A-+taker_imb_z                                             Sh=+2.18 Wr= -38.3% WM=10/13 → $993
+    ❌ Δ=-0.62
+
+  A-vol_of_vol: 23f + vol_of_vol = 24f...
+  ✅ A-+vol_of_vol                                              Sh=+2.59 Wr= -13.7% WM=10/13 → $1574
+    ❌ Δ=-0.21
+
+  A-dist_from_high_24h: 23f + dist_from_high_24h = 24f...
+  ❌ A-+dist_from_high_24h                                      Sh=+2.32 Wr= -48.2% WM=10/13 → $1237
+    ❌ Δ=-0.48
+
+  A-vol_ratio_24h: 23f + vol_ratio_24h = 24f...
+  ⚠️ A-+vol_ratio_24h                                           Sh=+2.14 Wr= -22.4% WM=10/13 → $944
+    ❌ Δ=-0.66
+
+  A-ret_168h: 23f + ret_168h = 24f...
+  ⚠️ A-+ret_168h                                                Sh=+2.35 Wr= -21.1% WM=9/13 → $1192
+    ❌ Δ=-0.45
+
+  A-fng_value: 23f + fng_value = 24f...
+  ❌ A-+fng_value                                               Sh=+2.36 Wr= -29.6% WM=10/13 → $1244
+    ❌ Δ=-0.44
+
+  A-fng_zscore: 23f + fng_zscore = 24f...
+  ❌ A-+fng_zscore                                              Sh=+1.91 Wr= -30.8% WM=9/13 → $680
+    ❌ Δ=-0.89
+
+  A-vix_close: 23f + vix_close = 24f...
+  ❌ A-+vix_close                                               Sh=+2.36 Wr= -29.6% WM=10/13 → $1244
+    ❌ Δ=-0.44
+
+  A-vix_zscore: 23f + vix_zscore = 24f...
+  ✅ A-+vix_zscore                                              Sh=+2.32 Wr=  -9.7% WM=9/13 → $1179
+    ❌ Δ=-0.48
+
+  A-dxy_ret_7d: 23f + dxy_ret_7d = 24f...
+  ❌ A-+dxy_ret_7d                                              Sh=+2.33 Wr= -37.2% WM=10/13 → $1251
+    ❌ Δ=-0.46
+
+  A-adx: 23f + adx = 24f...
+  ⚠️ A-+adx                                                     Sh=+2.46 Wr= -24.5% WM=11/13 → $1463
+    ❌ Δ=-0.34
+
+  A-mfi_14: 23f + mfi_14 = 24f...
+  ⚠️ A-+mfi_14                                                  Sh=+2.39 Wr= -18.4% WM=9/13 → $1337
+    ❌ Δ=-0.40
+
+  A-ret_skew_24h: 23f + ret_skew_24h = 24f...
+  ❌ A-+ret_skew_24h                                            Sh=+2.09 Wr= -37.1% WM=10/13 → $863
+    ❌ Δ=-0.71
+
+  A-ret_kurt_24h: 23f + ret_kurt_24h = 24f...
+  ❌ A-+ret_kurt_24h                                            Sh=+2.18 Wr= -29.3% WM=11/13 → $986
+    ❌ Δ=-0.62
+
+  A-vwap_dev_24h: 23f + vwap_dev_24h = 24f...
+  ❌ A-+vwap_dev_24h                                            Sh=+2.07 Wr= -31.5% WM=10/13 → $809
+    ❌ Δ=-0.73
+
+  A-obv_ma_ratio_24: 23f + obv_ma_ratio_24 = 24f...
+  ⚠️ A-+obv_ma_ratio_24                                         Sh=+2.54 Wr= -24.2% WM=9/13 → $1512
+    ❌ Δ=-0.26
+
+  Individual feature ranking:
+      baseline                       Sh=2.80 Eq=$2096 Δ=+0.00
+      vol_of_vol                     Sh=2.59 Eq=$1574 Δ=-0.21
+      obv_ma_ratio_24                Sh=2.54 Eq=$1512 Δ=-0.26
+      adx                            Sh=2.46 Eq=$1463 Δ=-0.34
+      mfi_14                         Sh=2.39 Eq=$1337 Δ=-0.40
+      fng_value                      Sh=2.36 Eq=$1244 Δ=-0.44
+      vix_close                      Sh=2.36 Eq=$1244 Δ=-0.44
+      ret_168h                       Sh=2.35 Eq=$1192 Δ=-0.45
+      dxy_ret_7d                     Sh=2.33 Eq=$1251 Δ=-0.46
+      vix_zscore                     Sh=2.32 Eq=$1179 Δ=-0.48
+      dist_from_high_24h             Sh=2.32 Eq=$1237 Δ=-0.48
+      oi_velocity                    Sh=2.25 Eq=$1103 Δ=-0.55
+      ret_kurt_24h                   Sh=2.18 Eq=$986 Δ=-0.62
+      taker_imb_z                    Sh=2.18 Eq=$993 Δ=-0.62
+      vol_ratio_24h                  Sh=2.14 Eq=$944 Δ=-0.66
+      ret_skew_24h                   Sh=2.09 Eq=$863 Δ=-0.71
+      vwap_dev_24h                   Sh=2.07 Eq=$809 Δ=-0.73
+      fng_zscore                     Sh=1.91 Eq=$680 Δ=-0.89
+
+================================================================================
+  FINAL RANKINGS — R23 ALL EXPERIMENTS
+================================================================================
+  # 1 ✅ G-classification                                   Sh=+2.94 Eq=$1997 WM=10/13 Wr=-13.8% Δ=+0.14
+  # 2 ⚠️ F-ema0-shrink0                                     Sh=+2.80 Eq=$2096 WM=10/13 Wr=-28.5% Δ=-0.00
+  # 3 ⚠️ F-ema0-shrink0.1                                   Sh=+2.80 Eq=$2096 WM=10/13 Wr=-28.5% Δ=-0.00
+  # 4 ⚠️ F-ema0-shrink0.2                                   Sh=+2.80 Eq=$2096 WM=10/13 Wr=-28.5% Δ=-0.00
+  # 5 ⚠️ F-ema0-shrink0.3                                   Sh=+2.80 Eq=$2096 WM=10/13 Wr=-28.5% Δ=-0.00
+  # 6 ⚠️ D-conf0.0                                          Sh=+2.80 Eq=$2096 WM=10/13 Wr=-28.5% Δ=-0.00
+  # 7 ⚠️ D-conf0.3                                          Sh=+2.80 Eq=$2096 WM=10/13 Wr=-28.5% Δ=-0.00
+  # 8 ⚠️ A-ctrl-23f                                         Sh=+2.80 Eq=$2096 WM=10/13 Wr=-28.5% Δ=-0.00
+  # 9 ❌ A-+vol_of_vol                                      Sh=+2.59 Eq=$1574 WM=10/13 Wr=-13.7% Δ=-0.21
+  #10 ❌ A-+obv_ma_ratio_24                                 Sh=+2.54 Eq=$1512 WM=9/13 Wr=-24.2% Δ=-0.26
+  #11 ❌ B-hl730d                                           Sh=+2.46 Eq=$1460 WM=9/13 Wr=-31.9% Δ=-0.34
+  #12 ❌ A-+adx                                             Sh=+2.46 Eq=$1463 WM=11/13 Wr=-24.5% Δ=-0.34
+  #13 ❌ A-+mfi_14                                          Sh=+2.39 Eq=$1337 WM=9/13 Wr=-18.4% Δ=-0.41
+  #14 ❌ A-+fng_value                                       Sh=+2.36 Eq=$1244 WM=10/13 Wr=-29.6% Δ=-0.44
+  #15 ❌ A-+vix_close                                       Sh=+2.36 Eq=$1244 WM=10/13 Wr=-29.6% Δ=-0.44
+  #16 ❌ A-+ret_168h                                        Sh=+2.35 Eq=$1192 WM=9/13 Wr=-21.1% Δ=-0.45
+  #17 ❌ A-+dxy_ret_7d                                      Sh=+2.33 Eq=$1251 WM=10/13 Wr=-37.2% Δ=-0.47
+  #18 ❌ A-+vix_zscore                                      Sh=+2.32 Eq=$1179 WM=9/13 Wr=-9.7% Δ=-0.48
+  #19 ❌ A-+dist_from_high_24h                              Sh=+2.32 Eq=$1237 WM=10/13 Wr=-48.2% Δ=-0.48
+  #20 ❌ F-ema3-shrink0                                     Sh=+2.30 Eq=$1112 WM=9/13 Wr=-18.7% Δ=-0.50
+  #21 ❌ F-ema3-shrink0.1                                   Sh=+2.30 Eq=$1112 WM=9/13 Wr=-18.7% Δ=-0.50
+  #22 ❌ F-ema3-shrink0.2                                   Sh=+2.30 Eq=$1112 WM=9/13 Wr=-18.7% Δ=-0.50
+  #23 ❌ F-ema3-shrink0.3                                   Sh=+2.30 Eq=$1112 WM=9/13 Wr=-18.7% Δ=-0.50
+  #24 ❌ F-ema5-shrink0                                     Sh=+2.28 Eq=$1072 WM=9/13 Wr=-19.0% Δ=-0.52
+  #25 ❌ F-ema5-shrink0.1                                   Sh=+2.28 Eq=$1072 WM=9/13 Wr=-19.0% Δ=-0.52
+  #26 ❌ F-ema5-shrink0.2                                   Sh=+2.28 Eq=$1072 WM=9/13 Wr=-19.0% Δ=-0.52
+  #27 ❌ F-ema5-shrink0.3                                   Sh=+2.28 Eq=$1072 WM=9/13 Wr=-19.0% Δ=-0.52
+  #28 ❌ A-+oi_velocity                                     Sh=+2.25 Eq=$1103 WM=9/13 Wr=-48.6% Δ=-0.55
+  #29 ❌ C-winsorized                                       Sh=+2.19 Eq=$992 WM=9/13 Wr=-39.3% Δ=-0.61
+  #30 ❌ A-+ret_kurt_24h                                    Sh=+2.18 Eq=$986 WM=11/13 Wr=-29.3% Δ=-0.62
+  #31 ❌ A-+taker_imb_z                                     Sh=+2.18 Eq=$993 WM=10/13 Wr=-38.3% Δ=-0.62
+  #32 ❌ F-ema2-shrink0                                     Sh=+2.18 Eq=$962 WM=9/13 Wr=-30.1% Δ=-0.62
+  #33 ❌ F-ema2-shrink0.1                                   Sh=+2.18 Eq=$962 WM=9/13 Wr=-30.1% Δ=-0.62
+  #34 ❌ F-ema2-shrink0.2                                   Sh=+2.18 Eq=$962 WM=9/13 Wr=-30.1% Δ=-0.62
+  #35 ❌ F-ema2-shrink0.3                                   Sh=+2.18 Eq=$962 WM=9/13 Wr=-30.1% Δ=-0.62
+  #36 ❌ A-+vol_ratio_24h                                   Sh=+2.14 Eq=$944 WM=10/13 Wr=-22.4% Δ=-0.66
+  #37 ❌ A-+ret_skew_24h                                    Sh=+2.09 Eq=$863 WM=10/13 Wr=-37.1% Δ=-0.71
+  #38 ❌ B-hl365d                                           Sh=+2.08 Eq=$866 WM=8/13 Wr=-42.0% Δ=-0.72
+  #39 ❌ A-+vwap_dev_24h                                    Sh=+2.07 Eq=$809 WM=10/13 Wr=-31.5% Δ=-0.73
+  #40 ❌ D-conf0.5                                          Sh=+1.94 Eq=$673 WM=10/13 Wr=-8.9% Δ=-0.86
+  #41 ❌ A-+fng_zscore                                      Sh=+1.91 Eq=$680 WM=9/13 Wr=-30.8% Δ=-0.89
+  #42 ❌ E-roll540d                                         Sh=+1.89 Eq=$650 WM=10/13 Wr=-40.2% Δ=-0.91
+  #43 ❌ E-roll730d                                         Sh=+1.79 Eq=$603 WM=9/13 Wr=-46.2% Δ=-1.01
+  #44 ❌ B-hl90d                                            Sh=+1.59 Eq=$431 WM=10/13 Wr=-40.5% Δ=-1.21
+  #45 ❌ D-conf0.7                                          Sh=+1.59 Eq=$402 WM=8/13 Wr=-33.2% Δ=-1.21
+  #46 ❌ E-roll365d                                         Sh=+1.38 Eq=$321 WM=9/13 Wr=-51.5% Δ=-1.42
+  #47 ❌ B-hl180d                                           Sh=+1.30 Eq=$289 WM=7/13 Wr=-45.4% Δ=-1.50
+  #48 ❌ D-conf0.9                                          Sh=+0.98 Eq=$185 WM=7/13 Wr=-33.0% Δ=-1.82
+  #49 ❌ E-roll180d                                         Sh=+0.68 Eq=$124 WM=7/13 Wr=-48.9% Δ=-2.12
+  #50 ❌ C-riskadjusted                                     Sh=+0.52 Eq=$109 WM=10/13 Wr=-60.2% Δ=-2.28
+
+  R20-C baseline: Sh=2.80, Eq=$2096
+
+  Total time: 4977s (82.9min)
