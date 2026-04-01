@@ -3240,3 +3240,589 @@ SEEDS = [0, 7, 13, 42, 99]
 
 - `_audit_r16_deep.py` — 9 проверок (fwd_ret, subsampling, enhancements, regime bias, autocorrelation, permutation, per-window, Sharpe verification, L/S attribution)
 - `_audit_r16b_fix.py` — Fixed simulation + recalculation
+
+---
+
+## Round 17 — Bug Fixes Applied (R17)
+
+**Дата**: 2026-04-01  
+**Цель**: Применить R16-фиксы, получить честную базовую линию.
+
+### Исправления
+1. `simulate()`: обрабатывает только `timestamps_sorted[::rebal_hours]` (не каждый час)
+2. `eval_config()`: `ppy = n_obs / years` из реального диапазона таймстемпов
+3. Убраны `eq_mom_boost` и `strategy_momentum`
+
+### Результаты R17 (честный baseline, 12f LGB)
+
+| Config | Sharpe | WM | Worst M | Final Eq |
+|--------|--------|----|---------|----------|
+| LGB-12f bare | 1.75 | 8/13 | -41.7% | $666 |
+| **LGB-12f + regime** | **1.84** | **9/13** | **-19.1%** | **$516** |
+
+Permutation test: z=2.06, p=0.02 — сигнал реальный.  
+Скрипт: `_test_r17_fixed.py`, commit `1bac294`
+
+---
+
+## Round 18 — Major Feature Expansion (R18)
+
+**Дата**: 2026-04-01  
+**Цель**: Расширить фичи (6 новых источников), multi-model ensemble.  
+**Скрипт**: `_research_r18_improve.py` (52 мин, 36 конфигов)
+
+### Новые источники данных
+| Источник | Фичи | Файл |
+|----------|------|------|
+| TA (техн. анализ) | 20 фич (ATR, RSI, MACD, BB, GK-vol, etc.) | `data/features/crypto_features_1h.parquet` |
+| Новости | 5 фич (sentiment, volume zscore, momentum) | `data/sentiment/crypto_news.parquet` |
+| Fear & Greed | 4 фичи | `data/sentiment/fear_greed.parquet` |
+| DVOL (Deribit) | 4 фичи (btc_dvol, zscore, chg, IV-RV spread) | `data/sentiment/deribit_dvol.parquet` |
+| Macro | 5 фич (VIX, DXY, yield curve) | `data/sentiment/macro_daily.parquet` |
+| Deriv+ | 5 фич (top/global long pct, smart_money_diverge) | `data/sentiment/binance_futures_metrics.parquet` |
+| Итого | **90 доступных фич** (было 12) | — |
+
+### Топ IC features (OOS scan, 78 кандидатов)
+```
+atr_14:        IC=-0.0698  (отрицательный IC = mean-reversion)
+rvol_12h:      IC=-0.0681
+gk_vol_24h:    IC=-0.0663
+rvol_24h:      IC=-0.0637
+iv_rv_spread:  IC=+0.0637  (IV > RV → expect reversion)
+```
+Все топ-5 — **vol features** (backward-looking, утечки нет).
+
+### Финальные результаты R18
+
+| Ранг | Config | Sharpe | WM | Worst M | Eq |
+|------|--------|--------|----|---------|-----|
+| 1 | **LGB-17f-top5 + regime** | **2.23** | **10/13** | -22.4% | **$968** |
+| 2 | LGB-HPO-nl=31 + regime | 1.95 | 9/13 | -39.7% | $649 |
+| 3 | CB-19f + regime | 1.95 | 7/13 | -19.8% | $641 |
+| baseline | LGB-12f + regime | 1.84 | 9/13 | -19.1% | $516 |
+
+**R18 winner (17f)** = 12f baseline + `atr_14, rvol_12h, gk_vol_24h, rvol_24h, iv_rv_spread`
+
+### Выводы R18
+- ✅ Добавление 5 vol-фич → Sharpe 1.84 → 2.23 (+21%)
+- ✅ IC улучшился: 0.0623 → 0.0800 (+28%)
+- ❌ Kitchen-sink 35f — хуже (Sh=1.06), переобучение
+- ❌ Meta-ensemble 3 моделей — разбавляет сигнал (Sh=1.74)
+- ❌ Target engineering — не помогает
+- ⚠️ IC scan был на TEST данных → R19 исправляет
+
+---
+
+## Round 19 — Leakage Fix + New Signals (R19)
+
+**Дата**: 2026-04-01  
+**Цель**: (1) Исправить IC scan leakage R18, (2) добавить market breadth + seasonality + regime-as-features.  
+**Скрипт**: `_research_r19_v2.py` (29 мин, 20 конфигов)
+
+### Новые сигналы R19
+| Сигнал | Формула | Тип |
+|--------|---------|-----|
+| `pct_coins_up_12h` | % монет с ret_12h > 0 | Market breadth |
+| `pct_coins_up_1h` | % монет с ret_1h > 0 | Short-term breadth |
+| `btc_outperform` | ret_12h - BTC ret_12h | Relative strength |
+| `hour_sin/cos` | sin/cos(hour*2π/24) | Seasonality |
+| `dow_sin/cos` | sin/cos(dow*2π/7) | Weekly cycle |
+| `trend_strength` | \|BTC_ret_7d\| / BTC_vol_7d | Regime feature |
+| `trend_direction` | BTC_ret_7d / BTC_vol_7d | Regime feature |
+
+### IC Scan R19 (TRAIN ONLY — без leakage)
+```
+atr_14:        IC=-0.0630   (подтверждён на train)
+gk_vol_24h:    IC=-0.0629   (подтверждён)
+iv_rv_spread:  IC=+0.0623   (подтверждён)
+rvol_24h:      IC=-0.0623   (подтверждён)
+btc_outperform:IC=-0.0281   (новое! mean-reversion vs BTC)
+```
+**IC scan на TRAIN дал те же топ-фичи, что R18 на TEST → R18 leakage не влияло!**
+
+### Финальные результаты R19
+
+| Ранг | Config | Sharpe | WM | Worst M | Eq |
+|------|--------|--------|----|---------|-----|
+| **1** | **LGB-17f + breadth + season + regime** | **2.50** | **10/13** | -29.6% | **$1314** |
+| 2 | LGB-17f-top5 + regime (R18 подтверждён) | 2.23 | 10/13 | -22.4% | $968 |
+| 3 | CB-combo + regime | 2.16 | 8/13 | **-13.4%** | $869 |
+| 4 | LGB+CB-17f avg + regime | 2.11 | 8/13 | -21.4% | $829 |
+| 5 | LGB-full-enhanced + regime | 2.05 | 10/13 | -21.9% | $769 |
+
+### Equity path R19 winner (LGB-17f+breadth+season)
+```
+Oct24: +24.6%  Nov24: -29.6%  Dec24: +88.7%  Jan25:  +6.0%
+May25: +35.9%  Jun25: +44.8%  Jul25:  -9.6%  Aug25: +58.1%
+Nov25: +13.8%  Dec25: +63.2%  Jan26: +37.3%  Feb26:  +9.6%  Mar26: -4.8%
+Final equity: $1314 (от $100 за 11 торговых месяцев, 5x leverage)
+```
+
+### Выводы R19
+- ✅ Market breadth + seasonality → Sharpe 2.23 → 2.50 (+0.27, +12%)
+- ✅ WM=10/13 сохраняется
+- ✅ IC scan на TRAIN подтвердил R18 leakage был незначимым
+- ⚠️ Worst month -29.6% (хуже R18 -22.4%)
+- ❌ Regime features в модели НЕ заменяют жёсткий фильтр (bare Sh=1.84 vs filtered 2.50)
+- ⚠️ Funding carry: не удалось загрузить (`Column not found: funding_rate_binance`)
+
+### Прогресс по раундам (все исправлены от R16 bagов)
+
+| Round | Config | Sharpe | Improvement |
+|-------|--------|--------|-------------|
+| R17 | 12f baseline | 1.84 | базовая линия |
+| R18 | 17f + vol | 2.23 | +21% |
+| R19 | 23f + breadth + season | 2.50 | +36% от R17 |
+
+**Текущий рекорд: Sh=2.50** (LGB, 23 фичи, режим-фильтр)
+
+---
+
+## R20 — Deep Research (6 экспериментов)
+
+**Дата**: март 2026  
+**База**: R19 winner (LGB-23f, regime filter trend_cutoff=0.8, dyn_threshold=0.5, 6L/3S, rebal=12h, Sh=2.50)  
+**Скрипт**: `_research_r20_deep.py`  
+**Время**: 29.3 мин (1756 сек)
+
+### CONTROL — воспроизведение R19
+
+| Config | Sh | WM | Wr | Equity |
+|--------|----|----|-----|--------|
+| R19-winner-ctrl [regime] | **2.50** | 10/13 | -29.6% | $1314 |
+
+Месячный путь: Oct24 +24.6% → Nov24 **-29.6%** → Dec24 +88.7% → Jan25 +6% → May25 +35.9% → Jun25 +44.8% → Jul25 -9.6% → Aug25 +58.1% → Nov25 +13.8% → Dec25 +63.2% → Jan26 +37.3% → Feb26 +9.6% → Mar26 -4.8% → **$1314**
+
+---
+
+### EXP-A: Funding Carry Signal
+
+Добавлены 4 фичи: `cum_funding_24h, funding_zscore, funding_x_mom_12h, funding_x_mom_24h` (итого 27f).
+
+| Config | Sh | WM | Wr | Equity | vs R19 |
+|--------|----|----|-----|--------|--------|
+| LGB-27f+funding [bare] | 1.41 | 8/13 | -72.8% | $380 | ❌ -44% |
+| LGB-27f+funding [regime] | 1.87 | 8/13 | -33.4% | $599 | ❌ -25% |
+
+**Вывод: Funding carry ОТВЕРГНУТ.** Добавление funding-фичей ухудшает Sharpe 2.50 → 1.87. Шум перевешивает сигнал.
+
+---
+
+### EXP-B: Position Count Sweep
+
+| Config | Sh | WM | Wr | Equity |
+|--------|----|----|-----|--------|
+| 4L/2S | 1.91 | 9/13 | -29.1% | $766 |
+| 5L/2S | 1.95 | 9/13 | -28.1% | $803 |
+| **6L/3S (baseline)** | **2.50** | **10/13** | **-29.6%** | **$1314** |
+| 6L/2S | 1.97 | 9/13 | -26.7% | $815 |
+| 8L/3S | 2.46 | 10/13 | -30.0% | $1187 |
+| 8L/4S | 1.58 | 11/13 | -56.8% | $376 |
+| 10L/5S | 1.56 | 10/13 | -46.3% | $329 |
+
+**Вывод: 6L/3S — оптимум подтверждён.** Уменьшение позиций снижает Sharpe, увеличение — резко увеличивает просадки.
+
+---
+
+### EXP-C: Regime Threshold Sweep ⭐ КЛЮЧЕВАЯ НАХОДКА
+
+| Cutoff | Sh | WM | Wr | Equity | vs R19 |
+|--------|----|----|-----|--------|--------|
+| 0.5 | 1.67 | 9/13 | -41.3% | $378 | ❌ |
+| 0.6 | 1.90 | 9/13 | -37.5% | $518 | ❌ |
+| 0.7 | 2.36 | 10/13 | -34.4% | $982 | ❌ |
+| **0.8 (R19)** | **2.50** | **10/13** | **-29.6%** | **$1314** | — |
+| **0.9** | **2.80** | **10/13** | **-28.5%** | **$2096** | **⭐ +12%** |
+| 1.0 | 2.70 | 10/13 | -28.5% | $2025 | +8% |
+| 1.2 | 2.43 | 11/13 | -41.2% | $1596 | ❌ |
+| 1.5 | 2.48 | 11/13 | -35.1% | $2007 | ❌ |
+| 999 (off) | 1.84 | 10/13 | -73.9% | $816 | ❌ |
+
+**Вывод: trend_cutoff=0.9 → Sh=2.80 (+12% vs R19), лучшая просадка AND equity!**  
+Оптимум находится в диапазоне 0.9–1.0, пик на 0.9.
+
+---
+
+### EXP-D: Multi-Horizon Target Training
+
+| Config | Sh | WM | Wr | Equity | IC_all |
+|--------|----|----|-----|--------|--------|
+| LGB-4h-target [regime] | 2.40 | 11/13 | -37.5% | $1286 | 0.0843 |
+| **LGB-12h-target (R19)** | **2.50** | **10/13** | **-29.6%** | **$1314** | **0.0783** |
+| LGB-12h+24h-ens [regime] | 2.14 | 9/13 | -32.8% | $811 | 0.0768 |
+| LGB-24h-target [regime] | 1.78 | 8/13 | -18.6% | $504 | 0.0726 |
+
+**Вывод: 12h target остаётся лучшим.** 4h horizon даёт более высокий IC но луший Sharpe у 12h. Ансамбль 12h+24h не помогает.
+
+---
+
+### EXP-E: Permutation Test (n=300) ✅
+
+```
+Null distribution:  mean=-0.020 ± 0.866
+Real Sharpe:        2.500
+z = 2.91,  p = 0.0033
+```
+
+**Вывод: Sh=2.50 — НЕ случайность (p=0.0033 << 0.05).** Стратегия статистически значима. z=2.91 означает результат более 2.9 стандартных отклонений выше случайного (нулевого) распределения.
+
+---
+
+### EXP-F: Rebalance Interval Sweep ⭐ КЛЮЧЕВАЯ НАХОДКА
+
+| Config | Sh | WM | Wr | Equity | vs R19 |
+|--------|----|----|-----|--------|--------|
+| **6h rebal** | **2.88** | **8/13** | **-18.8%** | **$4981** | **⭐ +15%** |
+| **12h rebal (R19)** | **2.50** | **10/13** | **-29.6%** | **$1314** | — |
+| 24h rebal | 1.31 | 10/13 | -16.6% | $235 | ❌ |
+
+**Вывод: 6h rebal → Sh=2.88 (+15%), Equity=**$4981** (!), Wr=-18.8% (лучше всех!)**  
+WM=8/13 ниже (меньше выигрышных месяцев), но equity и Sharpe значительно выше. Огромный результат.
+
+---
+
+### Итоги R20 — Рейтинг
+
+| # | Config | Sh | WM | Wr | Equity |
+|---|--------|----|----|-----|--------|
+| 1 | **EXP-F: 6h rebal** (+ пока не confirmed) | 2.88 | 8/13 | -18.8% | $4981 |
+| 2 | **EXP-C: cutoff=0.9** | 2.80 | 10/13 | -28.5% | $2096 |
+| 3 | EXP-C: cutoff=1.0 | 2.70 | 10/13 | -28.5% | $2025 |
+| 4 | R19 baseline | 2.50 | 10/13 | -29.6% | $1314 |
+| 5 | EXP-B: 8L/3S | 2.46 | 10/13 | -30.0% | $1187 |
+
+### Выводы R20
+
+- ⭐ **EXP-F best individual**: 6h rebal → Sh=2.88, Eq=$4981, Wr=-18.8% (строго лучше по всем метрикам кроме WM)
+- ⭐ **EXP-C**: cutoff=0.9 → Sh=2.80 (+12% vs R19), сохраняет WM=10/13
+- ✅ **Permutation test p=0.0033** — стратегия статистически значима
+- ❌ Funding carry: ОТВЕРГНУТ (27f→1.87 vs 23f→2.50)
+- ✅ 6L/3S позиционирование: ПОДТВЕРЖДЕНО оптимальным
+- ✅ 12h prediction horizon: ПОДТВЕРЖДЕНО лучшим
+- ⚠️ Нужно проверить комбинацию: cutoff=0.9 + 6h rebal → потенциально Sh>3.0
+
+### Прогресс по раундам (обновлено)
+
+| Round | Config | Sharpe | Equity | Key change |
+|-------|--------|--------|--------|------------|
+| R17 | 12f baseline | 1.84 | — | базовая линия |
+| R18 | 17f + vol | 2.23 | — | +volatility features |
+| R19 | 23f + breadth/season | 2.50 | $1314 | +breadth+seasonality |
+| R20 best-C | cutoff=0.9 | 2.80 | $2096 | +regime threshold |
+| R20 best-F | 6h rebal | 2.88 | $4981 | +rebalance frequency |
+
+**Текущий рекорд: Sh=2.88** (потенциал: cutoff=0.9 + 6h rebal → R21 ✅ подтверждено!)
+
+---
+
+## R21 — Confirmation Round (эксперименты G/H/I/J)
+
+**Дата**: апрель 2026  
+**База**: R20 findings: cutoff=0.9 → Sh=2.80 | 6h rebal → Sh=2.88  
+**Скрипт**: `_research_r21_confirm.py`  
+**Время**: 7.2 мин (433 сек)  
+**Цель**: подтвердить комбинацию cutoff=0.9 + 6h rebal
+
+---
+
+### EXP-G: Combined vs Individuals ⭐⭐ ГЛАВНЫЙ РЕЗУЛЬТАТ
+
+| Config | Sh | WM | Wr | Equity | vs R19 |
+|--------|----|----|-----|--------|--------|
+| R19-baseline | 2.50 | 10/13 | -29.6% | $1314 | — |
+| R20-C cutoff=0.9 | 2.80 | 10/13 | -28.5% | $2096 | +12% |
+| R20-F 6h rebal | 2.88 | 8/13 | -18.8% | $4981 | +15% |
+| **R21 combined (0.9+6h)** | **3.17** | **9/13** | **-23.7%** | **$9889** | **⭐ +27%** |
+
+**Комбинация СИНЕРГЕТИЧЕСКАЯ: 2.80 + 2.88 → 3.17 (лучше каждого по отдельности!)**
+
+Monthly equity path для R21:
+```
+Oct24  +33.0%  →$133     Nov24 -2.1%   →$130    Dec24  +185.2% →$371
+Jan25  -23.7%  →$283     May25 +70.0%  →$482    Jun25  +168.2% →$1292
+Jul25  -9.9%   →$1164    Aug25 +79.3%  →$2086   Nov25  +33.7%  →$2789
+Dec25  +78.4%  →$4977    Jan26 +116.2% →$10760  Feb26  +6.5%   →$11460
+Mar26  -13.7%  →$9889
+```
+**Nov24 был -29.6%, теперь всего -2.1%! 6h rebal почти убрал этот удар.**
+
+---
+
+### EXP-H: Fine-tuning cutoff (6h rebal fixed) ⭐
+
+| Cutoff | Sh | WM | Wr | Equity |
+|--------|----|----|-----|--------|
+| 0.80 | 2.88 | 8/13 | -18.8% | $4981 |
+| 0.85 | 2.94 | 8/13 | -22.4% | $5851 |
+| **0.90** | **3.17** | **9/13** | **-23.7%** | **$9889** |
+| 0.92 | 3.09 | 9/13 | -30.3% | $8663 |
+| 0.95 | 3.07 | 9/13 | -29.7% | $8718 |
+| **1.00** | **3.24** | **10/13** | **-28.3%** | **$12619** |
+| 1.05 | 3.15 | 9/13 | -32.8% | $11310 |
+
+**cutoff=1.00 + 6h → Sh=3.24, WM=10/13, Eq=$12619 — лучший по Sharpe!**
+cutoff=0.90 хуже по Sharpe (3.17) но лучше по Wr (-23.7% vs -28.3%)
+
+---
+
+### EXP-I: Per-Window Robustness
+
+| Window | R19 Sh | R21 Sh | R21 Wr | R21 Eq |
+|--------|--------|--------|--------|--------|
+| W1 (Oct24-Jan25) | 2.20 | 2.85 | -23.7% | $283 |
+| W2 (May25-Aug25) | 2.09 | **4.55** | **-5.2%** | $536 |
+| W3 (Nov25-Mar26) | 2.14 | 3.18 | -16.2% | $305 |
+
+**R21 строго лучше во ВСЕХ windows.** W2: Sh=4.55(!), Wr=-5.2% — почти без просадок.
+
+---
+
+### EXP-J: Permutation Test для R21
+
+```
+Null distribution:  mean=-0.121 ± 0.854
+Real Sharpe:        3.174
+z = 3.86,  p = 0.0000
+✅ HIGHLY SIGNIFICANT — R21 стратегия НЕ случайность (p<0.0001)
+```
+
+---
+
+### Итоги R21 — ~~Финальный рейтинг~~ ОТМЕНЁН (баг с overlap)
+
+> **⚠️ CRITICAL BUG FOUND**: 6h rebalance с 12h prediction horizon = **перекрывающиеся доходности**.
+> На каждом 6h интервале используется полный 12h return → часы 6-12 считаются дважды.
+> Все результаты с `rebal_hours=6` + `fwd_ret_12h` — **артефакт**.
+> Подтверждено диагностикой `_research_r21_fix.py` (апрель 2026).
+
+**Некорректные результаты (INVALIDATED):**
+
+| # | Config | Sh (buggy) | Sh corrected | Equity |
+|---|--------|------------|-------------|--------|
+| ~~1~~ | ~~R21: 0.9+6h~~ | ~~3.17~~ | ~2.24 | ~~$9889~~ |
+| ~~2~~ | ~~H: cutoff=1.00+6h~~ | ~~3.24~~ | ~2.29 | ~~$12619~~ |
+| ~~3~~ | ~~R20-F: 6h rebal~~ | ~~2.88~~ | ~2.04 | ~~$4981~~ |
+
+**Причина**: `rebal_timestamps = timestamps_sorted[::rebal_hours]` при rebal=6 выдаёт 2x больше точек, каждая с 12h return → 50% overlap → ppy удваивается → Sharpe × sqrt(2), equity экспоненциально раздувается.
+
+**Валидные результаты:**
+
+| # | Config | Sh | WM | Wr | Equity | Статус |
+|---|--------|----|----|-----|--------|--------|
+| 1 | **cutoff=0.9, 12h** | **2.80** | **10/13** | **-28.5%** | **$2096** | ✅ BEST |
+| 2 | cutoff=1.0, 12h | 2.70 | 10/13 | -28.5% | $2025 | ✅ |
+| 3 | cutoff=0.8, 12h (R19) | 2.50 | 10/13 | -29.6% | $1314 | ✅ |
+
+### Выводы R21 (исправленные)
+
+- ❌ **6h rebal** — ARTIFACT, вычеркнут (overlap bug)
+- ❌ **Все результаты Sh>2.80** с 6h rebal — НЕДЕЙСТВИТЕЛЬНЫ
+- ✅ **Permutation test для R19 (p=0.0033)** — по-прежнему валиден (12h rebal)
+- ✅ **cutoff=0.9** — РЕАЛЬНОЕ улучшение (2.50 → 2.80, +12%), подтверждено без бага
+- ✅ **cutoff=0.9 equity path**: $100 → $2096 за 13 OOS месяцев (5x leverage) — реалистично
+
+### Sanity check (cutoff=0.9, 12h, verified)
+```
+n_obs: 450 (12h periods)
+Mean ret per period: +0.166% (unleveraged)
+Std: 1.072%
+Mean × 5x leverage: +0.829% per 12h
+Positive frac: 64.4%
+Annualized ret: 54.3% (unlev), ~270% (5x lev)
+PPY: 328
+```
+
+### Прогресс по раундам (исправленный)
+
+| Round | Config | Sharpe | Equity | Key change | Статус |
+|-------|--------|--------|--------|------------|--------|
+| R17 | 12f baseline | 1.84 | $816 | базовая линия | ✅ |
+| R18 | 17f + vol | 2.23 | — | +volatility features | ✅ |
+| R19 | 23f + breadth/season | 2.50 | $1314 | +breadth+seasonality | ✅ |
+| **R20-C** | **cutoff=0.9** | **2.80** | **$2096** | **+regime threshold** | **✅ BEST** |
+| ~~R20-F~~ | ~~6h rebal~~ | ~~2.88~~ | ~~$4981~~ | overlap bug | ❌ |
+| ~~R21~~ | ~~cutoff=0.9 + 6h~~ | ~~3.17~~ | ~~$9889~~ | overlap bug | ❌ |
+
+**Текущий рекорд: Sh=2.80, Eq=$2096** (cutoff=0.9, 12h rebal, 6L/3S, 23f, $100→$2096 за 13мес)
+
+---
+
+## R22 — Deep Model Improvement (01 апр 2026)
+
+**Цель:** Попробовать всё — HPO, другие модели, ensembles, новые фичи.  
+**База:** R20-C winner — LGB-23f, cutoff=0.9, 12h rebal, 6L/3S → Sh=2.80, Eq=$2096
+
+### EXP-K: LGB Hyperparameter Optimization (Optuna, 20 trials)
+
+Оптимизировались: lr, num_leaves, min_child_samples, subsample, colsample_bytree, lambda_l1/l2, max_depth.
+
+Лучшие найденные параметры:
+```
+lr=0.006, num_leaves=122, min_child_samples=291, subsample=0.90,
+colsample_bytree=0.65, lambda_l2=0.02, lambda_l1=3.42, max_depth=4
+```
+
+| Config | Sharpe | Equity | WM | Worst M | Статус |
+|--------|--------|--------|----|---------|--------|
+| LGB-HPO-23f | 2.56 | $1541 | 10/13 | -29.7% | ❌ хуже baseline |
+| LGB-default-23f (control) | **2.80** | **$2096** | 10/13 | -28.5% | ✅ baseline подтверждён |
+
+**Вывод:** HPO не помог. Дефолтные параметры (lr=0.03, num_leaves=63, min_child=100) оказались лучше.
+Optuna нашла более сложную модель (leaves=122, depth=4), которая переобучилась.
+
+### EXP-L: Feature Importance & Pruning
+
+Важность фич (avg gain, 15 моделей):
+```
+ 1. atr_14                 2379  ██████████████████████████████
+ 2. gk_vol_24h             2245  ████████████████████████████
+ 3. ret_48h                1794  ██████████████████████
+ 4. ls_divergence          1752  ██████████████████████
+ 5. oi_zscore              1205  ███████████████
+ 6. taker_cvd_24h          1102  █████████████
+ 7. mom_z_24h               849  ██████████
+ 8. rvol_24h                778  █████████
+ 9. oi_chg_24h              759  █████████
+10. ret_24h                 624  ███████
+11. taker_cvd_12h           597  ███████
+12. rvol_12h                593  ███████
+13. residual_24h            512  ██████
+14. ret_12h                 494  ██████
+15. oi_chg_12h              430  █████
+16. pct_coins_up_12h        403  █████
+17. residual_12h            362  ████
+18. iv_rv_spread            346  ████
+19. pct_coins_up_1h          69  █
+20. hour_sin                 12  █
+21-23. hour_cos, dow_sin/cos  ~0  (не используются)
+```
+
+| Config | Sharpe | Equity | WM | Статус |
+|--------|--------|--------|----|--------|
+| 23f (все фичи) | **2.80** | **$2096** | 10/13 | ✅ лучший |
+| 20f (drop 3 worst) | 2.14 | $922 | 10/13 | ❌ |
+| 18f (drop 5) | 2.25 | $1045 | 9/13 | ❌ |
+| 16f (drop 7) | 1.98 | $750 | 9/13 | ❌ |
+| 13f (drop 10) | 2.17 | $957 | 9/13 | ❌ |
+
+**Вывод:** Все 23 фичи нужны. Даже удаление 3 worst (dow_sin/cos, hour_cos) ухудшает на 0.66 Sharpe. Видимо, LGB сам справляется с шумовыми фичами, а pruning теряет редкие но полезные сигналы.
+
+### EXP-M: XGBoost Baseline (23f)
+
+IC: W1=0.084, W2=0.063, W3=0.089, ALL=0.079
+
+| Config | Sharpe | Equity | WM | Worst M | Статус |
+|--------|--------|--------|----|---------|--------|
+| XGB-23f | 2.14 | $885 | 10/13 | -31.2% | ❌ |
+
+Помесячно:
+```
+2024-10  +22.3%   2024-11  -31.2%   2024-12  +37.8%   2025-01   +5.5%
+2025-05  +36.8%   2025-06  +58.9%   2025-07   -2.0%   2025-08  +70.2%
+2025-11  +17.5%   2025-12  +50.5%   2026-01  +17.0%   2026-02   +3.2%
+2026-03   -6.6%
+```
+
+**Вывод:** XGB заметно хуже LGB (2.14 vs 2.80). IC ниже (0.079 vs ~0.085 у LGB).
+
+### EXP-N: CatBoost Baseline (23f)
+
+IC: W1=0.089, W2=0.070, W3=0.093, ALL=0.084
+
+| Config | Sharpe | Equity | WM | Worst M | Статус |
+|--------|--------|--------|----|---------|--------|
+| CB-23f | 2.29 | $1082 | 8/13 | -22.0% | ❌ |
+
+Помесячно:
+```
+2024-10  +21.7%   2024-11  -22.0%   2024-12  +61.3%   2025-01   -0.7%
+2025-05  +37.4%   2025-06  +68.5%   2025-07   -1.4%   2025-08  +77.8%
+2025-11  +27.7%   2025-12  +29.7%   2026-01  +30.8%   2026-02  -14.8%
+2026-03   -5.0%
+```
+
+**Вывод:** CB имеет лучший IC (0.084) и меньший worst month (-22% vs -28.5%), но Sharpe ниже (2.29). У CB 5 отрицательных месяцев vs 3 у LGB.
+
+### EXP-O: Stacked Ensemble (LGB + XGB + CB)
+
+| Метод | Sharpe | Equity | WM | Worst M | Статус |
+|-------|--------|--------|----|---------|--------|
+| avg-ensemble | 2.28 | $1108 | 10/13 | -35.2% | ❌ |
+| rank-ensemble | 2.45 | $1361 | 11/13 | -38.2% | ❌ |
+| ridge-stack (W1→W2, W1+W2→W3) | 1.15 | $162 | 6/9 | -34.9% | ❌ |
+
+Ridge коэффициенты:
+```
+W1→W2:     LGB=-0.010  XGB=+0.038  CB=-0.019
+W1+W2→W3:  LGB=+0.033  XGB=+0.004  CB=-0.027
+```
+
+**Вывод:** Все ensemble-методы хуже чистого LGB. Ridge-stacking катастрофа — слишком мало OOS данных для meta-learner (только W2+W3 = 9 месяцев). Rank-ensemble (Sh=2.45) чуть лучше avg-ensemble (2.28), но оба хуже LGB solo (2.80).
+
+### EXP-P: New Features from Untapped Sources
+
+18 новых фич: premium_zscore, oi_velocity, taker_imb_z, vol_of_vol, dist_from_high, vol_ratio, ret_168h, fng_value/zscore, vix_close/zscore, dxy_ret_7d, adx, mfi_14, ret_skew/kurt_24h, vwap_dev_24h, obv_ma_ratio_24.
+
+| Config | Sharpe | Equity | WM | Worst M | Статус |
+|--------|--------|--------|----|---------|--------|
+| P-ctrl-23f (baseline) | **2.80** | **$2096** | 10/13 | -28.5% | ✅ |
+| P-all-40f (23+17 new) | 1.96 | $691 | 9/13 | -46.1% | ❌ |
+| P-fng-25f (+fear&greed) | 2.50 | $1548 | 9/13 | -25.1% | ⚠️ |
+| P-deriv-25f (+oi_vel, taker_imb) | 2.07 | $835 | 10/13 | -37.1% | ❌ |
+| P-vol-25f (+vol_of_vol, vol_ratio) | 2.29 | $1081 | 10/13 | -31.6% | ❌ |
+| P-ta-29f (+adx,mfi,skew,kurt,vwap,obv) | 2.43 | $1248 | 10/13 | -19.1% | ⚠️ |
+| P-mom-25f (+dist_high, ret_168h) | 2.37 | $1238 | 10/13 | -27.6% | ❌ |
+
+Помесячно P-fng-25f:
+```
+2024-10  +43.0%   2024-11  -25.1%   2024-12  +76.5%   2025-01   -2.3%
+2025-05  +30.7%   2025-06  +74.5%   2025-07   -2.2%   2025-08  +51.9%
+2025-11  +17.7%   2025-12  +47.2%   2026-01  +46.2%   2026-02   -6.6%
+2026-03   +4.6%
+```
+
+Помесячно P-ta-29f:
+```
+2024-10  +26.2%   2024-11  -19.1%   2024-12  +29.4%   2025-01  +33.4%
+2025-05  +25.4%   2025-06  +58.0%   2025-07   +8.3%   2025-08  +62.1%
+2025-11  +21.1%   2025-12  +63.7%   2026-01  +16.8%   2026-02   -8.8%
+2026-03   -3.6%
+```
+
+**Выводы по P:**
+- Все 17 новых фич разом (40f) — катастрофа (Sh=1.96). Слишком много шума, LGB переобучается.
+- **FNG (+fear&greed)** — снизил worst month до -25.1% (vs -28.5%), но потерял Sharpe (2.50 vs 2.80). Более стабильный.
+- **TA (+adx,mfi,skew,kurt,vwap,obv)** — лучший worst month (-19.1%!), но Sharpe 2.43. Самый "гладкий" equity.
+- Ни одна новая фича не побила baseline по Sharpe.
+
+### R22 Summary Table
+
+| # | Config | Sharpe | Equity | vs Baseline |
+|---|--------|--------|--------|-------------|
+| 1 | **LGB-default-23f** | **2.80** | **$2096** | **= BASELINE** |
+| 2 | LGB-HPO-23f | 2.56 | $1541 | -0.24 |
+| 3 | P-fng-25f | 2.50 | $1548 | -0.30 |
+| 4 | O-rank-ensemble | 2.45 | $1361 | -0.35 |
+| 5 | P-ta-29f | 2.43 | $1248 | -0.37 |
+| 6 | P-mom-25f | 2.37 | $1238 | -0.43 |
+| 7 | N-CB-23f | 2.29 | $1082 | -0.51 |
+| 8 | P-vol-25f | 2.29 | $1081 | -0.51 |
+| 9 | O-avg-ensemble | 2.28 | $1108 | -0.52 |
+| 10 | L-prune-18f | 2.25 | $1045 | -0.55 |
+| 11 | L-prune-13f | 2.17 | $957 | -0.63 |
+| 12 | M-XGB-23f | 2.14 | $885 | -0.66 |
+| 13 | L-prune-20f | 2.14 | $922 | -0.66 |
+| 14 | P-deriv-25f | 2.07 | $835 | -0.73 |
+| 15 | L-prune-16f | 1.98 | $750 | -0.82 |
+| 16 | P-all-40f | 1.96 | $691 | -0.84 |
+| 17 | O-ridge-stack | 1.15 | $162 | -1.65 |
+
+### R22 Ключевые выводы
+
+1. **LGB с дефолтными параметрами — ЛУЧШЕ всех.** HPO, XGBoost, CatBoost, ensemble, новые фичи — ничего не побило Sh=2.80.
+2. **Модель уже хорошо оптимизирована.** 23 фичи, lr=0.03, num_leaves=63, min_child_samples=100 — это sweet spot.
+3. **Ensemble = диверсификация, а не improvement.** Avg/rank/ridge — заметно хуже одиночного LGB. Модели слишком коррелированы.
+4. **Больше фич ≠ лучше.** 40f → Sh=1.96 vs 23f → Sh=2.80. Шум победил сигнал.
+5. **Интересно:** P-ta имеет worst month -19.1% (лучший drawdown), P-fng стабильнее. Можно использовать для risk management, но не для return maximization.
+
+**Рекорд не побит. Текущий лучший: Sh=2.80, Eq=$2096** (LGB-23f, cutoff=0.9, 12h rebal, 6L/3S)

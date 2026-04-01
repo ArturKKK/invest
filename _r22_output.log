@@ -1,0 +1,227 @@
+================================================================================
+  R22 — DEEP MODEL IMPROVEMENT (overnight pipeline)
+================================================================================
+  Base: R20-C winner — LGB-23f, cutoff=0.9, 12h rebal → Sh=2.80
+  Experiments: K(HPO) L(prune) M(XGB) N(CB) O(stack) P(new feats)
+
+  Loading data...
+  Base: 1,826,014 rows, 35 symbols
+
+  Building R19 features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  FEATURES_23 availability: 23/23
+
+  Adding new features for EXP-P...
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] Error: 'timestamp'
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 15: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+
+================================================================================
+  EXP-K: LGB Hyperparameter Optimization (Optuna, n=20)
+================================================================================
+
+  Best trial: Sh=2.46
+  Best params: {
+    "lr": 0.0060758085133366885,
+    "num_leaves": 122,
+    "min_child_samples": 291,
+    "subsample": 0.9041986740582306,
+    "colsample_bytree": 0.6523068845866853,
+    "lambda_l2": 0.019634341572933336,
+    "lambda_l1": 3.4211651325607844,
+    "max_depth": 4
+}
+
+  Retraining best HPO with 5 seeds...
+    W1: IC=0.0862 IC>0=64%
+    W2: IC=0.0712 IC>0=60%
+    W3: IC=0.0889 IC>0=64%
+    ALL: IC=0.0822 +/-0.2672
+  ❌ K-LGB-HPO-23f                                              Sh=+2.56 Wr= -29.7% WM=10/13 → $1541
+       2024-10   +31.3%  eq=$     131
+       2024-11   -29.7%  eq=$      92
+       2024-12   +85.8%  eq=$     172
+       2025-01   +2.6%  eq=$     176
+       2025-05   +35.5%  eq=$     238
+       2025-06   +74.8%  eq=$     417
+       2025-07   -13.4%  eq=$     361
+       2025-08   +73.0%  eq=$     624
+       2025-11   +24.6%  eq=$     778
+       2025-12   +62.1%  eq=$    1260
+       2026-01   +21.8%  eq=$    1535
+       2026-02   +4.0%  eq=$    1597
+       2026-03   -3.5%  eq=$    1541
+
+  Control (default params):
+  ❌ K-LGB-default-23f                                          Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+       2024-10   +26.7%  eq=$     127
+       2024-11   -28.5%  eq=$      91
+       2024-12   +90.7%  eq=$     173
+       2025-01   +10.1%  eq=$     190
+       2025-05   +38.6%  eq=$     264
+       2025-06   +66.5%  eq=$     439
+       2025-07   -6.8%  eq=$     409
+       2025-08   +67.1%  eq=$     684
+       2025-11   +16.1%  eq=$     794
+       2025-12   +61.1%  eq=$    1280
+       2026-01   +40.8%  eq=$    1802
+       2026-02   +19.8%  eq=$    2158
+       2026-03   -2.9%  eq=$    2096
+
+================================================================================
+  EXP-L: Feature Importance & Pruning
+================================================================================
+
+  Feature importance (avg gain across 15 models):
+     1. atr_14                   2378.9  ██████████████████████████████
+     2. gk_vol_24h               2245.0  ████████████████████████████
+     3. ret_48h                  1794.2  ██████████████████████
+     4. ls_divergence            1751.8  ██████████████████████
+     5. oi_zscore                1204.8  ███████████████
+     6. taker_cvd_24h            1101.8  █████████████
+     7. mom_z_24h                 849.1  ██████████
+     8. rvol_24h                  777.8  █████████
+     9. oi_chg_24h                759.2  █████████
+    10. ret_24h                   624.2  ███████
+    11. taker_cvd_12h             597.0  ███████
+    12. rvol_12h                  593.1  ███████
+    13. residual_24h              512.3  ██████
+    14. ret_12h                   493.7  ██████
+    15. oi_chg_12h                429.7  █████
+    16. pct_coins_up_12h          402.6  █████
+    17. residual_12h              362.4  ████
+    18. iv_rv_spread              346.1  ████
+    19. pct_coins_up_1h            69.2  █
+    20. hour_sin                   11.9  █
+    21. hour_cos                    1.1  █
+    22. dow_sin                     0.0  █
+    23. dow_cos                     0.0  █
+  ❌ L-prune-23f                                                Sh=+2.80 Wr= -28.5% WM=10/13 → $2096
+       2024-10   +26.7%  eq=$     127
+       2024-11   -28.5%  eq=$      91
+       2024-12   +90.7%  eq=$     173
+       2025-01   +10.1%  eq=$     190
+       2025-05   +38.6%  eq=$     264
+       2025-06   +66.5%  eq=$     439
+       2025-07   -6.8%  eq=$     409
+       2025-08   +67.1%  eq=$     684
+       2025-11   +16.1%  eq=$     794
+       2025-12   +61.1%  eq=$    1280
+       2026-01   +40.8%  eq=$    1802
+       2026-02   +19.8%  eq=$    2158
+       2026-03   -2.9%  eq=$    2096
+  ❌ L-prune-20f                                                Sh=+2.14 Wr= -31.9% WM=10/13 → $922
+  ❌ L-prune-18f                                                Sh=+2.25 Wr= -38.5% WM=9/13 → $1045
+  ❌ L-prune-16f                                                Sh=+1.98 Wr= -38.4% WM=9/13 → $750
+  ❌ L-prune-13f                                                Sh=+2.17 Wr= -26.2% WM=9/13 → $957
+
+================================================================================
+  EXP-M: XGBoost Baseline (23f)
+================================================================================
+    W1: IC=0.0841 IC>0=64%
+    W2: IC=0.0634 IC>0=60%
+    W3: IC=0.0886 IC>0=62%
+    ALL: IC=0.0788 +/-0.2525
+  ❌ M-XGB-23f                                                  Sh=+2.14 Wr= -31.2% WM=10/13 → $885
+       2024-10   +22.3%  eq=$     122
+       2024-11   -31.2%  eq=$      84
+       2024-12   +37.8%  eq=$     116
+       2025-01   +5.5%  eq=$     122
+       2025-05   +36.8%  eq=$     167
+       2025-06   +58.9%  eq=$     266
+       2025-07   -2.0%  eq=$     261
+       2025-08   +70.2%  eq=$     444
+       2025-11   +17.5%  eq=$     522
+       2025-12   +50.5%  eq=$     785
+       2026-01   +17.0%  eq=$     918
+       2026-02   +3.2%  eq=$     947
+       2026-03   -6.6%  eq=$     885
+
+================================================================================
+  EXP-N: CatBoost Baseline (23f)
+================================================================================
+    W1: IC=0.0887 IC>0=64%
+    W2: IC=0.0703 IC>0=60%
+    W3: IC=0.0929 IC>0=64%
+    ALL: IC=0.0841 +/-0.2670
+  ⚠️ N-CB-23f                                                   Sh=+2.29 Wr= -22.0% WM=8/13 → $1082
+       2024-10   +21.7%  eq=$     122
+       2024-11   -22.0%  eq=$      95
+       2024-12   +61.3%  eq=$     153
+       2025-01   -0.7%  eq=$     152
+       2025-05   +37.4%  eq=$     209
+       2025-06   +68.5%  eq=$     352
+       2025-07   -1.4%  eq=$     347
+       2025-08   +77.8%  eq=$     617
+       2025-11   +27.7%  eq=$     788
+       2025-12   +29.7%  eq=$    1023
+       2026-01   +30.8%  eq=$    1338
+       2026-02   -14.8%  eq=$    1140
+       2026-03   -5.0%  eq=$    1082
+
+================================================================================
+  EXP-O: Stacked Ensemble (LGB + XGB + CB → Ridge meta)
+================================================================================
+  Ensemble size: 261404 rows (7882 timestamps)
+  ❌ O-avg-ensemble                                             Sh=+2.28 Wr= -35.2% WM=10/13 → $1108
+       2024-10   +28.6%  eq=$     129
+       2024-11   -35.2%  eq=$      83
+       2024-12   +57.1%  eq=$     131
+       2025-01   +15.6%  eq=$     151
+       2025-05   +46.3%  eq=$     221
+       2025-06   +64.9%  eq=$     365
+       2025-07   -2.0%  eq=$     358
+       2025-08   +75.1%  eq=$     626
+       2025-11   +15.0%  eq=$     720
+       2025-12   +27.9%  eq=$     921
+       2026-01   +22.8%  eq=$    1132
+       2026-02   +3.1%  eq=$    1167
+       2026-03   -5.1%  eq=$    1108
+Traceback (most recent call last):
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/internals/blocks.py", line 1115, in setitem
+    casted = np_can_hold_element(values.dtype, value)
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/dtypes/cast.py", line 1788, in np_can_hold_element
+    raise LossySetitemError
+pandas.errors.LossySetitemError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/a.s.tabakov/Developer/invest/_research_r22_models.py", line 875, in <module>
+    elapsed = time.time() - t0
+    ^^^^^^
+  File "/Users/a.s.tabakov/Developer/invest/_research_r22_models.py", line 821, in main
+  File "/Users/a.s.tabakov/Developer/invest/_research_r22_models.py", line 654, in exp_o
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/indexing.py", line 938, in __setitem__
+    iloc._setitem_with_indexer(indexer, value, self.name)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/indexing.py", line 1953, in _setitem_with_indexer
+    self._setitem_with_indexer_split_path(indexer, value, name)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/indexing.py", line 1997, in _setitem_with_indexer_split_path
+    self._setitem_single_column(ilocs[0], value, pi)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/indexing.py", line 2181, in _setitem_single_column
+    self.obj._mgr.column_setitem(loc, plane_indexer, value)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/internals/managers.py", line 1520, in column_setitem
+    new_mgr = col_mgr.setitem((idx,), value)
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/internals/managers.py", line 604, in setitem
+    return self.apply("setitem", indexer=indexer, value=value)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/internals/managers.py", line 442, in apply
+    applied = getattr(b, f)(**kwargs)
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/internals/blocks.py", line 1118, in setitem
+    nb = self.coerce_to_target_dtype(value, raise_on_upcast=True)
+  File "/Users/a.s.tabakov/Developer/invest/.venv/lib/python3.13/site-packages/pandas/core/internals/blocks.py", line 468, in coerce_to_target_dtype
+    raise TypeError(f"Invalid value '{other}' for dtype '{self.values.dtype}'")
+TypeError: Invalid value '[-0.05882353 -0.08823529  0.35294118  0.          0.05882353  0.38235294
+  0.20588235  0.32352941  0.44117647  0.41176471 -0.47058824  0.11764706
+ -0.41176471  0.26470588 -0.17647059  0.17647059 -0.44117647  0.23529412
+ -0.29411765 -0.23529412 -0.38235294  0.02941176  0.5         0.47058824
+ -0.26470588 -0.02941176 -0.32352941  0.14705882 -0.11764706 -0.35294118
+ -0.20588235 -0.14705882  0.29411765  0.08823529]' for dtype 'float32'
