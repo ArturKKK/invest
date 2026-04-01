@@ -1,0 +1,100 @@
+================================================================================
+  R26 — Next-Generation Improvements
+  Base: R25 A-lgb+xgb, Sh=3.36, Eq=$3371
+================================================================================
+
+  Loading data...
+  Base: 1,826,014 rows, 35 symbols
+
+  Building features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  FEATURES_23: 23/23
+
+================================================================================
+  EXP-B: Focal Loss (γ sweep)
+================================================================================
+  Training focal LGB (γ=1.0)...
+  ⚠️ B-focal-g1                                                 Sh=+2.64 Wr= -18.3% WM=10/13 → $1300
+  Training focal LGB (γ=2.0)...
+  ❌ B-focal-g2                                                 Sh=+2.35 Wr= -25.4% WM=10/13 → $898
+  Training focal LGB (γ=3.0)...
+  ⚠️ B-focal-g3                                                 Sh=+2.80 Wr= -19.0% WM=10/13 → $1572
+  Training focal LGB (γ=5.0)...
+  ✅ B-focal-g5                                                 Sh=+3.04 Wr=  -4.1% WM=12/13 → $2061
+  Best focal γ=5.0, blending with XGB...
+  ⚠️ B-focal+xgb                                                Sh=+3.11 Wr= -17.6% WM=11/13 → $2379
+
+================================================================================
+  EXP-E: Larger Symbol Universe (50 coins)
+================================================================================
+  Loading data for 50 symbols...
+  Loaded: 1,930,160 rows, 37 symbols
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  features: 23/23
+  Training LGB cls (50 symbols)...
+  Training XGB cls (50 symbols)...
+  ⚠️ E-50sym-5L3S                                               Sh=+3.33 Wr= -17.0% WM=12/13 → $3095
+  ✅ E-50sym-7L4S                                               Sh=+3.07 Wr=  -9.6% WM=11/13 → $1513
+  ⚠️ E-50sym-8L5S                                               Sh=+2.99 Wr= -19.3% WM=11/13 → $1100
+  ⚠️ E-50sym-10L5S                                              Sh=+2.77 Wr= -22.5% WM=11/13 → $881
+
+  Training R25 binary ensemble for L/S grid (EXP-F)...
+
+================================================================================
+  EXP-F: Asymmetric L/S Grid (n_long × n_short × threshold)
+================================================================================
+
+  Top-10 L/S configs (of 60):
+  ✅ F-6L3S-dt0.4                                               Sh=+3.44 Wr=  -6.4% WM=10/13 → $3094
+  ✅ F-6L3S-dt0.5625                                            Sh=+3.43 Wr=  -4.2% WM=10/13 → $3494
+  ✅ F-6L3S-dt0.7                                               Sh=+3.39 Wr=  -3.0% WM=10/13 → $3632
+  ✅ F-5L3S-dt0.5625                                            Sh=+3.36 Wr=  -5.7% WM=10/13 → $3371
+  ✅ F-5L3S-dt0.4                                               Sh=+3.35 Wr=  -7.5% WM=10/13 → $2966
+  ✅ F-5L3S-dt0.7                                               Sh=+3.33 Wr=  -5.1% WM=10/13 → $3567
+  ✅ F-7L3S-dt0.5625                                            Sh=+3.33 Wr=  -9.2% WM=10/13 → $2966
+  ✅ F-7L3S-dt0.4                                               Sh=+3.33 Wr= -10.6% WM=10/13 → $2621
+  ✅ F-7L3S-dt0.7                                               Sh=+3.29 Wr=  -8.7% WM=10/13 → $3070
+  ✅ F-3L3S-dt0.5625                                            Sh=+3.23 Wr=  -7.0% WM=11/13 → $3570
+
+================================================================================
+  FINAL RANKINGS — R26 ALL EXPERIMENTS
+================================================================================
+
+  TOP-20 CONFIGURATIONS:
+  # 1: ?                               Sh=3.44  Eq=$3094  Worst=-6.4%  WM=10/13
+  # 2: ?                               Sh=3.43  Eq=$3494  Worst=-4.2%  WM=10/13
+  # 3: ?                               Sh=3.39  Eq=$3632  Worst=-3.0%  WM=10/13
+  # 4: ?                               Sh=3.36  Eq=$3371  Worst=-5.7%  WM=10/13
+  # 5: ?                               Sh=3.35  Eq=$2966  Worst=-7.5%  WM=10/13
+  # 6: ?                               Sh=3.33  Eq=$3567  Worst=-5.1%  WM=10/13
+  # 7: ?                               Sh=3.33  Eq=$2966  Worst=-9.2%  WM=10/13
+  # 8: ?                               Sh=3.33  Eq=$3095  Worst=-17.0%  WM=12/13
+  # 9: ?                               Sh=3.33  Eq=$2621  Worst=-10.6%  WM=10/13
+  #10: ?                               Sh=3.29  Eq=$3070  Worst=-8.7%  WM=10/13
+  #11: ?                               Sh=3.23  Eq=$3570  Worst=-7.0%  WM=11/13
+  #12: ?                               Sh=3.22  Eq=$3105  Worst=-7.1%  WM=11/13
+  #13: ?                               Sh=3.21  Eq=$3764  Worst=-5.7%  WM=11/13
+  #14: ?                               Sh=3.15  Eq=$2951  Worst=-6.9%  WM=10/13
+  #15: ?                               Sh=3.14  Eq=$2596  Worst=-8.7%  WM=10/13
+  #16: ?                               Sh=3.13  Eq=$3106  Worst=-6.2%  WM=10/13
+  #17: ?                               Sh=3.11  Eq=$2379  Worst=-17.6%  WM=11/13
+  #18: ?                               Sh=3.07  Eq=$1513  Worst=-9.6%  WM=11/13
+  #19: ?                               Sh=3.04  Eq=$2061  Worst=-4.1%  WM=12/13
+  #20: ?                               Sh=2.99  Eq=$1100  Worst=-19.3%  WM=11/13
+
+  Total time: 28.3 min
+  DONE.

@@ -1,0 +1,71 @@
+================================================================================
+  R26 — Next-Generation Improvements
+  Base: R25 A-lgb+xgb, Sh=3.36, Eq=$3371
+================================================================================
+
+  Loading data...
+  Base: 1,826,014 rows, 35 symbols
+
+  Building features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  FEATURES_23: 23/23
+
+================================================================================
+  EXP-D: CatBoost-Huber + CLS Blend (cls × regression diversity)
+================================================================================
+  Training CatBoost Huber (regression)...
+  ❌ D-cb-huber                                                 Sh=+2.45 Wr= -29.7% WM=9/13 → $1315
+  Training R25 binary ensemble...
+  ⚠️ D-cls+huber-50                                             Sh=+2.40 Wr= -17.7% WM=9/13 → $1119
+  ✅ D-cls+huber-67                                             Sh=+3.20 Wr= -12.1% WM=10/13 → $3196
+  ⚠️ D-cls+huber-33                                             Sh=+2.36 Wr= -24.7% WM=9/13 → $1150
+
+================================================================================
+  EXP-A: Multi-Class Classification (3-class)
+================================================================================
+  Training multi-class LGB...
+  ❌ A-mc-lgb                                                   Sh=+1.36 Wr= -29.6% WM=9/13 → $300
+  Training multi-class XGB...
+  ❌ A-mc-xgb                                                   Sh=+1.53 Wr= -33.5% WM=9/13 → $360
+  ❌ A-mc-ens                                                   Sh=+1.01 Wr= -34.1% WM=9/13 → $198
+  Training binary LGB (R25 baseline for blending)...
+  ✅ A-bin-ens-ctrl                                             Sh=+3.36 Wr=  -5.7% WM=10/13 → $3371
+  ❌ A-cross-bin+mc                                             Sh=+2.34 Wr= -40.0% WM=10/13 → $937
+
+================================================================================
+  EXP-C: Feature Interaction Engineering
+================================================================================
+  [INTERACT] Added 8 interaction features
+  Extended features: 31 (23 + 8 interactions)
+  Training LGB cls + interactions...
+  ❌ C-lgb-ix                                                   Sh=+1.74 Wr= -34.0% WM=9/13 → $481
+  Training XGB cls + interactions...
+  ⚠️ C-xgb-ix                                                   Sh=+1.83 Wr= -22.9% WM=9/13 → $524
+  ❌ C-ens-ix                                                   Sh=+2.08 Wr= -26.7% WM=9/13 → $701
+
+================================================================================
+  EXP-B: Focal Loss (γ sweep)
+================================================================================
+  Training focal LGB (γ=1.0)...
+Traceback (most recent call last):
+  File "/Users/a.s.tabakov/Developer/invest/_research_r26_next.py", line 792, in <module>
+    main()
+    ~~~~^^
+  File "/Users/a.s.tabakov/Developer/invest/_research_r26_next.py", line 739, in main
+    results_b = exp_b(df, regime_df)
+  File "/Users/a.s.tabakov/Developer/invest/_research_r26_next.py", line 477, in exp_b
+    preds = train_focal_lgb(df, avail, gamma=gamma)
+  File "/Users/a.s.tabakov/Developer/invest/_research_r26_next.py", line 268, in train_focal_lgb
+    model = lgb.train(
+        {"learning_rate": 0.03, "num_leaves": 63,
+    ...<5 lines>...
+        callbacks=[lgb.early_stopping(40, verbose=False),
+                   lgb.log_evaluation(-1)])
+TypeError: train() got an unexpected keyword argument 'fobj'
