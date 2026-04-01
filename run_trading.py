@@ -1406,7 +1406,7 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         n_long = min(n_long, n // 3)
         n_short = min(n_short, n // 3)
 
-    # ── CLS mode: R25 sim uses trend_cutoff=0.9, dyn_threshold=0.5625 ──
+    # ── CLS mode: R26 winner uses trend_cutoff=0.9, dyn_threshold=0.7 ──
     cls_mode = risk_cfg.get('_cls_mode', False)
     dyn_exposure = 1.0
     r7_vol_scale = 1.0
@@ -1414,15 +1414,15 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     eq_boost = 1.0
 
     if cls_mode:
-        # R25 CFG: trend_cutoff=0.9 → skip cycle entirely
+        # R26 CFG: trend_cutoff=0.9 → skip cycle entirely
         if regime_data:
             ts_val = regime_data.get('trend_strength', 0)
             if ts_val > 0.9:
                 print(f"   🔴 CLS trend_cutoff: trend_str={ts_val:.2f} > 0.9, skipping cycle")
                 return []
-            # dyn_threshold=0.5625 → scale exposure down linearly
-            if ts_val > 0.5625:
-                dyn_exposure = max(0.1, 1.0 - (ts_val - 0.5625) / (0.9 - 0.5625) * 0.5)
+            # dyn_threshold=0.7 → scale exposure down linearly
+            if ts_val > 0.7:
+                dyn_exposure = max(0.1, 1.0 - (ts_val - 0.7) / (0.9 - 0.7) * 0.5)
                 print(f"   📊 CLS dyn_exposure: trend_str={ts_val:.2f}, exp={dyn_exposure:.2f}")
         # CLS: no regime-asym, no vol-scale, no sm, no eq-boost (match sim)
     else:
@@ -2665,15 +2665,15 @@ def main():
         risk_cfg['min_zscore'] = args.min_zscore
     risk_cfg['_demo_mode'] = (args.mode == 'paper')
 
-    # CLS mode: simple 5L/3S, no risk stack overlays (matches R25 simulation)
+    # CLS mode: 6L/3S, no risk stack overlays (R26 winner: F-6L3S-dt0.7)
     if args.cls:
-        risk_cfg['n_long'] = 5
+        risk_cfg['n_long'] = 6
         risk_cfg['n_short'] = 3
         risk_cfg['kelly_frac'] = 1.0       # full allocation (no kelly cut)
         risk_cfg['min_zscore'] = 0.0        # no filtering
         risk_cfg['confidence_threshold'] = 0.0
         risk_cfg['_cls_mode'] = True        # disable vol_scale in construct_portfolio
-        print(f"   📋 CLS mode: 5L/3S, kelly=1.0, no min_zscore, no vol_scale")
+        print(f"   📋 CLS mode: 6L/3S, kelly=1.0, no min_zscore, no vol_scale")
 
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
