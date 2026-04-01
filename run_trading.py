@@ -85,6 +85,17 @@ _OKX_BLOCKED = {
     'CHZ/USDT', 'MKR/USDT',
 }
 
+# R25 simulation symbols (SYM_35) — CLS mode filters to these
+CLS_SYMBOLS = {
+    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
+    'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT',
+    'MATIC/USDT', 'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'NEAR/USDT',
+    'FIL/USDT', 'APT/USDT', 'ARB/USDT', 'OP/USDT', 'AAVE/USDT',
+    'INJ/USDT', 'FTM/USDT', 'ALGO/USDT', 'SAND/USDT', 'MANA/USDT',
+    'AXS/USDT', 'THETA/USDT', 'RUNE/USDT', 'EGLD/USDT', 'XTZ/USDT',
+    'FLOW/USDT', 'CHZ/USDT', 'CRV/USDT', 'LDO/USDT', 'SNX/USDT',
+}
+
 # Feature columns to exclude
 EXCLUDE_COLS = {
     'timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume',
@@ -489,6 +500,64 @@ def add_ridge_features(df):
     return df
 
 
+def add_cls_features(df, root):
+    """Build features needed by CLS model that the standard pipeline doesn't create.
+    Must be called BEFORE cross_sectional_rank() so these get ranked like in simulation."""
+    print("   🔧 Adding CLS-specific features...")
+    n_added = 0
+
+    # 1. rvol_12h, rvol_24h: realized vol = sqrt(rolling mean of ret_1h²)
+    if 'ret_1h' in df.columns:
+        for h in [12, 24]:
+            col = f'rvol_{h}h'
+            if col not in df.columns:
+                df[col] = df.groupby('symbol').apply(
+                    lambda g: pd.Series(
+                        (g['ret_1h'] ** 2).rolling(h, min_periods=h // 2).mean().pow(0.5).values,
+                        index=g.index)
+                ).droplevel(0)
+                n_added += 1
+
+    # 2. iv_rv_spread: btc_dvol/100 - annualized rvol_24h
+    if 'iv_rv_spread' not in df.columns:
+        sent_dir = os.path.join(root, 'data', 'sentiment')
+        dvol_path = os.path.join(sent_dir, 'deribit_dvol.parquet')
+        if os.path.exists(dvol_path) and 'rvol_24h' in df.columns:
+            try:
+                dv = pd.read_parquet(dvol_path)
+                btc_dv = dv[dv['currency'] == 'BTC'][['timestamp', 'dvol_close']].rename(
+                    columns={'dvol_close': '_btc_dvol_tmp'})
+                btc_dv = btc_dv.set_index('timestamp').resample('1h').ffill().reset_index()
+                df = df.merge(btc_dv, on='timestamp', how='left')
+                df['_btc_dvol_tmp'] = df['_btc_dvol_tmp'].ffill()
+                ann_rvol = df.groupby('symbol')['rvol_24h'].transform(
+                    lambda x: x * np.sqrt(24 * 365))
+                df['iv_rv_spread'] = df['_btc_dvol_tmp'] / 100 - ann_rvol
+                df.drop(columns=['_btc_dvol_tmp'], inplace=True, errors='ignore')
+                n_added += 1
+            except Exception as e:
+                print(f"   ⚠️  iv_rv_spread failed: {e}")
+                df['iv_rv_spread'] = 0.0
+        else:
+            df['iv_rv_spread'] = 0.0
+
+    # 3. pct_coins_up_12h, pct_coins_up_1h: cross-sectional breadth
+    for ret_col, feat_col in [('ret_12h', 'pct_coins_up_12h'), ('ret_1h', 'pct_coins_up_1h')]:
+        if feat_col not in df.columns and ret_col in df.columns:
+            df[feat_col] = df.groupby('timestamp')[ret_col].transform(lambda x: (x > 0).mean())
+            n_added += 1
+
+    # 4. Calendar features: alias cal_* → plain names (so they get ranked → ~0.0 like in sim)
+    for cal, plain in [('cal_hour_sin', 'hour_sin'), ('cal_hour_cos', 'hour_cos'),
+                       ('cal_dow_sin', 'dow_sin'), ('cal_dow_cos', 'dow_cos')]:
+        if plain not in df.columns and cal in df.columns:
+            df[plain] = df[cal]
+            n_added += 1
+
+    print(f"   ✅ CLS features: {n_added} added")
+    return df
+
+
 def generate_signal_lgb_cs(df, root):
     """
     Generate trading signal using LightGBM ensemble (R9B production model).
@@ -567,6 +636,100 @@ def generate_signal_lgb_cs(df, root):
     result = latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
         'score', ascending=False).reset_index(drop=True)
     result.attrs['model_info'] = {'n_models': len(models), 'groups': {'lgb_cs': len(models)}}
+    result.attrs['regime_data'] = regime_data
+    return result
+
+
+def generate_signal_cls(df, root):
+    """
+    Generate signal using LGB+XGB binary classification ensemble (R25).
+    Features must already be built (add_cls_features) and ranked (cross_sectional_rank).
+    """
+    import lightgbm as lgb_lib
+    import xgboost as xgb_lib
+
+    cls_dir = os.path.join(root, 'results_cls_prod')
+    if not os.path.isdir(cls_dir):
+        print(f"   ❌ CLS models not found: {cls_dir}")
+        print(f"      Run: python train_cls_prod.py")
+        return None
+
+    lgb_files = sorted(Path(cls_dir).glob('lgb_cls_seed_*.txt'))
+    xgb_files = sorted(Path(cls_dir).glob('xgb_cls_seed_*.json'))
+    if not lgb_files or not xgb_files:
+        print(f"   ❌ Need both lgb_cls_seed_*.txt and xgb_cls_seed_*.json")
+        return None
+
+    lgb_models = [lgb_lib.Booster(model_file=str(f)) for f in lgb_files]
+    xgb_models = []
+    for f in xgb_files:
+        m = xgb_lib.Booster()
+        m.load_model(str(f))
+        xgb_models.append(m)
+
+    feat_names = lgb_models[0].feature_name()
+    print(f"   📦 CLS ensemble: {len(lgb_models)} LGB + {len(xgb_models)} XGB, {len(feat_names)} feats")
+
+    latest = df.groupby('symbol').last().reset_index()
+
+    missing = [f for f in feat_names if f not in latest.columns]
+    if missing:
+        print(f"   ⚠️  CLS missing {len(missing)} features: {missing}")
+        for f in missing:
+            latest[f] = 0.0
+    else:
+        print(f"   ✅ All {len(feat_names)} features present")
+
+    X = latest[feat_names].fillna(0).values
+
+    # LGB predictions (probabilities)
+    lgb_probs = np.mean([m.predict(X) for m in lgb_models], axis=0)
+
+    # XGB predictions (probabilities)
+    dmat = xgb_lib.DMatrix(X, feature_names=feat_names)
+    xgb_probs = np.mean([m.predict(dmat) for m in xgb_models], axis=0)
+
+    # Rank-normalize each, then average (same as R25 research)
+    from scipy.stats import rankdata
+    lgb_ranked = rankdata(lgb_probs) / len(lgb_probs) - 0.5
+    xgb_ranked = rankdata(xgb_probs) / len(xgb_probs) - 0.5
+    ensemble = 0.5 * lgb_ranked + 0.5 * xgb_ranked
+
+    # Z-normalize for portfolio construction
+    std = np.std(ensemble)
+    if std > 1e-10:
+        scores = (ensemble - np.mean(ensemble)) / std
+    else:
+        scores = ensemble
+
+    latest['score'] = scores
+    latest['confidence'] = np.full(len(latest), 0.5)
+    latest['deriv_scale'] = np.full(len(latest), 1.0)
+
+    print(f"   ✅ CLS ensemble: score range [{scores.min():.2f}, {scores.max():.2f}]")
+    print(f"   📊 LGB prob [{lgb_probs.min():.3f}, {lgb_probs.max():.3f}]  "
+          f"XGB prob [{xgb_probs.min():.3f}, {xgb_probs.max():.3f}]")
+
+    # BTC regime data for trend_cutoff / dyn_threshold (R25 CFG uses trend_cutoff=0.9)
+    btc_data = df[df['symbol'] == 'BTC/USDT'].sort_values('timestamp')
+    regime_data = {}
+    if len(btc_data) >= 168:
+        btc_close = btc_data['close'].values
+        btc_ret_7d = btc_close[-1] / btc_close[-168] - 1 if btc_close[-168] > 0 else 0
+        btc_hourly_rets = np.diff(btc_close[-169:]) / (btc_close[-169:-1] + 1e-10)
+        btc_vol_7d = float(np.std(btc_hourly_rets))
+        trend_strength = abs(btc_ret_7d) / (btc_vol_7d * np.sqrt(168) + 1e-10)
+        trend_direction = btc_ret_7d / (btc_vol_7d * np.sqrt(168) + 1e-10)
+        regime_data = {
+            'trend_strength': trend_strength,
+            'trend_direction': trend_direction,
+        }
+        print(f"   📊 BTC regime: 7d={btc_ret_7d*100:+.1f}%, trend_str={trend_strength:.2f}")
+
+    result = latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
+        'score', ascending=False).reset_index(drop=True)
+    result.attrs['model_info'] = {'n_models': len(lgb_models) + len(xgb_models),
+                                  'groups': {'lgb_cls': len(lgb_models), 'xgb_cls': len(xgb_models)}}
     result.attrs['regime_data'] = regime_data
     return result
 
@@ -1193,8 +1356,11 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     # Vol targeting: scale position based on recent realized vol
     # Cap (0.5, 1.2): don't shrink below 0.5x in stress, don't inflate above
     # 1.2x in calm markets (was 0.1–3.0 = 30x spread, now 2.4x).
+    # CLS mode: skip vol targeting (not used in R25 simulation)
     vol_history = state.get('recent_rets', [])
-    if len(vol_history) >= 6:
+    if risk_cfg.get('_cls_mode', False):
+        vol_scale = 1.0
+    elif len(vol_history) >= 6:
         realized_vol = np.std(vol_history[-risk_cfg['vol_lookback']:]) + 1e-10
         vol_scale = np.clip(risk_cfg['vol_target'] / realized_vol, 0.5, 1.2)
     else:
@@ -1240,64 +1406,80 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         n_long = min(n_long, n // 3)
         n_short = min(n_short, n // 3)
 
-    # ── R7: Regime-conditional asymmetry ──
-    if regime_data:
-        trend_dir = regime_data.get('trend_direction', 0)
-        if not np.isnan(trend_dir):
-            n_base_l, n_base_s = n_long, n_short
-            if trend_dir >= 0.3:       # mild bull → tilt long
-                n_long = min(n_long + 1, len(signals) // 3)
-                n_short = max(2, n_short - 1)
-            elif trend_dir <= -0.3:    # mild bear → tilt short
-                n_long = max(2, n_long - 1)
-                n_short = min(n_short + 1, len(signals) // 3)
-            if (n_long, n_short) != (n_base_l, n_base_s):
-                print(f"   📊 Regime-asym: trend_dir={trend_dir:+.2f} → {n_long}L/{n_short}S")
-
-    # ── R7: Vol scaling (BTC vol regime) ──
-    r7_vol_scale = 1.0
-    if regime_data:
-        vol_regime = regime_data.get('vol_regime', 1.0)
-        if vol_regime > 0:
-            r7_vol_scale = min(1.5, 1.0 / max(0.5, vol_regime))
-            if abs(r7_vol_scale - 1.0) > 0.05:
-                print(f"   📊 R7 Vol-scale: vol_regime={vol_regime:.2f}, scale={r7_vol_scale:.2f}")
-
-    # ── R7: Dynamic exposure (reduce in strong trends) ──
+    # ── CLS mode: R25 sim uses trend_cutoff=0.9, dyn_threshold=0.5625 ──
+    cls_mode = risk_cfg.get('_cls_mode', False)
     dyn_exposure = 1.0
-    if regime_data:
-        ts_val = regime_data.get('trend_strength', 0)
-        if ts_val > 0.8:
-            dyn_exposure = max(0.5, 1.0 - (ts_val - 0.8) * 0.5)
-            print(f"   📊 Dynamic exposure: trend_str={ts_val:.2f}, dyn_exp={dyn_exposure:.2f}")
-
-    # ── R7: Strategy Momentum 48h (4 × 12h cycles) ──
+    r7_vol_scale = 1.0
     sm_scale = 1.0
-    recent_rets = state.get('recent_rets', [])
-    if len(recent_rets) >= 4:
-        recent_4 = recent_rets[-4:]
-        cum_48h = float(np.prod([1 + r for r in recent_4]))
-        if cum_48h < 0.97:
-            sm_scale = max(0.3, cum_48h)
-            print(f"   📊 Strategy Momentum: cum_48h={cum_48h:.3f}, sm_scale={sm_scale:.2f}")
-
-    # ── R7: EQ-MOM Boost (drawdown scaling + recovery boost) ──
     eq_boost = 1.0
-    equity_hist = [x for x in state.get('r7_equity_vals', []) if isinstance(x, (int, float))]
-    if len(equity_hist) > 4:
-        recent_eq = equity_hist[-1]
-        peak_eq = max(equity_hist)
-        eq_dd = (recent_eq - peak_eq) / (peak_eq + 1e-10)
-        if eq_dd < -0.05:
-            eq_boost = max(0.3, 1.0 + eq_dd * 3)
-            print(f"   📊 EQ-MOM: DD={eq_dd*100:.1f}%, boost={eq_boost:.2f}")
-        elif eq_dd > -0.01:
-            lookback = min(8, len(equity_hist))
-            min_eq = min(equity_hist[-lookback:])
-            recovery = (recent_eq - min_eq) / (min_eq + 1e-10)
-            if recovery > 0.05:
-                eq_boost = min(1.5, 1.0 + recovery * 0.5)
-                print(f"   📊 EQ-MOM: recovery={recovery*100:.1f}%, boost={eq_boost:.2f}")
+
+    if cls_mode:
+        # R25 CFG: trend_cutoff=0.9 → skip cycle entirely
+        if regime_data:
+            ts_val = regime_data.get('trend_strength', 0)
+            if ts_val > 0.9:
+                print(f"   🔴 CLS trend_cutoff: trend_str={ts_val:.2f} > 0.9, skipping cycle")
+                return []
+            # dyn_threshold=0.5625 → scale exposure down linearly
+            if ts_val > 0.5625:
+                dyn_exposure = max(0.1, 1.0 - (ts_val - 0.5625) / (0.9 - 0.5625) * 0.5)
+                print(f"   📊 CLS dyn_exposure: trend_str={ts_val:.2f}, exp={dyn_exposure:.2f}")
+        # CLS: no regime-asym, no vol-scale, no sm, no eq-boost (match sim)
+    else:
+        # ── R7: Regime-conditional asymmetry ──
+        if regime_data:
+            trend_dir = regime_data.get('trend_direction', 0)
+            if not np.isnan(trend_dir):
+                n_base_l, n_base_s = n_long, n_short
+                if trend_dir >= 0.3:       # mild bull → tilt long
+                    n_long = min(n_long + 1, len(signals) // 3)
+                    n_short = max(2, n_short - 1)
+                elif trend_dir <= -0.3:    # mild bear → tilt short
+                    n_long = max(2, n_long - 1)
+                    n_short = min(n_short + 1, len(signals) // 3)
+                if (n_long, n_short) != (n_base_l, n_base_s):
+                    print(f"   📊 Regime-asym: trend_dir={trend_dir:+.2f} → {n_long}L/{n_short}S")
+
+        # ── R7: Vol scaling (BTC vol regime) ──
+        if regime_data:
+            vol_regime = regime_data.get('vol_regime', 1.0)
+            if vol_regime > 0:
+                r7_vol_scale = min(1.5, 1.0 / max(0.5, vol_regime))
+                if abs(r7_vol_scale - 1.0) > 0.05:
+                    print(f"   📊 R7 Vol-scale: vol_regime={vol_regime:.2f}, scale={r7_vol_scale:.2f}")
+
+        # ── R7: Dynamic exposure (reduce in strong trends) ──
+        if regime_data:
+            ts_val = regime_data.get('trend_strength', 0)
+            if ts_val > 0.8:
+                dyn_exposure = max(0.5, 1.0 - (ts_val - 0.8) * 0.5)
+                print(f"   📊 Dynamic exposure: trend_str={ts_val:.2f}, dyn_exp={dyn_exposure:.2f}")
+
+        # ── R7: Strategy Momentum 48h (4 × 12h cycles) ──
+        recent_rets = state.get('recent_rets', [])
+        if len(recent_rets) >= 4:
+            recent_4 = recent_rets[-4:]
+            cum_48h = float(np.prod([1 + r for r in recent_4]))
+            if cum_48h < 0.97:
+                sm_scale = max(0.3, cum_48h)
+                print(f"   📊 Strategy Momentum: cum_48h={cum_48h:.3f}, sm_scale={sm_scale:.2f}")
+
+        # ── R7: EQ-MOM Boost (drawdown scaling + recovery boost) ──
+        equity_hist = [x for x in state.get('r7_equity_vals', []) if isinstance(x, (int, float))]
+        if len(equity_hist) > 4:
+            recent_eq = equity_hist[-1]
+            peak_eq = max(equity_hist)
+            eq_dd = (recent_eq - peak_eq) / (peak_eq + 1e-10)
+            if eq_dd < -0.05:
+                eq_boost = max(0.3, 1.0 + eq_dd * 3)
+                print(f"   📊 EQ-MOM: DD={eq_dd*100:.1f}%, boost={eq_boost:.2f}")
+            elif eq_dd > -0.01:
+                lookback = min(8, len(equity_hist))
+                min_eq = min(equity_hist[-lookback:])
+                recovery = (recent_eq - min_eq) / (min_eq + 1e-10)
+                if recovery > 0.05:
+                    eq_boost = min(1.5, 1.0 + recovery * 0.5)
+                    print(f"   📊 EQ-MOM: recovery={recovery*100:.1f}%, boost={eq_boost:.2f}")
 
     # Build positions
     signals = signals.sort_values('score', ascending=False).reset_index(drop=True)
@@ -1310,22 +1492,43 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     effective_kelly = kelly * vol_scale * r7_vol_scale * dyn_exposure * sm_scale * eq_boost
     total_alloc = capital * effective_kelly * leverage
 
-    # R7: Dynamic Kelly L/S split (instead of fixed 50/50)
-    if n_long > 0 and n_short > 0:
-        long_scores = signals.head(n_long)['score']
-        short_scores = signals.tail(n_short)['score']
-        pred_spread = float(long_scores.mean() - short_scores.mean())
-        long_alloc_frac = float(np.clip(0.5 + pred_spread * 5, 0.3, 0.7))
-    else:
+    # L/S allocation split & position sizing
+    if cls_mode:
+        # CLS: fixed 50/50 L/S split, equal-weight positions (match R25 simulation)
         long_alloc_frac = 0.5
+    else:
+        # R7: Dynamic Kelly L/S split (instead of fixed 50/50)
+        if n_long > 0 and n_short > 0:
+            long_scores = signals.head(n_long)['score']
+            short_scores = signals.tail(n_short)['score']
+            pred_spread = float(long_scores.mean() - short_scores.mean())
+            long_alloc_frac = float(np.clip(0.5 + pred_spread * 5, 0.3, 0.7))
+        else:
+            long_alloc_frac = 0.5
+
     long_half = total_alloc * long_alloc_frac
     short_half = total_alloc * (1 - long_alloc_frac)
 
     # Cap per position at 15% of leveraged capital for diversification
     max_per_pos = capital * leverage * 0.15
 
-    # Compute edge-boost weights (with optional inverse-vol sizing)
-    weighted = _edge_boost_weights(signals, n_long, n_short, coin_vol=coin_vol)
+    if cls_mode:
+        # CLS: equal-weight positions (sim uses .mean() of returns = equal weight)
+        sorted_df = signals.sort_values('score', ascending=False).reset_index(drop=True)
+        long_df = sorted_df.head(n_long)
+        short_df = sorted_df.tail(n_short)
+        weighted = []
+        if len(long_df) > 0:
+            w_l = 1.0 / len(long_df)
+            for _, row in long_df.iterrows():
+                weighted.append((row['symbol'], 'long', w_l, round(row['score'], 4)))
+        if len(short_df) > 0:
+            w_s = 1.0 / len(short_df)
+            for _, row in short_df.iterrows():
+                weighted.append((row['symbol'], 'short', w_s, round(row['score'], 4)))
+    else:
+        # Compute edge-boost weights (with optional inverse-vol sizing)
+        weighted = _edge_boost_weights(signals, n_long, n_short, coin_vol=coin_vol)
 
     positions = []
     for symbol, side, weight, score in weighted:
@@ -1344,12 +1547,13 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     n_l = sum(1 for p in positions if p['side'] == 'long')
     n_s = sum(1 for p in positions if p['side'] == 'short')
     usds = [p['usd'] for p in positions]
+    sizing_mode = 'equal-weight' if cls_mode else 'edge-boost'
     print(f"   📊 Allocating ${actual_alloc:.0f} of ${capital:.0f} "
           f"(kelly={kelly:.0%} × vol={vol_scale:.2f} × r7_vol={r7_vol_scale:.2f} "
           f"× dyn={dyn_exposure:.2f} × sm={sm_scale:.2f} × eqb={eq_boost:.2f} × lev={leverage}x)")
     print(f"   📊 Positions: {n_l}L + {n_s}S = {n_l+n_s} "
           f"[L/S split={long_alloc_frac:.0%}/{1-long_alloc_frac:.0%}, "
-          f"edge-boost ${min(usds):.0f}–${max(usds):.0f}]")
+          f"{sizing_mode} ${min(usds):.0f}–${max(usds):.0f}]")
 
     return positions
 
@@ -2424,6 +2628,10 @@ def main():
     parser.add_argument('--lgb', action='store_true',
                         help='Use LightGBM ensemble (R9B: Sh=4.29, Wr=-1.2%%, WM=12/13). '
                              'Requires results_lgb_prod/ from train_lgb_prod.py. No EMA.')
+    parser.add_argument('--cls', action='store_true',
+                        help='Use LGB+XGB classification ensemble (R25: Sh=3.36, Wr=-5.7%%). '
+                             'Requires results_cls_prod/ from train_cls_prod.py. '
+                             'Simple 5L/3S, no risk stack overlays.')
     parser.add_argument('--rebal-hours', type=int, default=DEFAULT_REBAL_HOURS,
                         choices=[1, 2, 3, 4, 6, 8, 12, 24],
                         help='Live rebalance cadence in hours. Use 24 to match recent sims.')
@@ -2456,6 +2664,16 @@ def main():
     if args.min_zscore > 0:
         risk_cfg['min_zscore'] = args.min_zscore
     risk_cfg['_demo_mode'] = (args.mode == 'paper')
+
+    # CLS mode: simple 5L/3S, no risk stack overlays (matches R25 simulation)
+    if args.cls:
+        risk_cfg['n_long'] = 5
+        risk_cfg['n_short'] = 3
+        risk_cfg['kelly_frac'] = 1.0       # full allocation (no kelly cut)
+        risk_cfg['min_zscore'] = 0.0        # no filtering
+        risk_cfg['confidence_threshold'] = 0.0
+        risk_cfg['_cls_mode'] = True        # disable vol_scale in construct_portfolio
+        print(f"   📋 CLS mode: 5L/3S, kelly=1.0, no min_zscore, no vol_scale")
 
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
@@ -2550,8 +2768,18 @@ def main():
         df = add_news_interaction_features(df)
 
         # Ridge/LGB-specific features (residuals, mom_z, dist_from_high, OI renames)
-        if args.ridge or args.lgb:
+        if args.ridge or args.lgb or args.cls:
             df = add_ridge_features(df)
+
+        # CLS: add model-specific features BEFORE ranking (so they get ranked like in sim)
+        if args.cls:
+            df = add_cls_features(df, root)
+            # Filter to SYM_35 for CLS (sim used 35 symbols; ranking on 49 changes distribution)
+            before_n = df['symbol'].nunique()
+            df = df[df['symbol'].isin(CLS_SYMBOLS)].copy()
+            after_n = df['symbol'].nunique()
+            if before_n != after_n:
+                print(f"   📊 CLS symbol filter: {before_n} → {after_n} symbols")
 
         feat_cols = [c for c in df.columns if c not in EXCLUDE_COLS
                      and not c.startswith('target_')
@@ -2588,7 +2816,9 @@ def main():
         # 4. Generate signal
         print(f"\n📡 Generating signal...")
         nonlocal last_signals
-        if args.lgb:
+        if args.cls:
+            signals = generate_signal_cls(df, root)
+        elif args.lgb:
             signals = generate_signal_lgb_cs(df, root)
         elif args.ridge:
             signals = generate_signal_ridge(df, root)
@@ -2603,8 +2833,8 @@ def main():
             return
         last_signals = signals
 
-        # R7: Signal EMA(2) smoothing — only for Ridge (LGB=None is optimal for LGB)
-        if args.ridge and not args.lgb:
+        # R7: Signal EMA(2) smoothing — only for Ridge (LGB/CLS=None is optimal)
+        if args.ridge and not args.lgb and not args.cls:
             prev_scores = state.get('prev_signal_scores', {})
             if prev_scores:
                 alpha_ema = 2.0 / (2 + 1)  # span=2
@@ -2644,9 +2874,9 @@ def main():
                 med_v = np.median(list(coin_vol.values()))
                 print(f"   📊 Vol-size: {len(coin_vol)} coins, median σ={med_v:.4f}")
 
-        # R7/R9B: Extract regime data from signal (Ridge or LGB)
+        # R7/R9B: Extract regime data from signal
         regime_data = None
-        if (args.ridge or args.lgb) and hasattr(signals, 'attrs'):
+        if hasattr(signals, 'attrs'):
             regime_data = signals.attrs.get('regime_data')
 
         print(f"\n💼 Portfolio construction (equity=${trading_capital:,.0f})...")
