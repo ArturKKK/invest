@@ -11,15 +11,15 @@
 
 **Файл:** `_research_r60_portfolio_opt.py` (новый, на базе R58)
 
-- [ ] Скопировать `_research_r58_continuous_wf.py` → `_research_r60_portfolio_opt.py`
-- [ ] Модифицировать `simulate_with_hybrid_costs` — добавить `sizing_mode` параметр
-- [ ] Реализовать 5 вариантов портфельной конструкции:
-  - [ ] **baseline**: 6L/3S equal-weight (текущий)
-  - [ ] **grid_K**: 4L/2S, 6L/3S, 8L/4S, 3L/3S (чувствительность к K)
-  - [ ] **dynamic_K**: K_long = clip(2..8) по `strength = mean(top_K_score) - median(score)`; K_short аналогично. Пороги: strength > 0.3 → +1, > 0.6 → +2 к базовому K
-  - [ ] **edge_cost_filter**: открывать позицию только если `|p - 0.5| * notional > estimated_cost_bps`. Для этого нужны raw probs (до z-norm)
-  - [ ] **prob_weighting**: `w_long_i ∝ (p_i - 0.5)`, `w_short_i ∝ (0.5 - p_i)`, нормализовать отдельно L/S book
-- [ ] Для каждого варианта прогнать WF (ORIGINAL_WINDOWS, 5 seeds) с hybrid costs
+- [x] Скопировать `_research_r58_continuous_wf.py` → `_research_r60_portfolio_opt.py`
+- [x] Модифицировать `simulate_with_hybrid_costs` — добавить `sizing_mode` параметр
+- [x] Реализовать 5 вариантов портфельной конструкции:
+  - [x] **baseline**: 6L/3S equal-weight (текущий)
+  - [x] **grid_K**: 4L/2S, 6L/3S, 8L/4S, 3L/3S (чувствительность к K)
+  - [x] **dynamic_K**: K_long = clip(2..8) по `strength = mean(top_K_score) - median(score)`; K_short аналогично. Пороги: strength > 0.3 → +1, > 0.6 → +2 к базовому K
+  - [x] **edge_cost_filter**: открывать позицию только если `|p - 0.5| * notional > estimated_cost_bps`. Для этого нужны raw probs (до z-norm)
+  - [x] **prob_weighting**: `w_long_i ∝ (p_i - 0.5)`, `w_short_i ∝ (0.5 - p_i)`, нормализовать отдельно L/S book
+- [-] Для каждого варианта прогнать WF (ORIGINAL_WINDOWS, 5 seeds) с hybrid costs ← **RUNNING ON MLC**
 - [ ] Собрать таблицу: mode | Sharpe | MaxDD | WinRate | Turnover | Win_W1 | Win_W2 | Win_W3
 
 **Ключевые модификации в simulate:**
@@ -40,15 +40,15 @@
 
 **Файл:** `_research_r63_uncertainty.py` (новый)
 
-- [ ] Модифицировать train_ensemble — возвращать per-seed predictions (не усреднённые)
+- [x] Модифицировать train_ensemble — возвращать per-seed predictions (не усреднённые)
   - Сейчас: `lgb_probs = mean(seed_preds)` → одно число
   - Нужно: сохранить lgb_seed_0_prob, ... + xgb_seed_*
   - Вычислить: `p_mean = mean(all_10_seeds)`, `p_std = std(all_10_seeds)`
-- [ ] Реализовать 3 варианта gating:
-  - [ ] **uncertainty_filter**: торговать только если `p_std < threshold` (пороги: 0.02, 0.03, 0.05)
-  - [ ] **uncertainty_scaling**: `weight_i *= (1 - clip(p_std_i / max_std, 0, 0.7))` — снижаем вес неуверенных
-  - [ ] **agreement_K**: dynamic K где K уменьшается если mean(p_std_topK) высок
-- [ ] WF на ORIGINAL_WINDOWS, hybrid costs
+- [x] Реализовать 3 варианта gating:
+  - [x] **uncertainty_filter**: торговать только если `p_std < threshold` (пороги: 0.02, 0.03, 0.05)
+  - [x] **uncertainty_scaling**: `weight_i *= (1 - clip(p_std_i / max_std, 0, 0.7))` — снижаем вес неуверенных
+  - [x] **agreement_K**: dynamic K где K уменьшается если mean(p_std_topK) высок
+- [-] WF на ORIGINAL_WINDOWS, hybrid costs ← **RUNNING ON MLC**
 - [ ] Таблица: mode | threshold | Sharpe | MaxDD | WinRate | AvgPositions
 
 **Ключевое:** не нужно переобучать модели — просто сохранить 10 отдельных предсказаний и использовать std как фильтр
@@ -61,14 +61,14 @@
 
 **Файл:** `_research_r61_temporal.py` (новый)
 
-- [ ] Добавить temporal features:
-  - [ ] `ret_12h`: lag2 (=ret_36h), lag4 (=ret_60h), rolling_std_5
-  - [ ] `cg_taker_imb`: lag1, lag2, rolling_mean_5, rolling_std_5
-  - [ ] `oi_chg_12h`: lag1, lag2, rolling_mean_5
-  - [ ] `sign_persistence_10 = rolling_mean(sign(ret_12h) == sign(ret_12h.shift(1)), 10)`
-  - [ ] `reversal_count_10 = rolling_sum(sign(ret_12h) != sign(ret_12h.shift(1)), 10)`
-- [ ] Всего ~12 новых фичей. Добавить в feature list (31 → ~43)
-- [ ] Обучить LGB+XGB на расширенном наборе, WF
+- [x] Добавить temporal features:
+  - [x] `ret_12h`: lag2 (=ret_36h), lag4 (=ret_60h), rolling_std_5
+  - [x] `cg_taker_imb`: lag1, lag2, rolling_mean_5, rolling_std_5
+  - [x] `oi_chg_12h`: lag1, lag2, rolling_mean_5
+  - [x] `sign_persistence_10 = rolling_mean(sign(ret_12h) == sign(ret_12h.shift(1)), 10)`
+  - [x] `reversal_count_10 = rolling_sum(sign(ret_12h) != sign(ret_12h.shift(1)), 10)`
+- [x] Всего ~12 новых фичей. Добавить в feature list (31 → ~43)
+- [-] Обучить LGB+XGB на расширенном наборе, WF ← **QUEUED ON MLC (after R60/R63)**
 - [ ] Сравнить с baseline (31 feat champion)
 - [ ] Если улучшение — ablation: какие temporal фичи дают прирост
 
@@ -85,14 +85,14 @@
 
 **Файл:** `_research_r62_stacking.py` (новый)
 
-- [ ] **p_lin (Ridge/LogReg)**: обучить LogReg на 8 лучших фичах. OOF-предсказания (5-fold temporal CV).
+- [x] **p_lin (Ridge/LogReg)**: обучить LogReg на 8 лучших фичах. OOF-предсказания (5-fold temporal CV).
   - Фичи: ret_12h, ret_24h, mom_z_24h, oi_chg_12h, taker_cvd_12h, atr_14, pct_coins_up_12h, cg_taker_imb
-- [ ] **p_seq (GRU micro)**:
+- [x] **p_seq (GRU micro)**:
   - Input: последние 8 баров × 5 фичей (ret_12h, rvol_12h, cg_taker_imb, oi_chg_12h, pct_coins_up_12h)
   - Architecture: GRU(hidden=16) → Dense(1, sigmoid)
   - OOF для train, full-train pred для test
-- [ ] Добавить p_lin и/или p_seq как новые фичи (31 → 32-33)
-- [ ] Обучить LGB+XGB с новыми фичами, WF
+- [x] Добавить p_lin и/или p_seq как новые фичи (31 → 32-33)
+- [-] Обучить LGB+XGB с новыми фичами, WF ← **QUEUED ON MLC (after R61)**
 - [ ] Сравнить: baseline vs +p_lin vs +p_seq vs +both
 
 **Предупреждения:**
@@ -106,7 +106,7 @@
 
 ## Verification Checklist
 
-- [ ] Каждый эксперимент сохраняет результаты в `results_r6X_*.log`
+- [-] Каждый эксперимент сохраняет результаты в `results_r6X_*.log` ← **IN PROGRESS**
 - [ ] Таблица сравнения: все варианты в одной таблице
 - [ ] Per-window breakdown (W1 исторически слабее)
 - [ ] Monthly returns для визуальной проверки
@@ -115,6 +115,12 @@
   - MaxDD < 60% (иначе catastrophic overfit)
   - Win rate 55-65%
 - [ ] Финальная верификация: лучший R60 + лучший R63 → combined run
+
+## Infrastructure fixes (done)
+- [x] Killed macOS `._*.parquet` resource fork files on MLC (116 files, caused ArrowInvalid)
+- [x] Overnight runner `_run_overnight.sh`: R60+R63 parallel → R61 → R62 queued
+- [x] All scripts deployed to MLC via git push/pull
+- [x] R62 watcher process watching PID 1259 (overnight runner)
 
 ## Decisions (не менять)
 - ORIGINAL_WINDOWS (с gap-ами) для сравнимости с baseline Sharpe 1.66
