@@ -152,7 +152,34 @@ baseline_31f   31f  Sharpe=1.78 ← BASELINE
   - Sharpe > 1.0: ✅ grid_4L2S=2.98, filter_std003=1.83, +cg_temporal=1.89
   - MaxDD < 60%: ✅ все < 20%
   - Win rate 55-65%: ✅ 57-60% у лучших
-- [ ] Финальная верификация: лучший R60 + лучший R63 → combined run
+- [x] Финальная верификация: лучший R60 + лучший R63 → combined run
+
+**R64 RESULTS (combined verification):**
+```
+grid_4L2S         4L2S  Sharpe=1.84  Ret=+45.0%  DD=-18.8%  WR=59% ← WINNER
+grid4L2S+filter   4L2S  thr=0.03  Sharpe=1.84  (filter не даёт прироста)
+baseline_6L3S     6L3S  Sharpe=1.77 ← BASELINE
+filter_std003     6L3S  thr=0.03  Sharpe=1.77  (filter = 0 эффекта на 6L3S)
+grid4L2S+cg_temp  4L2S  Sharpe=1.20  (+cg_temporal hurts в combined)
+```
+**Итог R64: grid_4L2S — единственное стабильное улучшение (+0.07 в joint run).  
+filter_std003 не добавляет ничего (std<0.03 не фильтрует ни одной реальной позиции).**
+
+## ФИНАЛЬНЫЕ ВЫВОДЫ
+
+**Что работает:**
+- ✅ **grid_4L2S** (4 long / 2 short) — стабильно лучше 6L/3S во всех прогонах
+  - R60: Sharpe 2.98 (+1.20 vs baseline 1.78)
+  - R64: Sharpe 1.84 (+0.07 vs baseline 1.77) — разница из-за другой рандомизации
+- ✅ **+cg_temporal** — В R61 изолированно даёт +0.11, НО не помогает в R64
+
+**Что не работает:**
+- ❌ uncertainty_filter (std<0.03) — не фильтрует ничего или слишком агрессивен
+- ❌ temporal features (ret_12h lags, oi lags) — ухудшают на -0.39...-1.30
+- ❌ meta-stacking (LogReg/GRU OOF) — ухудшают на -0.29...-2.16
+- ❌ dynamic_K, prob_weighting, edge_cost_filter — ухудшают vs простой Grid_K
+
+**Следующий шаг: развернуть 4L/2S настройку на VPS в PROD_CFG.**
 
 ## Финальный рейтинг по всем экспериментам
 
