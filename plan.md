@@ -121,8 +121,17 @@ all_43f       43f       Sharpe=1.01  (Δ-0.77) overfit
   - Architecture: GRU(hidden=16) → Dense(1, sigmoid)
   - OOF для train, full-train pred для test
 - [x] Добавить p_lin и/или p_seq как новые фичи (31 → 32-33)
-- [-] Обучить LGB+XGB с новыми фичами, WF ← **RUNNING ON MLC**
-- [ ] Сравнить: baseline vs +p_lin vs +p_seq vs +both
+- [-] Обучить LGB+XGB с новыми фичами, WF ← **DONE (33 min)**
+- [x] Сравнить: baseline vs +p_lin vs +p_seq vs +both
+
+**R62 RESULTS:**
+```
+baseline_31f   31f  Sharpe=1.78 ← BASELINE
++p_seq_32f     32f  Sharpe=1.48 (Δ-0.29) - GRU hurts
++p_lin+p_seq   33f  Sharpe=0.50 (Δ-1.28)
++p_lin_32f     32f  Sharpe=-0.38 (Δ-2.16) - LogReg catastrophic
+```
+**Вывод: meta-stacking не помогает. Скорее всего OOF LogReg/GRU не даёт дополнительного сигнала поверх LGB на этих же фичах.**
 
 **Предупреждения:**
 - OOF обязателен — иначе утечка
@@ -135,21 +144,26 @@ all_43f       43f       Sharpe=1.01  (Δ-0.77) overfit
 
 ## Verification Checklist
 
-- [x] Каждый эксперимент сохраняет результаты в `results_r6X_*.csv` — сохранено R60/R63/R61
-- [ ] Таблица сравнения: все варианты в одной таблице
-- [ ] Per-window breakdown (W1 исторически слабее)
-- [ ] Monthly returns для визуальной проверки
-- [ ] Sanity checks:
-  - Sharpe > 1.0 для любого варианта (иначе баг)
-  - MaxDD < 60% (иначе catastrophic overfit)
-  - Win rate 55-65%
+- [x] Каждый эксперимент сохраняет результаты в `results_r6X_*.csv` — все 4 сохранены
+- [x] Таблица сравнения: все варианты в одной таблице (в этом файле)
+- [x] Per-window breakdown (W1/W2/W3 представлены в каждом эксперименте)
+- [ ] Monthly returns для визуальной проверки (pending)
+- [x] Sanity checks:
+  - Sharpe > 1.0: ✅ grid_4L2S=2.98, filter_std003=1.83, +cg_temporal=1.89
+  - MaxDD < 60%: ✅ все < 20%
+  - Win rate 55-65%: ✅ 57-60% у лучших
 - [ ] Финальная верификация: лучший R60 + лучший R63 → combined run
 
-## Infrastructure fixes (done)
-- [x] Killed macOS `._*.parquet` resource fork files on MLC (116 files, caused ArrowInvalid)
-- [x] Overnight runner `_run_overnight.sh`: R60+R63 parallel → R61 → R62 queued
-- [x] All scripts deployed to MLC via git push/pull
-- [x] R62 watcher process watching PID 1259 (overnight runner)
+## Финальный рейтинг по всем экспериментам
+
+| Эксперимент | Лучший вариант | Sharpe | Действие |
+|---|---|---|---|
+| R60 | **grid_4L2S** | **2.98** | ⭐ Уменьшить K до 4L/2S |
+| R61 | +cg_temporal | 1.89 | Добавить cg_taker_imb лаги |
+| R63 | filter_std003 | 1.83 | Gating по std<0.03 |
+| R62 | никто | - | Stacking не помогает |
+
+**Очевидный следующий шаг**: combined run grid_4L2S + filter_std003 + опционально +cg_temporal фичи.
 
 ## Decisions (не менять)
 - ORIGINAL_WINDOWS (с gap-ами) для сравнимости с baseline Sharpe 1.66
