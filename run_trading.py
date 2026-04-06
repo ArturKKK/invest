@@ -1587,6 +1587,19 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     long_half = total_alloc * long_alloc_frac
     short_half = total_alloc * (1 - long_alloc_frac)
 
+    # Adaptive n_long/n_short: reduce if per-position size < min order ($5)
+    MIN_ORDER = 5.0
+    if n_long > 0:
+        max_long = max(1, int(long_half / MIN_ORDER))
+        if max_long < n_long:
+            print(f"   ⚠️  Adaptive sizing: {n_long}L → {max_long}L (${long_half:.0f} / ${MIN_ORDER})")
+            n_long = max_long
+    if n_short > 0:
+        max_short = max(1, int(short_half / MIN_ORDER))
+        if max_short < n_short:
+            print(f"   ⚠️  Adaptive sizing: {n_short}S → {max_short}S (${short_half:.0f} / ${MIN_ORDER})")
+            n_short = max_short
+
     # Cap per position at 15% of leveraged capital for diversification
     max_per_pos = capital * leverage * 0.15
 
