@@ -1,0 +1,178 @@
+================================================================================
+  R29c — Deep Validation of FEATURES_25
+  Date: 2026-04-03 02:14:17.902434
+  Features: FEATURES_23 + [global_ls_ratio, ret_std_24h]
+================================================================================
+
+  Loading data...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  [R29] Building production-level features...
+    sym 1/35: AAVE/USDT
+    sym 11/35: CHZ/USDT
+    sym 21/35: LDO/USDT
+    sym 31/35: SOL/USDT
+  [R29] Production features added: 55 new columns (149 total)
+  Data: 1,826,014 rows, 149 cols
+  Load time: 80s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. BASELINE (23f, L2=1) vs FEATURES_25 (25f, L2=10)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❌ BASELINE-23f                                               Sh=+2.02 Wr= -34.5% WM=9/13 → $662
+  ⚠️ FEAT25-L2=10                                               Sh=+3.22 Wr= -17.5% WM=12/13 → $2343
+  Improvement: +1.21
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2. PER-WINDOW SHARPE BREAKDOWN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BASELINE-23f          W1: Sh=4.06 Eq=$312 Wr=-15.5%  |  W2: Sh=2.31 Eq=$171 Wr=-17.5%  |  W3: Sh=1.65 Eq=$141 Wr=-9.5%
+  FEAT25-L2=10          W1: Sh=4.13 Eq=$304 Wr=6.0%  |  W2: Sh=0.80 Eq=$108 Wr=-31.1%  |  W3: Sh=3.30 Eq=$225 Wr=-17.5%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3. PER-SEED STABILITY (each seed pair → Sharpe)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  seed=  0:  Sh=2.40  Eq=$940  Wr=-26.0%
+  seed=  7:  Sh=2.62  Eq=$1346  Wr=-22.8%
+  seed= 13:  Sh=2.23  Eq=$836  Wr=-21.1%
+  seed= 42:  Sh=2.83  Eq=$1415  Wr=-28.1%
+  seed= 99:  Sh=2.65  Eq=$1394  Wr=-19.8%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4. REGULARIZATION CURVE (L2 sweep)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  L2=  0.5:  Sh=2.49  Eq=$1181  Wr=-22.3%  WM=9/13  (231s)
+  L2=  1.0:  Sh=2.96  Eq=$1986  Wr=-21.7%  WM=9/13  (223s)
+  L2=  3.0:  Sh=2.97  Eq=$2124  Wr=-16.9%  WM=9/13  (200s)
+  L2=  5.0:  Sh=2.50  Eq=$1294  Wr=-21.8%  WM=10/13  (195s)
+  L2= 10.0:  Sh=3.22  Eq=$2343  Wr=-17.5%  WM=12/13  (214s)
+  L2= 20.0:  Sh=2.50  Eq=$1095  Wr=-10.5%  WM=7/13  (220s)
+  L2= 30.0:  Sh=2.86  Eq=$1905  Wr=-19.7%  WM=10/13  (288s)
+  L2= 50.0:  Sh=2.97  Eq=$1974  Wr=-11.3%  WM=11/13  (222s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  5. NUM_LEAVES SWEEP (L2=10)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  leaves=  15:  Sh=3.12  Eq=$2502  Wr=-19.4%  WM=11/13  (217s)
+  leaves=  31:  Sh=2.66  Eq=$1377  Wr=-21.1%  WM=9/13  (246s)
+  leaves=  42:  Sh=2.39  Eq=$1050  Wr=-16.0%  WM=9/13  (185s)
+  leaves=  63:  Sh=3.22  Eq=$2343  Wr=-17.5%  WM=12/13  (273s)
+  leaves=  85:  Sh=2.50  Eq=$1169  Wr=-16.5%  WM=10/13  (234s)
+  leaves= 127:  Sh=2.58  Eq=$1141  Wr=-26.0%  WM=10/13  (311s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  6. PORTFOLIO CONFIG SWEEP (using FEAT25 L2=10 predictions)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4L/3S thr=0.5:  Sh=3.30  Eq=$2448  Wr=-22.0%  WM=12/13
+  4L/3S thr=0.6:  Sh=3.28  Eq=$2566  Wr=-22.1%  WM=12/13
+  4L/3S thr=0.7:  Sh=3.26  Eq=$2651  Wr=-22.1%  WM=12/13
+  4L/3S thr=0.8:  Sh=3.26  Eq=$2783  Wr=-21.8%  WM=12/13
+  4L/3S thr=0.9:  Sh=3.37  Eq=$3261  Wr=-20.4%  WM=12/13
+  5L/3S thr=0.5:  Sh=3.22  Eq=$2216  Wr=-22.6%  WM=12/13
+  5L/3S thr=0.6:  Sh=3.20  Eq=$2317  Wr=-22.8%  WM=12/13
+  5L/3S thr=0.7:  Sh=3.17  Eq=$2383  Wr=-22.9%  WM=12/13
+  5L/3S thr=0.8:  Sh=3.17  Eq=$2481  Wr=-22.8%  WM=12/13
+  5L/3S thr=0.9:  Sh=3.29  Eq=$2930  Wr=-21.4%  WM=12/13
+  6L/3S thr=0.5:  Sh=3.24  Eq=$2151  Wr=-18.2%  WM=12/13
+  6L/3S thr=0.6:  Sh=3.23  Eq=$2249  Wr=-18.0%  WM=12/13
+  6L/3S thr=0.7:  Sh=3.22  Eq=$2343  Wr=-17.5%  WM=12/13
+  6L/3S thr=0.8:  Sh=3.22  Eq=$2435  Wr=-17.1%  WM=12/13
+  6L/3S thr=0.9:  Sh=3.32  Eq=$2839  Wr=-15.7%  WM=12/13
+  7L/3S thr=0.5:  Sh=3.20  Eq=$1962  Wr=-17.2%  WM=11/13
+  7L/3S thr=0.6:  Sh=3.19  Eq=$2056  Wr=-17.0%  WM=11/13
+  7L/3S thr=0.7:  Sh=3.19  Eq=$2154  Wr=-16.6%  WM=11/13
+  7L/3S thr=0.8:  Sh=3.18  Eq=$2234  Wr=-16.3%  WM=11/13
+  7L/3S thr=0.9:  Sh=3.29  Eq=$2601  Wr=-15.1%  WM=11/13
+  8L/4S thr=0.5:  Sh=2.40  Eq=$740  Wr=-14.9%  WM=10/13
+  8L/4S thr=0.6:  Sh=2.41  Eq=$770  Wr=-14.9%  WM=10/13
+  8L/4S thr=0.7:  Sh=2.43  Eq=$810  Wr=-14.9%  WM=10/13
+  8L/4S thr=0.8:  Sh=2.45  Eq=$853  Wr=-15.0%  WM=10/13
+  8L/4S thr=0.9:  Sh=2.57  Eq=$979  Wr=-15.0%  WM=10/13
+  6L/2S thr=0.5:  Sh=2.71  Eq=$1898  Wr=-27.2%  WM=10/13
+  6L/2S thr=0.6:  Sh=2.72  Eq=$2013  Wr=-26.5%  WM=11/13
+  6L/2S thr=0.7:  Sh=2.71  Eq=$2097  Wr=-25.3%  WM=11/13
+  6L/2S thr=0.8:  Sh=2.67  Eq=$2065  Wr=-24.9%  WM=11/13
+  6L/2S thr=0.9:  Sh=2.76  Eq=$2429  Wr=-24.9%  WM=11/13
+  5L/5S thr=0.5:  Sh=2.45  Eq=$731  Wr=-16.7%  WM=8/13
+  5L/5S thr=0.6:  Sh=2.46  Eq=$756  Wr=-15.2%  WM=8/13
+  5L/5S thr=0.7:  Sh=2.47  Eq=$785  Wr=-14.2%  WM=9/13
+  5L/5S thr=0.8:  Sh=2.51  Eq=$834  Wr=-14.1%  WM=9/13
+  5L/5S thr=0.9:  Sh=2.64  Eq=$961  Wr=-14.8%  WM=9/13
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  7. BOOTSTRAP CONFIDENCE INTERVAL (monthly returns)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Monthly returns: n=13, mean=30.8%, std=29.5%
+  Bootstrap Sharpe (n=1000):
+    5th pct:  2.29
+    25th pct: 3.14
+    MEDIAN:   3.75
+    75th pct: 4.47
+    95th pct: 5.78
+  P(Sh > 2.0): 98%
+  P(Sh > 3.0): 79%
+
+  Baseline bootstrap median: 2.10
+  P(FEAT25 > BASELINE): 96%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  8. ABLATION STUDY (remove each new feature)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Remove global_ls_ratio     : Sh=2.58  (delta=-0.64)
+  Remove ret_std_24h         : Sh=2.59  (delta=-0.64)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  9. FEATURE IMPORTANCE (LGB gain, L2=10)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  global_ls_ratio          :   8.9% ★★
+  ls_divergence            :   8.6%
+  oi_zscore                :   8.0%
+  taker_cvd_24h            :   7.2%
+  gk_vol_24h               :   7.2%
+  atr_14                   :   7.1%
+  ret_24h                  :   7.0%
+  mom_z_24h                :   6.9%
+  ret_48h                  :   5.8%
+  oi_chg_24h               :   5.3%
+  ret_std_24h              :   5.3% ★★
+  rvol_24h                 :   3.8%
+  taker_cvd_12h            :   3.5%
+  pct_coins_up_12h         :   3.1%
+  rvol_12h                 :   3.1%
+  residual_24h             :   2.5%
+  oi_chg_12h               :   1.9%
+  ret_12h                  :   1.6%
+  residual_12h             :   1.5%
+  iv_rv_spread             :   1.1%
+  pct_coins_up_1h          :   0.5%
+  hour_sin                 :   0.1%
+  hour_cos                 :   0.0%
+  dow_sin                  :   0.0%
+  dow_cos                  :   0.0%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  10. COMBINED BEST-OF-BEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  lr=0.01:  Sh=2.15  Eq=$835  Wr=-28.8%  (265s)
+  lr=0.03:  Sh=3.22  Eq=$2343  Wr=-17.5%  (273s)
+  lr=0.05:  Sh=2.60  Eq=$1264  Wr=-28.2%  (231s)
+  lr=0.10:  Sh=2.58  Eq=$1232  Wr=-34.4%  (230s)
+  min_child=  50:  Sh=3.08  Eq=$2075  Wr=-17.1%  (220s)
+  min_child= 100:  Sh=3.22  Eq=$2343  Wr=-17.5%  (393s)
+  min_child= 150:  Sh=2.65  Eq=$1515  Wr=-19.3%  (343s)
+  min_child= 200:  Sh=2.48  Eq=$1159  Wr=-16.2%  (216s)
+
+================================================================================
+  R29c DEEP VALIDATION SUMMARY
+================================================================================
+  BASELINE (23f, L2=1):   Sh=2.02
+  FEATURES_25 (L2=10):    Sh=3.22  (delta=+1.21)
+  New features: global_ls_ratio, ret_std_24h
+  Total runtime: 127.6 min
+  Done.

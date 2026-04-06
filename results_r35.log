@@ -1,0 +1,118 @@
+================================================================================
+R35 — NEW FEATURES FROM EXISTING DATA
+================================================================================
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 123 cols
+  Added features: ['cs_rank_ma_5', 'cum_funding_24h_cs', 'funding_momentum', 'funding_ret_cross', 'mkt_funding_dispersion', 'mkt_funding_mean', 'mkt_funding_pct_pos', 'mkt_oi_chg_sum', 'mkt_oi_extreme_pct', 'oi_chg_12h_cs', 'oi_ret_divergence', 'ret_168h_x_disp', 'ret_accel_12h', 'ret_autocorr_24h', 'ret_dispersion_12h', 'taker_cvd_12h_cs', 'vol_concentration_4of12', 'vol_ret_confirm']
+
+[2] Train-only IC scan...
+  r35a_cs_second_order:
+           feature  scan_score  is_market_level
+ret_dispersion_12h    0.078172             True
+cum_funding_24h_cs    0.015412            False
+     oi_chg_12h_cs    0.015314            False
+  r35b_interactions:
+          feature  scan_score  is_market_level
+  ret_168h_x_disp    0.020319            False
+funding_ret_cross    0.015186            False
+oi_ret_divergence    0.011067            False
+  r35c_temporal:
+                feature  scan_score  is_market_level
+          ret_accel_12h    0.012267            False
+       ret_autocorr_24h    0.003121            False
+vol_concentration_4of12    0.002906            False
+  r35d_market:
+               feature  scan_score  is_market_level
+mkt_funding_dispersion    0.065753             True
+    mkt_oi_extreme_pct    0.044241             True
+      mkt_funding_mean    0.041572             True
+
+[3] Walk-forward bundle tests...
+
+  Training A_28f+top3_plus_market (5 new features)...
+  Training: A_28f+top3_plus_market, 33f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0396
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0111
+    W3/s0: train=1,628,167, test=89,343, IC=-0.0049
+  W1: Sh=-1.87 (gross=-0.88)  Eq=$    37  DD=-68.6%  WM=1/4  Cost=7.7%  Turn=5.7
+  W2: Sh= 1.66 (gross= 2.76)  Eq=$   143  DD=-29.8%  WM=3/4  Cost=7.2%  Turn=4.8
+  W3: Sh=-0.37 (gross= 0.64)  Eq=$    75  DD=-50.5%  WM=2/5  Cost=6.1%  Turn=4.4
+  ALL: Sh= 0.17 (gross= 0.95)  Eq=$    66  DD=-72.4%  Cost=20.4%  Turn=4.8
+
+  Training A_28f+r35a_cs_second_order (5 new features)...
+  Training: A_28f+r35a_cs_second_order, 33f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0645
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0375
+    W3/s0: train=1,628,167, test=89,343, IC=0.0327
+  W1: Sh=-0.45 (gross= 0.32)  Eq=$    60  DD=-54.5%  WM=2/4  Cost=6.4%  Turn=4.6
+  W2: Sh= 3.03 (gross= 4.34)  Eq=$   204  DD=-23.4%  WM=4/4  Cost=7.3%  Turn=4.9
+  W3: Sh= 1.91 (gross= 2.82)  Eq=$   150  DD=-35.2%  WM=5/5  Cost=5.6%  Turn=3.9
+  ALL: Sh= 0.64 (gross= 1.36)  Eq=$   122  DD=-58.9%  Cost=18.6%  Turn=4.3
+
+  Training A_28f+r35b_interactions (4 new features)...
+  Training: A_28f+r35b_interactions, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0278
+    W2/s0: train=1,484,524, test=85,569, IC=0.0113
+    W3/s0: train=1,628,167, test=89,343, IC=0.0662
+  W1: Sh=-0.93 (gross=-0.11)  Eq=$    47  DD=-62.1%  WM=1/4  Cost=7.2%  Turn=5.3
+  W2: Sh= 2.55 (gross= 3.82)  Eq=$   180  DD=-42.2%  WM=3/4  Cost=7.3%  Turn=4.9
+  W3: Sh= 3.34 (gross= 4.38)  Eq=$   234  DD=-34.0%  WM=4/5  Cost=6.5%  Turn=4.7
+  ALL: Sh=-0.00 (gross= 0.76)  Eq=$    49  DD=-72.4%  Cost=20.8%  Turn=4.9
+
+  Training A_28f+r35c_temporal (4 new features)...
+  Training: A_28f+r35c_temporal, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0415
+    W2/s0: train=1,484,524, test=85,569, IC=0.0136
+    W3/s0: train=1,628,167, test=89,343, IC=0.0484
+  W1: Sh=-0.50 (gross= 0.28)  Eq=$    56  DD=-59.8%  WM=1/4  Cost=6.7%  Turn=4.9
+  W2: Sh= 0.85 (gross= 1.85)  Eq=$   109  DD=-55.5%  WM=3/4  Cost=6.7%  Turn=4.4
+  W3: Sh= 1.90 (gross= 2.78)  Eq=$   151  DD=-33.6%  WM=5/5  Cost=5.5%  Turn=3.9
+  ALL: Sh= 0.62 (gross= 1.33)  Eq=$   116  DD=-59.8%  Cost=19.0%  Turn=4.4
+
+  Training A_28f+r35d_market (5 new features)...
+  Training: A_28f+r35d_market, 33f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=-0.0634
+    W2/s0: train=1,484,524, test=85,569, IC=-0.1150
+    W3/s0: train=1,628,167, test=89,343, IC=0.0663
+  W1: Sh=-3.01 (gross=-2.16)  Eq=$    20  DD=-83.9%  WM=1/4  Cost=7.2%  Turn=5.3
+  W2: Sh= 1.91 (gross= 2.92)  Eq=$   151  DD=-27.2%  WM=3/4  Cost=5.8%  Turn=3.6
+  W3: Sh= 0.64 (gross= 1.40)  Eq=$   101  DD=-47.8%  WM=4/5  Cost=5.0%  Turn=3.4
+  ALL: Sh=-0.13 (gross= 0.54)  Eq=$    42  DD=-85.8%  Cost=17.9%  Turn=4.1
+
+[4] Best bundles
+  W2:
+              bundle  sharpe  cost_pct  avg_turnover
+r35a_cs_second_order    3.03      7.28           4.9
+   r35b_interactions    2.55      7.28           4.9
+         r35d_market    1.91      5.78           3.6
+    top3_plus_market    1.66      7.19           4.8
+       r35c_temporal    0.85      6.68           4.4
+  W3:
+              bundle  sharpe  cost_pct  avg_turnover
+   r35b_interactions    3.34      6.46           4.7
+r35a_cs_second_order    1.91      5.57           3.9
+       r35c_temporal    1.90      5.51           3.9
+         r35d_market    0.64      4.96           3.4
+    top3_plus_market   -0.37      6.10           4.4
+  ALL:
+              bundle  sharpe  cost_pct  avg_turnover
+r35a_cs_second_order    0.64     18.56           4.3
+       r35c_temporal    0.62     19.02           4.4
+    top3_plus_market    0.17     20.44           4.8
+   r35b_interactions   -0.00     20.79           4.9
+         r35d_market   -0.13     17.86           4.1
+
+[5] Saved artifacts
+  IC CSV: results_r35_feature_ic.csv
+  Summary CSV: results_r35_summary.csv

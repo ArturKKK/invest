@@ -1,0 +1,217 @@
+================================================================================
+  R28 — Feature Expansion Experiments
+  Date: 2026-04-02 02:14:51.252437
+================================================================================
+
+  Loading data...
+  OHLCV: 1,826,014 rows, 35 symbols
+  Building base features (build_features_minimal)...
+  After minimal: 1,826,014 rows, 64 cols
+  Adding R19 features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  After R19: 78 cols
+  Adding new features (macro, FNG, TA)...
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  After add_new: 94 cols
+  Adding R28 engineered features...
+  [R28] Extra features added: 8: ['funding_accel', 'oi_momentum', 'taker_persistence', 'funding_oi_interact', 'reversal_4v24', 'reversal_12v48', 'vol_crush', 'ret_12h_raw_rank']
+  After R28: 102 cols
+  Filtered to SYM_35: 1,826,014 rows, 35 symbols
+  FEATURES_23: 23/23 available
+  FEATURES_35: 37/37 available
+  FEATURES_50: 49/49 available
+  FEATURES_65: 71/71 available
+  FEATURES_75: 79/79 available
+
+  Data loaded in 12s
+
+================================================================================
+  EXP-F: BASELINE (FEATURES_23 — control)
+================================================================================
+  Available: 23/23
+    LGB features: 23/23
+  ✅ F-lgb-23f-baseline                                         Sh=+2.86 Wr= -13.4% WM=10/13 → $1998
+    XGB features: 23/23
+  ⚠️ F-xgb-23f-baseline                                         Sh=+2.97 Wr= -15.9% WM=11/13 → $2336
+  ✅ F-ens-23f-baseline                                         Sh=+3.39 Wr=  -3.0% WM=10/13 → $3632
+  F runtime: 311s
+
+================================================================================
+  EXP-A: FEATURES_35 (23 + 12 derivative extras)
+================================================================================
+  Available: 37/37: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'funding_rate_binance', 'funding_zscore', 'cum_funding_24h', 'cum_funding_72h', 'premium_index', 'premium_zscore', 'taker_imbalance', 'taker_zscore', 'taker_cvd_4h', 'oi_chg_1h', 'oi_chg_4h', 'oi_ret_diverge', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore']
+    LGB features: 37/37
+  ❌ A-lgb-35f                                                  Sh=-0.00 Wr= -42.6% WM=6/13 → $74
+    XGB features: 37/37
+  ❌ A-xgb-35f                                                  Sh=-0.17 Wr= -43.8% WM=7/13 → $63
+  ❌ A-ens-35f                                                  Sh=+0.06 Wr= -46.6% WM=8/13 → $78
+  A runtime: 388s
+  Top features (gain): [('funding_rate_binance', np.float64(204188.64408493042)), ('cum_funding_24h', np.float64(198799.25004529953)), ('cum_funding_72h', np.float64(193541.0803642273)), ('ls_divergence', np.float64(123246.43435525894)), ('funding_zscore', np.float64(99481.40534591675)), ('top_ls_ratio_zscore', np.float64(84575.4692196846)), ('rvol_24h', np.float64(70060.6928267479)), ('taker_cvd_24h', np.float64(68351.96073150635)), ('gk_vol_24h', np.float64(68194.88807916641)), ('global_ls_ratio_zscore', np.float64(67255.24466276169))]
+
+================================================================================
+  EXP-B: FEATURES_50 (35 + 12 macro/TA)
+================================================================================
+  Available: 49/49: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'funding_rate_binance', 'funding_zscore', 'cum_funding_24h', 'cum_funding_72h', 'premium_index', 'premium_zscore', 'taker_imbalance', 'taker_zscore', 'taker_cvd_4h', 'oi_chg_1h', 'oi_chg_4h', 'oi_ret_diverge', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'fng_value', 'fng_zscore', 'rsi_14', 'bb_pband_20', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'dvol_zscore']
+    LGB features: 49/49
+  ❌ B-lgb-50f                                                  Sh=-0.03 Wr= -51.6% WM=8/13 → $72
+    XGB features: 49/49
+  ❌ B-xgb-50f                                                  Sh=+0.32 Wr= -32.9% WM=9/13 → $101
+  ❌ B-ens-50f                                                  Sh=-0.52 Wr= -35.7% WM=7/13 → $49
+  B runtime: 497s
+  Top features (gain): [('funding_rate_binance', np.float64(112087.68352460861)), ('cum_funding_24h', np.float64(110520.59284114838)), ('cum_funding_72h', np.float64(100658.36899089813)), ('fng_zscore', np.float64(87514.5647892952)), ('ls_divergence', np.float64(72944.43469572067)), ('funding_zscore', np.float64(52317.19545888901)), ('top_ls_ratio_zscore', np.float64(49541.49165344238)), ('vix_zscore', np.float64(48520.609330654144)), ('adx', np.float64(45338.85125255585)), ('dvol_zscore', np.float64(41691.98737192154)), ('oi_zscore', np.float64(41581.995963573456)), ('taker_cvd_24h', np.float64(40320.937819480896)), ('rvol_24h', np.float64(40235.509016513824)), ('global_ls_ratio_zscore', np.float64(39673.83245372772)), ('gk_vol_24h', np.float64(38941.65310573578))]
+
+================================================================================
+  EXP-C: FEATURES_65 (50 + 15 momentum/volume extras)
+================================================================================
+  Available: 71/71: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'funding_rate_binance', 'funding_zscore', 'cum_funding_24h', 'cum_funding_72h', 'premium_index', 'premium_zscore', 'taker_imbalance', 'taker_zscore', 'taker_cvd_4h', 'oi_chg_1h', 'oi_chg_4h', 'oi_ret_diverge', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'fng_value', 'fng_zscore', 'rsi_14', 'bb_pband_20', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'dvol_zscore', 'ret_1h', 'ret_4h', 'ret_168h', 'rvol_168h', 'vol_ratio_12h', 'vol_ratio_24h', 'mom_z_12h', 'dist_from_high_24h', 'btc_ret_1h', 'btc_ret_4h', 'btc_ret_12h', 'btc_ret_24h', 'btc_beta_168h', 'btc_outperform', 'premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'vwap_dev_24h', 'obv_ma_ratio_24', 'cum_funding_168h', 'funding_x_mom_12h']
+    LGB features: 71/71
+  ❌ C-lgb-65f                                                  Sh=-0.69 Wr= -67.6% WM=6/13 → $38
+    XGB features: 71/71
+  ⚠️ C-xgb-65f                                                  Sh=+0.19 Wr= -23.9% WM=7/13 → $88
+  ❌ C-ens-65f                                                  Sh=-0.57 Wr= -58.6% WM=7/13 → $47
+  C runtime: 756s
+  Top features (gain): [('funding_rate_binance', np.float64(177434.99918317795)), ('cum_funding_72h', np.float64(174730.64090967178)), ('cum_funding_24h', np.float64(174092.9067516327)), ('fng_zscore', np.float64(141274.70719242096)), ('cum_funding_168h', np.float64(139145.67105007172)), ('ls_divergence', np.float64(120683.3009724617)), ('btc_beta_168h', np.float64(111763.0088300705)), ('rvol_168h', np.float64(97054.40666007996)), ('funding_zscore', np.float64(88112.56079292297)), ('vol_of_vol', np.float64(86459.26799058914)), ('top_ls_ratio_zscore', np.float64(81405.74468040466)), ('adx', np.float64(80161.84010696411)), ('dvol_zscore', np.float64(77445.73526763916)), ('vix_zscore', np.float64(77387.1398601532)), ('ret_168h', np.float64(75605.46175718307)), ('vol_ratio_24h', np.float64(70783.99039936066)), ('oi_zscore', np.float64(70241.92082166672)), ('rvol_24h', np.float64(66470.95065355301)), ('taker_cvd_24h', np.float64(65245.633556842804)), ('global_ls_ratio_zscore', np.float64(59900.66710090637))]
+
+================================================================================
+  EXP-D: FEATURES_75 (65 + 8 R28 engineered)
+================================================================================
+  Available: 79/79: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'funding_rate_binance', 'funding_zscore', 'cum_funding_24h', 'cum_funding_72h', 'premium_index', 'premium_zscore', 'taker_imbalance', 'taker_zscore', 'taker_cvd_4h', 'oi_chg_1h', 'oi_chg_4h', 'oi_ret_diverge', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'fng_value', 'fng_zscore', 'rsi_14', 'bb_pband_20', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'dvol_zscore', 'ret_1h', 'ret_4h', 'ret_168h', 'rvol_168h', 'vol_ratio_12h', 'vol_ratio_24h', 'mom_z_12h', 'dist_from_high_24h', 'btc_ret_1h', 'btc_ret_4h', 'btc_ret_12h', 'btc_ret_24h', 'btc_beta_168h', 'btc_outperform', 'premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'vwap_dev_24h', 'obv_ma_ratio_24', 'cum_funding_168h', 'funding_x_mom_12h', 'funding_accel', 'oi_momentum', 'taker_persistence', 'funding_oi_interact', 'reversal_4v24', 'reversal_12v48', 'vol_crush', 'ret_12h_raw_rank']
+    LGB features: 79/79
+  ❌ D-lgb-75f                                                  Sh=+0.33 Wr= -37.8% WM=7/13 → $94
+    XGB features: 79/79
+  ⚠️ D-xgb-75f                                                  Sh=-0.17 Wr= -22.2% WM=4/13 → $63
+  ❌ D-ens-75f                                                  Sh=-0.38 Wr= -44.1% WM=7/13 → $50
+  D runtime: 809s
+  Top features (gain): [('funding_rate_binance', np.float64(116976.44021511078)), ('cum_funding_24h', np.float64(107859.96003341675)), ('cum_funding_72h', np.float64(103189.90938711166)), ('fng_zscore', np.float64(90439.16247177124)), ('cum_funding_168h', np.float64(75659.42139148712)), ('ls_divergence', np.float64(71322.62083435059)), ('btc_beta_168h', np.float64(66323.20593547821)), ('rvol_168h', np.float64(56579.62151813507)), ('top_ls_ratio_zscore', np.float64(50123.06820869446)), ('funding_zscore', np.float64(49299.97341823578)), ('adx', np.float64(47919.62200832367)), ('vol_of_vol', np.float64(47834.41767215729)), ('vix_zscore', np.float64(44838.73572444916)), ('ret_168h', np.float64(43924.34551811218)), ('dvol_zscore', np.float64(42971.14472961426)), ('oi_zscore', np.float64(41557.74652004242)), ('taker_cvd_24h', np.float64(40672.07027006149)), ('global_ls_ratio_zscore', np.float64(35951.36530303955)), ('vol_ratio_24h', np.float64(35358.47255897522)), ('gk_vol_24h', np.float64(34971.16592693329))]
+
+================================================================================
+  EXP-E: Importance-pruned features (top N from best)
+================================================================================
+  Full importance ranking:
+      1. funding_rate_binance           = 116976
+      2. cum_funding_24h                = 107860
+      3. cum_funding_72h                = 103190
+      4. fng_zscore                     = 90439
+      5. cum_funding_168h               = 75659
+      6. ls_divergence                  = 71323
+      7. btc_beta_168h                  = 66323
+      8. rvol_168h                      = 56580
+      9. top_ls_ratio_zscore            = 50123
+     10. funding_zscore                 = 49300
+     11. adx                            = 47920
+     12. vol_of_vol                     = 47834
+     13. vix_zscore                     = 44839
+     14. ret_168h                       = 43924
+     15. dvol_zscore                    = 42971
+     16. oi_zscore                      = 41558
+     17. taker_cvd_24h                  = 40672
+     18. global_ls_ratio_zscore         = 35951
+     19. vol_ratio_24h                  = 35358
+     20. gk_vol_24h                     = 34971
+     21. rvol_24h                       = 32287
+     22. pct_coins_up_12h               = 29750
+     23. ret_skew_24h                   = 28355
+     24. obv_ma_ratio_24                = 24669
+     25. dxy_ret_7d                     = 22980
+     26. ret_kurt_24h                   = 22968
+     27. atr_14                         = 21638
+     28. vol_ratio_12h                  = 21334
+     29. ret_24h                        = 20732
+     30. ret_48h                        = 20703
+     31. btc_ret_12h                    = 20084
+     32. reversal_12v48                 = 19912
+     33. rvol_12h                       = 19255
+     34. oi_chg_24h                     = 17662
+     35. vol_crush                      = 17158
+     36. funding_oi_interact            = 16823
+     37. mom_z_24h                      = 16672
+     38. taker_cvd_12h                  = 12207
+     39. residual_24h                   = 11333
+     40. reversal_4v24                  = 11257
+     41. funding_x_mom_12h              = 10811
+     42. bb_pband_20                    = 10700
+     43. vwap_dev_24h                   = 10137
+     44. mfi_14                         = 9797
+     45. rsi_14                         = 9258
+     46. dist_from_high_24h             = 8908
+     47. iv_rv_spread                   = 8075
+     48. oi_momentum                    = 6549
+     49. oi_chg_12h                     = 5935
+     50. oi_ret_diverge                 = 5228
+     51. pct_coins_up_1h                = 5097
+     52. btc_ret_24h                    = 4811
+     53. mom_z_12h                      = 4628
+     54. taker_persistence              = 4614
+     55. ret_12h                        = 3433
+     56. residual_12h                   = 3170
+     57. btc_ret_4h                     = 2598
+     58. hour_sin                       = 1401
+     59. taker_cvd_4h                   = 1267
+     60. oi_chg_4h                      = 942
+     61. btc_outperform                 = 672
+     62. premium_index                  = 630
+     63. funding_accel                  = 535
+     64. ret_4h                         = 460
+     65. hour_cos                       = 394
+     66. btc_ret_1h                     = 119
+     67. premium_zscore                 = 107
+     68. ret_12h_raw_rank               = 53
+     69. oi_chg_1h                      = 38
+     70. ret_1h                         = 38
+     71. taker_imb_z                    = 28
+     72. taker_zscore                   = 24
+     73. taker_imbalance                = 17
+     74. oi_velocity                    = 14
+     75. dow_sin                        = 0
+     76. dow_cos                        = 0
+     77. vix_close                      = 0
+     78. fng_value                      = 0
+     79. premium_zscore_12h             = 0
+
+  --- Top-25 features ---
+    LGB features: 25/25
+    XGB features: 25/25
+  ❌ E-ens-top25                                                Sh=+1.00 Wr= -35.0% WM=5/13 → $189
+
+  --- Top-30 features ---
+    LGB features: 30/30
+    XGB features: 30/30
+  ❌ E-ens-top30                                                Sh=+0.70 Wr= -43.4% WM=8/13 → $132
+
+  --- Top-35 features ---
+    LGB features: 35/35
+    XGB features: 35/35
+  ❌ E-ens-top35                                                Sh=+1.57 Wr= -36.4% WM=8/13 → $397
+
+  --- Top-40 features ---
+    LGB features: 40/40
+    XGB features: 40/40
+  ❌ E-ens-top40                                                Sh=+1.23 Wr= -25.6% WM=7/13 → $259
+
+  --- Top-45 features ---
+    LGB features: 45/45
+    XGB features: 45/45
+  ❌ E-ens-top45                                                Sh=+0.57 Wr= -32.6% WM=6/13 → $112
+
+================================================================================
+  R28 RESULTS SUMMARY
+================================================================================
+  F                     Sh=3.39  Eq=$3632  Worst=0.0%
+  A                     Sh=0.06  Eq=$78  Worst=0.0%
+  B                     Sh=-0.52  Eq=$49  Worst=0.0%
+  C                     Sh=-0.57  Eq=$47  Worst=0.0%
+  D                     Sh=-0.38  Eq=$50  Worst=0.0%
+  E-top25          Sh=1.00  Eq=$189  Worst=0.0%
+  E-top30          Sh=0.70  Eq=$132  Worst=0.0%
+  E-top35          Sh=1.57  Eq=$397  Worst=0.0%
+  E-top40          Sh=1.23  Eq=$259  Worst=0.0%
+  E-top45          Sh=0.57  Eq=$112  Worst=0.0%
+
+  Total R28 runtime: 81.8 min
+  Done.

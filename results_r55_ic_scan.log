@@ -1,0 +1,144 @@
+======================================================================
+  R55 — CoinGlass Feature Expansion
+======================================================================
+
+[1/4] Building R55 feature table...
+  Loading CG OI...
+    CG OI features: 51,360 rows, 35 symbols
+  Loading CG Funding...
+    CG FR features: 49,043 rows, 33 symbols
+  Loading CG Basis...
+    CG Basis features: 42,039 rows, 27 symbols
+  Loading CG Position Ratio...
+    CG PosRatio features: 49,955 rows, 33 symbols
+
+  Loading Binance hourly OI...
+    Binance daily OI: 75,357 rows, 50 symbols
+  Loading Binance 8h funding...
+    Binance daily FR: 96,698 rows, 50 symbols
+
+  Building disagreement features...
+    OI disagreement: 49,416 rows
+    FR disagreement: 48,218 rows
+
+  ══ R55 feature table: 53,111 rows, 35 syms, 12 features ══
+  Features: ['cg_date', 'cg_oi_chg_1d', 'cg_oi_range', 'cg_fr_close', 'cg_fr_range', 'cg_basis_close', 'cg_basis_chg', 'cg_basis_z_60d', 'cg_pos_ls_ratio', 'cg_pos_ls_z_60d', 'cg_oi_disagreement', 'cg_fr_disagreement']
+
+[2/4] Loading base research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  Merged 11 R55 features into model frame (1,826,014 rows)
+  NaN counts (native handling): {'cg_oi_chg_1d': np.int64(641866), 'cg_oi_range': np.int64(641866), 'cg_fr_close': np.int64(672925), 'cg_fr_range': np.int64(672925), 'cg_basis_close': np.int64(837318), 'cg_basis_chg': np.int64(837318), 'cg_basis_z_60d': np.int64(841206), 'cg_pos_ls_ratio': np.int64(651831), 'cg_pos_ls_z_60d': np.int64(656583)}
+
+  Model frame: 1,826,014 rows, 35 symbols
+  R55 features available: ['cg_oi_chg_1d', 'cg_oi_range', 'cg_fr_close', 'cg_fr_range', 'cg_basis_close', 'cg_basis_chg', 'cg_basis_z_60d', 'cg_pos_ls_ratio', 'cg_pos_ls_z_60d', 'cg_oi_disagreement', 'cg_fr_disagreement']
+
+======================================================================
+  [3/4] IC SCAN — per tier
+======================================================================
+
+  IC by tier:
+tier                   ALL      T1      T2      T3
+feature                                           
+cg_basis_chg        0.0197  0.0205  0.0218  0.0168
+cg_basis_close      0.0448  0.0488  0.0531  0.0473
+cg_basis_z_60d      0.0554  0.0587  0.0582  0.0544
+cg_fr_close        -0.0637 -0.0634 -0.0663 -0.0580
+cg_fr_disagreement -0.0469 -0.0549 -0.0447 -0.0425
+cg_fr_range         0.0357  0.0258  0.0422  0.0337
+cg_oi_chg_1d       -0.0556 -0.0662 -0.0525 -0.0639
+cg_oi_disagreement  0.0073  0.0178  0.0088 -0.0019
+cg_oi_range        -0.0043 -0.0052 -0.0003 -0.0041
+cg_pos_ls_ratio    -0.0084 -0.0180 -0.0103 -0.0059
+cg_pos_ls_z_60d    -0.0187 -0.0184 -0.0216 -0.0140
+
+  IC by WF window:
+window                  W1      W2      W3
+feature                                   
+cg_basis_chg        0.0247  0.0218  0.0211
+cg_basis_close      0.0458  0.0453  0.0467
+cg_basis_z_60d      0.0518  0.0541  0.0557
+cg_fr_close        -0.0643 -0.0648 -0.0645
+cg_fr_disagreement -0.0496 -0.0465 -0.0468
+cg_fr_range         0.0278  0.0288  0.0311
+cg_oi_chg_1d       -0.0635 -0.0589 -0.0557
+cg_oi_disagreement  0.0085  0.0115  0.0095
+cg_oi_range        -0.0035 -0.0058 -0.0086
+cg_pos_ls_ratio    -0.0049 -0.0080 -0.0086
+cg_pos_ls_z_60d    -0.0141 -0.0188 -0.0184
+
+  Redundancy check vs champion features:
+          new_feat        old_feat      corr         flag
+       cg_fr_close cum_funding_24h  0.858645 ⚠️ redundant
+       cg_oi_range      gk_vol_24h  0.613678 ⚠️ redundant
+       cg_oi_range          atr_14  0.606332 ⚠️ redundant
+       cg_oi_range        rvol_24h  0.582791 ⚠️ redundant
+       cg_fr_range cum_funding_24h -0.546395 ⚠️ redundant
+    cg_basis_close cum_funding_24h -0.530203 ⚠️ redundant
+       cg_oi_range    iv_rv_spread -0.524439 ⚠️ redundant
+   cg_pos_ls_ratio   ls_divergence  0.481801   ↔️ partial
+       cg_oi_range        rvol_12h  0.478264   ↔️ partial
+      cg_oi_chg_1d         ret_48h  0.475478   ↔️ partial
+      cg_oi_chg_1d       oi_zscore  0.429508   ↔️ partial
+cg_fr_disagreement cum_funding_24h  0.396199   ↔️ partial
+      cg_oi_chg_1d      oi_chg_24h  0.378846   ↔️ partial
+   cg_pos_ls_z_60d cum_funding_24h  0.343424   ↔️ partial
+   cg_pos_ls_ratio cum_funding_24h  0.333739   ↔️ partial
+      cg_oi_chg_1d         ret_24h  0.323498   ↔️ partial
+    cg_basis_z_60d cum_funding_24h -0.312485   ↔️ partial
+      cg_oi_chg_1d       mom_z_24h  0.305074   ↔️ partial
+
+======================================================================
+  [4/4] WF ABLATION
+======================================================================
+  Champion features present: 30/30
+
+  ══ WF ABLATION ══
+  Champion: 30 features
+  CG features (replacement targets): []
+  New candidates: ['cg_oi_chg_1d', 'cg_fr_close', 'cg_fr_range', 'cg_basis_close', 'cg_basis_chg', 'cg_basis_z_60d', 'cg_pos_ls_z_60d', 'cg_fr_disagreement']
+
+  [Baseline] Running champion WF...
+  Training: , 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: skip (train=1307473, test=0)
+    W2/s0: skip (train=1307508, test=0)
+    W3/s0: skip (train=1307508, test=0)
+    W1/s7: skip (train=1307473, test=0)
+    W2/s7: skip (train=1307508, test=0)
+    W3/s7: skip (train=1307508, test=0)
+    W1/s13: skip (train=1307473, test=0)
+    W2/s13: skip (train=1307508, test=0)
+    W3/s13: skip (train=1307508, test=0)
+    W1/s42: skip (train=1307473, test=0)
+    W2/s42: skip (train=1307508, test=0)
+    W3/s42: skip (train=1307508, test=0)
+    W1/s99: skip (train=1307473, test=0)
+    W2/s99: skip (train=1307508, test=0)
+    W3/s99: skip (train=1307508, test=0)
+  Training: , 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=63,682, IC=0.0459
+    W2/s0: skip (train=1484524, test=0)
+    W3/s0: skip (train=1484558, test=0)
+    W2/s7: skip (train=1484524, test=0)
+    W3/s7: skip (train=1484558, test=0)
+    W2/s13: skip (train=1484524, test=0)
+    W3/s13: skip (train=1484558, test=0)
+    W2/s42: skip (train=1484524, test=0)
+    W3/s42: skip (train=1484558, test=0)
+    W2/s99: skip (train=1484524, test=0)
+    W3/s99: skip (train=1484558, test=0)
+  Training: , 30f, L2=1.0, expanding, 5 seeds × 3 windows

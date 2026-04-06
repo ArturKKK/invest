@@ -1,0 +1,203 @@
+================================================================================
+  R29b — Combo Testing & Greedy Forward Selection
+  Date: 2026-04-02 20:53:19.647315
+================================================================================
+
+  Loading data...
+  OHLCV: 1,826,014 rows
+  Building research features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Building production features...
+  [R29] Building production-level features...
+    sym 1/35: AAVE/USDT
+    sym 11/35: CHZ/USDT
+    sym 21/35: LDO/USDT
+    sym 31/35: SOL/USDT
+  [R29] Production features added: 55 new columns (149 total)
+  Final: 1,826,014 rows, 149 cols
+  Load/build time: 34s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  EXP-A: BASELINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  [BASELINE-23f] 23f (avail 23/23)
+  ❌ BASELINE-23f                                               Sh=+2.02 Wr= -34.5% WM=9/13 → $662
+  Delta: +2.02  (312s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  EXP-B: PREDEFINED COMBOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  [TOP3] 26f (avail 26/26)
+  ❌ TOP3                                                       Sh=+2.83 Wr= -25.9% WM=9/13 → $1782
+  Delta: +0.81  (346s)
+  [TOP5] 28f (avail 28/28)
+  ❌ TOP5                                                       Sh=+2.16 Wr= -32.7% WM=9/13 → $878
+  Delta: +0.14  (371s)
+  [TOP7] 30f (avail 30/30)
+  ❌ TOP7                                                       Sh=+2.44 Wr= -26.3% WM=10/13 → $1176
+  Delta: +0.42  (387s)
+  [TOP10] 33f (avail 33/33)
+  ⚠️ TOP10                                                      Sh=+2.94 Wr= -18.2% WM=10/13 → $1822
+  Delta: +0.93  (439s)
+  [TOP12] 35f (avail 35/35)
+  ❌ TOP12                                                      Sh=+2.08 Wr= -34.9% WM=10/13 → $794
+  Delta: +0.07  (483s)
+  [DIVERSE7] 30f (avail 30/30)
+  ❌ DIVERSE7                                                   Sh=+2.45 Wr= -29.9% WM=10/13 → $1233
+  Delta: +0.43  (437s)
+  [ALL_d02] 43f (avail 43/43)
+  ⚠️ ALL_d02                                                    Sh=+2.02 Wr= -24.3% WM=9/13 → $717
+  Delta: +0.00  (597s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  EXP-C: GREEDY FORWARD from top-12
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  --- Greedy step 1 (current Sh=2.02, 23f) ---
+  [G1+global_ls_ratio] 24f (avail 24/24)
+  ❌ G1+global_ls_ratio                                         Sh=+2.77 Wr= -36.2% WM=10/13 → $1626
+  Delta: +0.76  (316s)
+  [G1+taker_buy_sell_ratio] 24f (avail 24/24)
+  ⚠️ G1+taker_buy_sell_ratio                                    Sh=+2.64 Wr= -21.7% WM=9/13 → $1356
+  Delta: +0.63  (373s)
+  [G1+buy_pressure] 24f (avail 24/24)
+  ⚠️ G1+buy_pressure                                            Sh=+2.63 Wr= -18.4% WM=9/13 → $1402
+  Delta: +0.61  (399s)
+  [G1+vol_ratio_12h] 24f (avail 24/24)
+  ⚠️ G1+vol_ratio_12h                                           Sh=+2.56 Wr= -21.1% WM=9/13 → $1335
+  Delta: +0.54  (339s)
+  [G1+btc_beta_48h] 24f (avail 24/24)
+  ❌ G1+btc_beta_48h                                            Sh=+2.54 Wr= -27.5% WM=10/13 → $1291
+  Delta: +0.52  (322s)
+  [G1+gk_vol_168h] 24f (avail 24/24)
+  ✅ G1+gk_vol_168h                                             Sh=+2.43 Wr= -11.4% WM=8/13 → $1020
+  Delta: +0.41  (327s)
+  [G1+oi_chg_4h] 24f (avail 24/24)
+  ⚠️ G1+oi_chg_4h                                               Sh=+2.42 Wr= -22.5% WM=9/13 → $1002
+  Delta: +0.40  (328s)
+  [G1+stoch_k] 24f (avail 24/24)
+  ⚠️ G1+stoch_k                                                 Sh=+2.39 Wr= -21.5% WM=9/13 → $1024
+  Delta: +0.37  (327s)
+  [G1+close_open_ratio] 24f (avail 24/24)
+  ⚠️ G1+close_open_ratio                                        Sh=+2.38 Wr= -18.6% WM=9/13 → $1007
+  Delta: +0.36  (327s)
+  [G1+ret_std_24h] 24f (avail 24/24)
+  ⚠️ G1+ret_std_24h                                             Sh=+2.36 Wr= -23.1% WM=9/13 → $993
+  Delta: +0.35  (333s)
+  [G1+upper_shadow] 24f (avail 24/24)
+  ⚠️ G1+upper_shadow                                            Sh=+2.35 Wr= -15.3% WM=10/13 → $1044
+  Delta: +0.33  (412s)
+  [G1+oi_chg_1h] 24f (avail 24/24)
+  ❌ G1+oi_chg_1h                                               Sh=+2.32 Wr= -26.5% WM=10/13 → $881
+  Delta: +0.30  (322s)
+  ✅ Selected: global_ls_ratio → Sh=2.77 (24f)
+
+  --- Greedy step 2 (current Sh=2.77, 24f) ---
+  [G2+taker_buy_sell_ratio] 25f (avail 25/25)
+  ⚠️ G2+taker_buy_sell_ratio                                    Sh=+2.52 Wr= -15.8% WM=9/13 → $1209
+  Delta: -0.25  (357s)
+  [G2+buy_pressure] 25f (avail 25/25)
+  ❌ G2+buy_pressure                                            Sh=+2.94 Wr= -26.2% WM=10/13 → $2111
+  Delta: +0.17  (399s)
+  [G2+vol_ratio_12h] 25f (avail 25/25)
+  ❌ G2+vol_ratio_12h                                           Sh=+2.71 Wr= -30.6% WM=10/13 → $1579
+  Delta: -0.06  (380s)
+  [G2+btc_beta_48h] 25f (avail 25/25)
+  ❌ G2+btc_beta_48h                                            Sh=+1.93 Wr= -36.5% WM=9/13 → $647
+  Delta: -0.84  (368s)
+  [G2+gk_vol_168h] 25f (avail 25/25)
+  ⚠️ G2+gk_vol_168h                                             Sh=+2.53 Wr= -16.7% WM=10/13 → $1198
+  Delta: -0.24  (393s)
+  [G2+oi_chg_4h] 25f (avail 25/25)
+  ❌ G2+oi_chg_4h                                               Sh=+2.43 Wr= -31.8% WM=11/13 → $978
+  Delta: -0.35  (471s)
+  [G2+stoch_k] 25f (avail 25/25)
+  ❌ G2+stoch_k                                                 Sh=+2.52 Wr= -35.4% WM=10/13 → $1212
+  Delta: -0.25  (410s)
+  [G2+close_open_ratio] 25f (avail 25/25)
+  ❌ G2+close_open_ratio                                        Sh=+2.83 Wr= -26.0% WM=11/13 → $1758
+  Delta: +0.06  (385s)
+  [G2+ret_std_24h] 25f (avail 25/25)
+  ⚠️ G2+ret_std_24h                                             Sh=+2.96 Wr= -21.7% WM=9/13 → $1986
+  Delta: +0.19  (403s)
+  [G2+upper_shadow] 25f (avail 25/25)
+  ⚠️ G2+upper_shadow                                            Sh=+2.52 Wr= -16.5% WM=9/13 → $1182
+  Delta: -0.26  (432s)
+  [G2+oi_chg_1h] 25f (avail 25/25)
+  ❌ G2+oi_chg_1h                                               Sh=+2.68 Wr= -34.8% WM=10/13 → $1334
+  Delta: -0.09  (435s)
+  ✅ Selected: ret_std_24h → Sh=2.96 (25f)
+
+  --- Greedy step 3 (current Sh=2.96, 25f) ---
+  [G3+taker_buy_sell_ratio] 26f (avail 26/26)
+  ⚠️ G3+taker_buy_sell_ratio                                    Sh=+2.10 Wr= -22.4% WM=8/13 → $731
+  Delta: -0.86  (465s)
+  [G3+buy_pressure] 26f (avail 26/26)
+  ❌ G3+buy_pressure                                            Sh=+2.09 Wr= -30.8% WM=8/13 → $751
+  Delta: -0.87  (527s)
+  [G3+vol_ratio_12h] 26f (avail 26/26)
+  ❌ G3+vol_ratio_12h                                           Sh=+2.69 Wr= -27.5% WM=9/13 → $1689
+  Delta: -0.27  (502s)
+  [G3+btc_beta_48h] 26f (avail 26/26)
+  ⚠️ G3+btc_beta_48h                                            Sh=+2.89 Wr= -23.2% WM=11/13 → $2256
+  Delta: -0.07  (411s)
+  [G3+gk_vol_168h] 26f (avail 26/26)
+  ⚠️ G3+gk_vol_168h                                             Sh=+2.51 Wr= -19.2% WM=8/13 → $1217
+  Delta: -0.45  (504s)
+  [G3+oi_chg_4h] 26f (avail 26/26)
+  ❌ G3+oi_chg_4h                                               Sh=+2.22 Wr= -44.4% WM=9/13 → $810
+  Delta: -0.74  (442s)
+  [G3+stoch_k] 26f (avail 26/26)
+  ❌ G3+stoch_k                                                 Sh=+2.19 Wr= -25.8% WM=9/13 → $871
+  Delta: -0.77  (597s)
+  [G3+close_open_ratio] 26f (avail 26/26)
+  ⚠️ G3+close_open_ratio                                        Sh=+2.28 Wr= -23.5% WM=8/13 → $906
+  Delta: -0.68  (595s)
+  [G3+upper_shadow] 26f (avail 26/26)
+  ⚠️ G3+upper_shadow                                            Sh=+1.99 Wr= -24.9% WM=8/13 → $638
+  Delta: -0.97  (523s)
+  [G3+oi_chg_1h] 26f (avail 26/26)
+  ✅ G3+oi_chg_1h                                               Sh=+2.47 Wr= -12.0% WM=8/13 → $1059
+  Delta: -0.49  (579s)
+  ❌ No improvement at step 3. Stopping.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  EXP-D: GREEDY FINAL (2 new features) — reg sweep
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Final feature set: FEATURES_23 + ['global_ls_ratio', 'ret_std_24h']
+
+  [GREEDY-FINAL-L2=3.0] 25f, lambda_l2=3.0
+  ⚠️ GREEDY-FINAL-L2=3.0                                        Sh=+2.97 Wr= -16.9% WM=9/13 → $2124
+  Delta vs baseline: +0.95  (364s)
+
+  [GREEDY-FINAL-L2=10.0] 25f, lambda_l2=10.0
+  ⚠️ GREEDY-FINAL-L2=10.0                                       Sh=+3.22 Wr= -17.5% WM=12/13 → $2343
+  Delta vs baseline: +1.21  (276s)
+
+================================================================================
+  R29b COMBO RESULTS
+================================================================================
+  BASELINE-23f                              Sh=2.02  Eq=$662  delta=+0.00
+  TOP3                                      Sh=2.83  Eq=$1782  delta=+0.81 ★★★
+  TOP5                                      Sh=2.16  Eq=$878  delta=+0.14 ★
+  TOP7                                      Sh=2.44  Eq=$1176  delta=+0.42 ★★
+  TOP10                                     Sh=2.94  Eq=$1822  delta=+0.93 ★★★
+  TOP12                                     Sh=2.08  Eq=$794  delta=+0.07 ★
+  DIVERSE7                                  Sh=2.45  Eq=$1233  delta=+0.43 ★★
+  ALL_d02                                   Sh=2.02  Eq=$717  delta=+0.00 ★
+  GREEDY-1: +global_ls_ratio                Sh=2.77  Eq=$1626  delta=+0.76 ★★★
+  GREEDY-2: +ret_std_24h                    Sh=2.96  Eq=$1986  delta=+0.94 ★★★
+  GREEDY-FINAL-L2=3.0                       Sh=2.97  Eq=$2124  delta=+0.95 ★★★
+  GREEDY-FINAL-L2=10.0                      Sh=3.22  Eq=$2343  delta=+1.21 ★★★
+
+  🏆 BEST: GREEDY-FINAL-L2=10.0 → Sh=3.22  (delta=+1.21)
+
+  Total runtime: 295.8 min
+  Done.

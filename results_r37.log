@@ -1,0 +1,59 @@
+================================================================================
+R37 — COST-AWARE EXECUTION
+================================================================================
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 105 cols
+
+[2] Training baseline predictions...
+  Training: A_28f, 28f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0323
+    W2/s0: train=1,484,524, test=85,569, IC=0.0108
+    W3/s0: train=1,628,167, test=89,343, IC=0.0515
+
+[3] Execution sweeps...
+  baseline_ema05_h3...
+  band_k1...
+  band_k2...
+  band_k3...
+  edge_x1...
+  edge_x2...
+  liq60...
+  liq70...
+  combo_liq60_edge2...
+
+[4] Best execution variants
+  W2:
+           config  sharpe  cost_pct  avg_turnover
+            liq70    1.47      3.86           1.4
+          edge_x1    1.21      4.80           2.8
+            liq60    1.13      4.52           2.0
+combo_liq60_edge2    0.39      3.29           1.2
+baseline_ema05_h3    0.21      6.74           4.4
+  W3:
+           config  sharpe  cost_pct  avg_turnover
+            liq70    2.87      4.05           1.7
+          edge_x2    2.86      3.36           1.9
+baseline_ema05_h3    2.38      5.73           4.0
+          band_k3    2.38      5.73           4.0
+          band_k2    2.08      6.44           4.7
+  ALL:
+           config  sharpe  cost_pct  avg_turnover
+baseline_ema05_h3    0.74     18.40           4.2
+          band_k3    0.74     18.40           4.2
+          edge_x1    0.64     13.30           2.8
+          edge_x2    0.51     10.84           2.1
+          band_k1    0.46     23.29           5.6
+
+[5] Saved artifacts
+  Summary CSV: results_r37_execution_summary.csv

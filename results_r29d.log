@@ -1,0 +1,143 @@
+================================================================================
+  R29d — DIAGNOSTIC: Sharpe discrepancy + W2 deep dive
+================================================================================
+
+[1] Loading data WITHOUT build_production_features (R25/R26 way)...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Clean: 1,826,014 rows, 94 cols
+
+[2] Loading data WITH build_production_features (R29c way)...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  [R29] Building production-level features...
+    sym 1/35: AAVE/USDT
+    sym 11/35: CHZ/USDT
+    sym 21/35: LDO/USDT
+    sym 31/35: SOL/USDT
+  [R29] Production features added: 55 new columns (149 total)
+  Prod:  1,826,014 rows, 149 cols
+
+[3] NaN counts for FEATURES_23 columns:
+  DIFF oi_chg_12h: clean=584836 vs prod=585471
+  DIFF oi_chg_24h: clean=585360 vs prod=585998
+  (only showing mismatches)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  H1: BASELINE 23f/L2=1 — CLEAN vs PROD data
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Training on CLEAN data (R25/R26 way)...
+  ✅ CLEAN-23f-6L3S                                             Sh=+3.39 Wr=  -3.0% WM=10/13 → $3632
+  Rows train: 641224 avg
+  Rows test: 87223 avg
+  Time: 273s
+
+  Per-window (CLEAN):
+  W1: Sh=4.52  Eq=$381  Wr=-2.3%  WM=3/4
+  W2: Sh=1.67  Eq=$141  Wr=-28.6%  WM=3/4
+  W3: Sh=1.10  Eq=$117  Wr=-20.1%  WM=3/5
+
+  Training on PROD data (R29c way)...
+  ❌ PROD-23f-6L3S                                              Sh=+2.02 Wr= -34.5% WM=9/13 → $662
+  Rows train: 640837 avg
+  Rows test: 87165 avg
+  Time: 238s
+
+  Per-window (PROD):
+  W1: Sh=4.06  Eq=$312  Wr=-15.5%  WM=3/4
+  W2: Sh=2.31  Eq=$171  Wr=-17.5%  WM=3/4
+  W3: Sh=1.65  Eq=$141  Wr=-9.5%  WM=3/5
+
+  Also: CLEAN-23f with R25's 5L/3S config:
+  ✅ CLEAN-23f-5L3S                                             Sh=+3.36 Wr=  -5.7% WM=10/13 → $3371
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  H2: EFFECT OF cs_rank_cols
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Training WITHOUT cs_rank_cols on CLEAN data...
+  ⚠️ NO-RANK-23f                                                Sh=+0.89 Wr= -18.4% WM=7/13 → $176
+  Time: 88s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  FEAT25 L2=10 on PROD data (R29c result) — for reference
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Training FEAT25 on PROD data, L2=10...
+  ⚠️ FEAT25-L2=10                                               Sh=+3.22 Wr= -17.5% WM=12/13 → $2343
+  Time: 244s
+
+  Per-window (FEAT25):
+  W1: Sh=4.13  Eq=$304  Wr=6.0%  WM=4/4
+  W2: Sh=0.80  Eq=$108  Wr=-31.1%  WM=2/4
+  W3: Sh=3.30  Eq=$225  Wr=-17.5%  WM=4/5
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ISOLATED: 23f + L2=10 on CLEAN data
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Training 23f/L2=10 on CLEAN data...
+  ✅ CLEAN-23f-L2=10                                            Sh=+2.79 Wr= -14.3% WM=10/13 → $1865
+  Time: 189s
+
+  Per-window (23f L2=10 CLEAN):
+  W1: Sh=4.15  Eq=$350  Wr=-6.9%  WM=3/4
+  W2: Sh=1.81  Eq=$148  Wr=-16.4%  WM=3/4
+  W3: Sh=1.98  Eq=$157  Wr=-13.8%  WM=3/5
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  W2 DEEP DIVE (May-Aug 2025)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  CLEAN-23f W2:
+    Rows: 85569, periods: 2593
+    Overall corr: -0.0021
+    Mean IC: 0.0200, Std IC: 0.2465, ICIR: 0.0812
+    Monthly: 2025-05: IC=0.0575, 2025-06: IC=0.0382, 2025-07: IC=-0.0134, 2025-08: IC=0.0151
+
+  PROD-23f W2:
+    Rows: 85503, periods: 2591
+    Overall corr: -0.0028
+    Mean IC: 0.0176, Std IC: 0.2398, ICIR: 0.0733
+    Monthly: 2025-05: IC=0.0573, 2025-06: IC=0.0333, 2025-07: IC=-0.0159, 2025-08: IC=0.0139
+
+  FEAT25-L2=10 W2:
+    Rows: 85503, periods: 2591
+    Overall corr: -0.0016
+    Mean IC: 0.0192, Std IC: 0.2316, ICIR: 0.0827
+    Monthly: 2025-05: IC=0.0578, 2025-06: IC=0.0340, 2025-07: IC=-0.0121, 2025-08: IC=0.0146
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  LEAKAGE CHECK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Shuffled labels test (FEAT25 L2=10)...
+  ❌ SHUFFLED-FEAT25                                            Sh=-0.21 Wr= -39.3% WM=4/13 → $33
+  Shuffled Sharpe: -0.21 (should be ~0 if no leakage)
+
+================================================================================
+  DIAGNOSTIC SUMMARY
+================================================================================
+  CLEAN-23f-6L3S           : Sh=3.39
+  PROD-23f-6L3S            : Sh=2.02
+  NO-RANK-23f              : Sh=0.89
+  CLEAN-23f-5L3S           : Sh=3.36
+  CLEAN-23f-L2=10          : Sh=2.79
+  FEAT25-L2=10             : Sh=3.22
+
+  R25/R26 reported: Sh=3.36-3.39 (same pipeline, unknown diff)
+  Total runtime: 23.0 min
+  Done.

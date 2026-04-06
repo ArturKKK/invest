@@ -1,0 +1,8 @@
+{
+  "uniform_all_sh": 1.31,
+  "hybrid_all_sh": 1.66,
+  "liqwt_all_sh": 0.53,
+  "uniform_all_cost": 19.16,
+  "hybrid_all_cost": 9.8,
+  "best_cost_model": "hybrid"
+}

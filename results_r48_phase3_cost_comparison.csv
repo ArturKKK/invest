@@ -1,0 +1,5 @@
+window,uniform_sharpe,hybrid_sharpe,uniform_cost,hybrid_cost,uniform_dd,hybrid_dd
+W1,0.6,0.98,6.54,3.47,-52.5,-51.4
+W2,2.86,3.53,7.14,3.52,-24.5,-22.6
+W3,2.03,2.52,5.8,2.78,-34.2,-34.1
+ALL,1.31,1.66,19.16,9.8,-52.5,-51.4

@@ -1,0 +1,180 @@
+======================================================================
+R49c — Liq-Weighted Bug Diagnostic
+======================================================================
+
+[1] Loading data ...
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+[2] Training champion_31f predictions ...
+  Training: r49c, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0665
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0524
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+  Predictions: 262,236 rows, 7882 timestamps
+
+======================================================================
+  CHECK 1 — Volume data alignment
+======================================================================
+  Pred timestamps  : 7,882
+  Volume timestamps: 74,864
+  Overlap          : 7,882 (100.0%)
+  Missing in vol   : 0
+  ✅ All timestamps aligned
+
+======================================================================
+  CHECK 2 — Weight distribution (do BTC/ETH always hit 2.0 cap?)
+======================================================================
+
+  Weight statistics by tier:
+          mean    median       min       max  count
+tier                                               
+T1    0.877641  0.807989  0.500000  1.606465    334
+T2    1.037231  1.000000  0.566869  1.628880   1166
+T3    1.068899  1.058352  0.710802  1.435788    309
+
+  Fraction hitting upper cap (2.0): 0.0%
+  Fraction hitting lower cap (0.5): 0.3%
+
+  Avg weight T1   : 0.878
+  Avg weight T2/T3: 1.044
+  T1/T23 ratio     : 0.84×
+
+  → T1 coins appear 0.8× more in portfolio by weight vs T2/T3
+
+======================================================================
+  CHECK 3 — Per-symbol signal IC vs log(volume)
+======================================================================
+
+  Spearman corr(IC, log_volume) = -0.314  (p=0.071)
+  ⚠️  NEGATIVE correlation: CS alpha is HIGHER for LESS liquid coins
+  → Liq-weighting (upweight liquid) HURTS portfolio alpha
+  → This is NOT a bug — it's genuine signal distribution
+
+  Top-5 IC symbols:
+  symbol       ic  log_avg_vol tier  n_obs
+APT/USDT 0.081061    12.412907   T3   7881
+ARB/USDT 0.075558    15.070826   T3   7881
+SNX/USDT 0.069696    11.919147   T2   7882
+FIL/USDT 0.067791    12.550644   T2   7881
+AXS/USDT 0.067657    11.645067   T2   7882
+
+  Bottom-5 IC symbols:
+   symbol        ic  log_avg_vol tier  n_obs
+ BTC/USDT -0.017903     7.853616   T1   7881
+DOGE/USDT -0.021068    18.116219   T2   7881
+ ADA/USDT -0.035774    16.041148   T2   7881
+ XRP/USDT -0.082885    16.474112   T1   7881
+ FTM/USDT -0.093211    15.416292   T3   2151
+
+  IC by tier:
+          mean    median  count
+tier                           
+T1   -0.003865  0.014536      5
+T2    0.028186  0.023655     23
+T3    0.021653  0.029691      6
+
+======================================================================
+  CHECK 4 — Realized fwd_ret by tier when selected as long/short
+======================================================================
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+
+  Long selections: 2,642
+  Short selections: 1,414
+
+  LONG fwd_ret by tier:
+          mean    median       std  count
+tier                                     
+T1    0.000128  0.000117  0.021390    889
+T2    0.000045 -0.001499  0.032678   1469
+T3   -0.000168  0.000649  0.033813    284
+
+  SHORT fwd_ret by tier (want NEGATIVE = short is correct):
+          mean    median       std  count
+tier                                     
+T1    0.001293 -0.000042  0.034966     71
+T2   -0.001824 -0.004988  0.044964   1048
+T3   -0.004472 -0.005556  0.045151    295
+
+  INTERPRETATION:
+    T1: long_ret=+0.0001, short_ret=+0.0013, net=-0.0012  (n=960)
+    T2: long_ret=+0.0000, short_ret=-0.0018, net=+0.0019  (n=2517)
+    T3: long_ret=-0.0002, short_ret=-0.0045, net=+0.0043  (n=579)
+
+  T1 long mean return : +0.0001
+  T2/T3 long mean return: +0.0000
+  ✅ T1 coins have higher return when selected — liq-weighting should help
+
+======================================================================
+  CHECK 5 — Equal vs Liq-weighted simulation (ALL window)
+======================================================================
+Traceback (most recent call last):
+  File "/Users/a.s.tabakov/Developer/invest/_research_r49c_liq_bug.py", line 442, in <module>
+    main()
+    ~~~~^^
+  File "/Users/a.s.tabakov/Developer/invest/_research_r49c_liq_bug.py", line 414, in main
+    check_simulation_with_trace(preds, volume_df)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/Users/a.s.tabakov/Developer/invest/_research_r49c_liq_bug.py", line 351, in check_simulation_with_trace
+    port_eq = simulate_with_costs(preds, None, CANONICAL_EXEC_CFG)
+  File "/Users/a.s.tabakov/Developer/invest/_research_r30b_fixed.py", line 107, in simulate_with_costs
+    if ts not in regime_df.index or ts not in grouped:
+                 ^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'index'
+  CHECK 5 — Equal vs Liq-weighted simulation (ALL window)
+======================================================================
+
+  Equal-weight Sharpe : +0.670
+  Liq-weighted Sharpe : +0.650
+  Delta Sharpe        : -0.020
+
+  Equal  cost%: 18.9%
+  Liqwt  cost%: 27.1%
+
+  Equal cumret: +16.6%
+  Liqwt cumret: +15.3%
+
+======================================================================
+  VERDICT
+======================================================================
+
+  Based on above checks, one of:
+
+  [BUG] If Check 1 shows timestamp mismatch >50%:
+    → weights fall back to 1.0 for most bars → result unreliable
+    Fix: align timestamps before passing volume_df
+
+  [BUG] If Check 2 shows T1 consistently at 2.0 cap AND
+        Check 4 shows T1 realized return ≥ T2/T3:
+    → formula is too aggressive (2.0 cap too high)
+    Fix: reduce cap to 1.3 or use log-log scaling
+
+  [GENUINE] If Check 3 shows negative corr(IC, log_volume):
+    → CS alpha lives in mid/small caps, liq-weighting kills it
+    Conclusion: discard liq-weighted, document as proven useless
+    Action: update MEGA_PROMPT.md "proven useless" list
+
+  Recommendation: See output above to determine which case applies.
+

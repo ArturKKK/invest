@@ -1,0 +1,86 @@
+================================================================================
+R38 — TARGET ENGINEERING
+================================================================================
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 111 cols
+
+[2] Building target variants...
+
+[3] Training target variants...
+  baseline_p0...
+  W1: Sh= 1.03 (gross= 1.80)  Eq=$   110  DD=-51.2%  WM=3/4  Cost=6.6%  Turn=4.8
+  W2: Sh= 0.42 (gross= 1.48)  Eq=$    95  DD=-51.1%  WM=3/4  Cost=7.0%  Turn=4.6
+  W3: Sh= 1.29 (gross= 2.20)  Eq=$   124  DD=-36.8%  WM=4/5  Cost=5.4%  Turn=3.8
+  ALL: Sh= 0.71 (gross= 1.45)  Eq=$   133  DD=-51.2%  Cost=19.4%  Turn=4.5
+  p_gt_005...
+  W1: Sh=-0.40 (gross= 0.28)  Eq=$    63  DD=-70.9%  WM=3/4  Cost=5.8%  Turn=4.0
+  W2: Sh=-5.06 (gross=-3.70)  Eq=$    23  DD=-78.3%  WM=0/4  Cost=7.2%  Turn=4.8
+  W3: Sh= 0.53 (gross= 1.69)  Eq=$   100  DD=-29.4%  WM=2/5  Cost=6.6%  Turn=4.8
+  ALL: Sh=-1.94 (gross=-1.17)  Eq=$     5  DD=-96.8%  Cost=18.9%  Turn=4.4
+  p_gt_010...
+  W1: Sh= 1.16 (gross= 1.66)  Eq=$   117  DD=-57.3%  WM=3/4  Cost=4.7%  Turn=3.1
+  W2: Sh=-3.80 (gross=-2.85)  Eq=$    27  DD=-73.3%  WM=0/4  Cost=5.8%  Turn=3.7
+  W3: Sh=-1.36 (gross=-0.31)  Eq=$    68  DD=-38.3%  WM=1/5  Cost=4.6%  Turn=3.0
+  ALL: Sh=-0.79 (gross=-0.23)  Eq=$    18  DD=-90.4%  Cost=15.2%  Turn=3.3
+  p_gt_015...
+  W1: Sh=-0.06 (gross= 0.31)  Eq=$    66  DD=-69.5%  WM=2/4  Cost=3.5%  Turn=2.0
+  W2: Sh=-3.49 (gross=-2.74)  Eq=$    26  DD=-73.5%  WM=0/4  Cost=4.9%  Turn=2.9
+  W3: Sh=-3.34 (gross=-2.71)  Eq=$    42  DD=-56.4%  WM=1/5  Cost=2.9%  Turn=1.6
+  ALL: Sh=-1.76 (gross=-1.34)  Eq=$     5  DD=-96.8%  Cost=11.4%  Turn=2.2
+  p_gt_020...
+  W1: Sh= 0.05 (gross= 0.43)  Eq=$    69  DD=-70.8%  WM=2/4  Cost=3.6%  Turn=2.1
+  W2: Sh=-2.95 (gross=-2.30)  Eq=$    32  DD=-68.2%  WM=0/4  Cost=4.2%  Turn=2.4
+  W3: Sh=-3.48 (gross=-2.92)  Eq=$    39  DD=-62.3%  WM=0/5  Cost=2.7%  Turn=1.4
+  ALL: Sh=-1.63 (gross=-1.24)  Eq=$     6  DD=-96.9%  Cost=10.7%  Turn=2.0
+  excess_vs_btc...
+  W1: Sh=-0.22 (gross= 0.46)  Eq=$    69  DD=-47.8%  WM=3/4  Cost=5.3%  Turn=3.6
+  W2: Sh=-3.99 (gross=-2.68)  Eq=$    34  DD=-68.6%  WM=1/4  Cost=6.3%  Turn=4.1
+  W3: Sh=-0.13 (gross= 0.96)  Eq=$    84  DD=-36.6%  WM=2/5  Cost=6.0%  Turn=4.3
+  ALL: Sh=-0.56 (gross= 0.16)  Eq=$    28  DD=-83.4%  Cost=17.6%  Turn=4.0
+  decay_90d...
+  W1: Sh=-0.84 (gross=-0.18)  Eq=$    47  DD=-71.9%  WM=1/4  Cost=5.8%  Turn=4.0
+  W2: Sh= 0.80 (gross= 2.22)  Eq=$   109  DD=-29.0%  WM=4/4  Cost=8.2%  Turn=5.6
+  W3: Sh=-0.25 (gross= 0.73)  Eq=$    75  DD=-53.5%  WM=2/5  Cost=6.4%  Turn=4.6
+  ALL: Sh=-0.79 (gross=-0.01)  Eq=$    18  DD=-87.8%  Cost=20.5%  Turn=4.8
+  decay_180d...
+  W1: Sh=-1.53 (gross=-0.90)  Eq=$    33  DD=-74.0%  WM=0/4  Cost=5.8%  Turn=4.1
+  W2: Sh= 1.08 (gross= 2.68)  Eq=$   118  DD=-28.0%  WM=3/4  Cost=8.7%  Turn=6.0
+  W3: Sh= 0.67 (gross= 1.64)  Eq=$   102  DD=-42.3%  WM=3/5  Cost=6.0%  Turn=4.3
+  ALL: Sh=-0.75 (gross= 0.01)  Eq=$    18  DD=-85.3%  Cost=20.5%  Turn=4.8
+
+[4] Best target variants
+  W2:
+     config  sharpe  cost_pct  avg_turnover
+ decay_180d    1.08      8.67           6.0
+  decay_90d    0.80      8.25           5.6
+baseline_p0    0.42      7.00           4.6
+   p_gt_020   -2.95      4.19           2.4
+   p_gt_015   -3.49      4.90           2.9
+  W3:
+       config  sharpe  cost_pct  avg_turnover
+  baseline_p0    1.29      5.43           3.8
+   decay_180d    0.67      6.04           4.3
+     p_gt_005    0.53      6.63           4.8
+excess_vs_btc   -0.13      6.04           4.3
+    decay_90d   -0.25      6.38           4.6
+  ALL:
+       config  sharpe  cost_pct  avg_turnover
+  baseline_p0    0.71     19.37           4.5
+excess_vs_btc   -0.56     17.61           4.0
+   decay_180d   -0.75     20.49           4.8
+     p_gt_010   -0.79     15.24           3.3
+    decay_90d   -0.79     20.53           4.8
+
+[5] Saved artifacts
+  Summary CSV: results_r38_target_summary.csv

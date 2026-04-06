@@ -1,0 +1,123 @@
+======================================================================
+R50 — Risk Protocol: Gross Cap + Crash Mode
+======================================================================
+
+[1] Loading data ...
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Frame: 1,826,014 rows × 135 cols
+
+[2] Training champion_31f ...
+  Training: r50_31f, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0665
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0524
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+  Predictions: 262,236 rows
+
+======================================================================
+  BASELINE — champion_31f + hybrid costs (R48 result)
+======================================================================
+
+  Window  Sharpe   MaxDD%   Cost%
+  W1      -0.47   -13.6%  638.4%
+  W2      +3.16    -4.3%   16.5%
+  W3      +3.22    -6.4%   13.0%
+  ALL     +1.02   -13.6%   26.1%
+
+  Champion ALL: Sharpe=+1.02, MaxDD=-13.6%, Cost=26.1%
+
+[3] Building crash indicators ...
+  rvol_thresh=80%: crash_mode=27.9% of bars
+  rvol_thresh=85%: crash_mode=24.0% of bars
+  rvol_thresh=90%: crash_mode=19.7% of bars
+
+======================================================================
+  50.1 — Crash Mode Protocol (scan thresholds)
+======================================================================
+
+   rvol_t   gr% t1only  Sharpe   MaxDD%   Cost%  %crash
+  80%    30%   True    +6.05    -9.1%   48.3%   26.4%
+  80%    30%   False   +7.42   -10.1%   38.1%   26.4%
+  80%    50%   True    +5.94    -9.2%   47.7%   26.4%
+  80%    50%   False   +7.40   -10.0%   37.1%   26.4%
+  85%    30%   True    +8.21    -8.2%   40.1%   22.0%
+  85%    30%   False   +8.98    -9.4%   33.2%   22.0%  ← best
+  85%    50%   True    +7.91    -8.9%   40.1%   22.0%
+  85%    50%   False   +8.46    -9.5%   33.6%   22.0%
+  90%    30%   True    +5.98    -9.7%   46.3%   16.4%
+  90%    30%   False   +7.29   -10.1%   36.9%   16.4%
+  90%    50%   True    +5.76    -9.2%   46.5%   16.4%
+  90%    50%   False   +7.27   -10.0%   36.2%   16.4%
+
+  Best crash protocol: rvol>=85%, gross×30%, t1_only=False
+
+======================================================================
+  50.2 — Equity DD Breaker (scan thresholds)
+======================================================================
+
+    dd_t%   gr% t1only  Sharpe   MaxDD%   Cost%   %redu
+  -10%    40%   True    +1.78   -15.1%   64.4%   46.0%
+  -10%    40%   False   +3.94   -10.9%   50.2%   28.9%
+  -10%    50%   True    +1.63   -15.6%   66.1%   46.0%
+  -10%    50%   False   +5.54   -10.9%   41.0%   14.0%
+  -10%    60%   True    +1.48   -16.1%   67.8%   46.0%
+  -10%    60%   False   +6.05   -10.9%   38.4%   11.6%
+  -12%    40%   True    +6.88   -10.9%   34.7%    0.0%  ← best
+  -12%    40%   False   +6.88   -10.9%   34.7%    0.0%  ← best
+  -12%    50%   True    +6.88   -10.9%   34.7%    0.0%  ← best
+  -12%    50%   False   +6.88   -10.9%   34.7%    0.0%  ← best
+  -12%    60%   True    +6.88   -10.9%   34.7%    0.0%  ← best
+  -12%    60%   False   +6.88   -10.9%   34.7%    0.0%  ← best
+  -15%    40%   True    +6.88   -10.9%   34.7%    0.0%  ← best
+  -15%    40%   False   +6.88   -10.9%   34.7%    0.0%  ← best
+  -15%    50%   True    +6.88   -10.9%   34.7%    0.0%  ← best
+  -15%    50%   False   +6.88   -10.9%   34.7%    0.0%  ← best
+  -15%    60%   True    +6.88   -10.9%   34.7%    0.0%  ← best
+  -15%    60%   False   +6.88   -10.9%   34.7%    0.0%  ← best
+
+  Best DD breaker: threshold=-12%, gross×50%, t1_only=False
+
+======================================================================
+  50.3 — Combined: Crash + DD Breaker (champion combo)
+======================================================================
+
+  Window  Base_Sh  Base_DD  Crash_Sh  Crash_DD  DDBk_Sh  DDBk_DD
+  W1       -1.92   -13.6%    +8.38     -6.3%   +5.95    -8.8%
+  W2      +12.59    -4.3%    +6.22    -11.3%   +1.27   -14.6%
+  W3      +13.16    -6.4%    -1.36    -11.9%   -1.15   -12.9%
+  ALL      +5.25   -13.6%    +8.98     -9.4%   +6.88   -10.9%
+
+======================================================================
+  R50 SUMMARY
+======================================================================
+
+  BASELINE (champion_31f + hybrid):
+    ALL Sharpe = +5.25, MaxDD = -13.6%
+
+  CRASH PROTOCOL (rvol>85%, ×30%, t1=False):
+    ALL Sharpe = +8.98, MaxDD = -9.4%
+    DD change: +4.2pp
+
+  DD BREAKER (threshold=-12%, ×50%, t1=False):
+    ALL Sharpe = +6.88, MaxDD = -10.9%
+    DD change: +2.7pp
+
+  VERDICT:
+    Target: ALL ≥ 1.50, MaxDD < -35%
+    Crash: ✅ PASS
+    DD breaker: ✅ PASS
+

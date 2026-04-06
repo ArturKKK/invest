@@ -1,0 +1,166 @@
+================================================================================
+  R28b — Careful Feature Expansion
+  Date: 2026-04-02 03:46:48.859400
+================================================================================
+
+  Loading data...
+  OHLCV: 1,826,014 rows, 35 symbols
+  Building features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  [R28b] Extra features added: 2: ['reversal_12v48', 'vol_crush']
+  Final: 1,826,014 rows, 96 cols
+  FEATS_G: 28/28
+  FEATS_H: 28/28
+  FEATS_I: 28/28
+  FEATS_J: 28/28
+  FEATS_K: 33/33
+  FEATS_L: 38/38
+  FEATS_M: 43/43
+  Load time: 12s
+
+
+================================================================================
+  F-baseline-23f: 23 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos']
+    LGB features: 23/23
+  ✅ F-baseline-23f-lgb                                         Sh=+2.86 Wr= -13.4% WM=10/13 → $1998
+    XGB features: 23/23
+  ⚠️ F-baseline-23f-xgb                                         Sh=+2.97 Wr= -15.9% WM=11/13 → $2336
+  ✅ F-baseline-23f-ens                                         Sh=+3.39 Wr=  -3.0% WM=10/13 → $3632
+  F-baseline-23f runtime: 261s
+
+================================================================================
+  G-deriv-28f: 28 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'premium_zscore', 'taker_zscore', 'oi_ret_diverge']
+    LGB features: 28/28
+  ❌ G-deriv-28f-lgb                                            Sh=+0.24 Wr= -26.5% WM=8/13 → $91
+    XGB features: 28/28
+  ❌ G-deriv-28f-xgb                                            Sh=+0.17 Wr= -36.4% WM=9/13 → $83
+  ❌ G-deriv-28f-ens                                            Sh=-0.08 Wr= -33.9% WM=7/13 → $68
+  G-deriv-28f runtime: 276s
+
+================================================================================
+  H-ta-28f: 28 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'adx', 'rsi_14', 'bb_pband_20', 'ret_skew_24h', 'mfi_14']
+    LGB features: 28/28
+  ❌ H-ta-28f-lgb                                               Sh=+1.90 Wr= -38.3% WM=11/13 → $579
+    XGB features: 28/28
+  ❌ H-ta-28f-xgb                                               Sh=+1.88 Wr= -44.4% WM=11/13 → $563
+  ❌ H-ta-28f-ens                                               Sh=+1.82 Wr= -44.8% WM=10/13 → $510
+  H-ta-28f runtime: 342s
+
+================================================================================
+  I-mom-28f: 28 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'ret_168h', 'ret_1h', 'ret_4h', 'dist_from_high_24h', 'reversal_12v48']
+    LGB features: 28/28
+  ✅ I-mom-28f-lgb                                              Sh=+2.74 Wr=  -7.7% WM=11/13 → $1572
+    XGB features: 28/28
+  ✅ I-mom-28f-xgb                                              Sh=+1.72 Wr= -15.0% WM=9/13 → $488
+  ⚠️ I-mom-28f-ens                                              Sh=+1.83 Wr= -22.1% WM=9/13 → $545
+  I-mom-28f runtime: 335s
+
+================================================================================
+  J-vol-28f: 28 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'vol_of_vol', 'vol_crush', 'rvol_168h', 'btc_beta_168h', 'vol_ratio_24h']
+    LGB features: 28/28
+  ❌ J-vol-28f-lgb                                              Sh=+2.20 Wr= -33.7% WM=9/13 → $811
+    XGB features: 28/28
+  ✅ J-vol-28f-xgb                                              Sh=+1.91 Wr= -11.8% WM=8/13 → $626
+  ⚠️ J-vol-28f-ens                                              Sh=+2.06 Wr= -21.6% WM=9/13 → $703
+  J-vol-28f runtime: 330s
+
+================================================================================
+  K-deriv+ta-33f: 33 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'premium_zscore', 'taker_zscore', 'oi_ret_diverge', 'adx', 'rsi_14', 'bb_pband_20', 'ret_skew_24h', 'mfi_14']
+    LGB features: 33/33
+  ❌ K-deriv+ta-33f-lgb                                         Sh=-0.38 Wr= -43.3% WM=6/13 → $48
+    XGB features: 33/33
+  ❌ K-deriv+ta-33f-xgb                                         Sh=+0.47 Wr= -34.6% WM=7/13 → $109
+  ❌ K-deriv+ta-33f-ens                                         Sh=+0.11 Wr= -42.0% WM=8/13 → $77
+  K-deriv+ta-33f runtime: 338s
+
+================================================================================
+  L-deriv+ta+mom-38f: 38 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'premium_zscore', 'taker_zscore', 'oi_ret_diverge', 'adx', 'rsi_14', 'bb_pband_20', 'ret_skew_24h', 'mfi_14', 'ret_168h', 'ret_1h', 'ret_4h', 'dist_from_high_24h', 'reversal_12v48']
+    LGB features: 38/38
+  ⚠️ L-deriv+ta+mom-38f-lgb                                     Sh=+0.41 Wr= -19.9% WM=6/13 → $105
+    XGB features: 38/38
+  ⚠️ L-deriv+ta+mom-38f-xgb                                     Sh=+0.30 Wr= -24.1% WM=8/13 → $96
+  ❌ L-deriv+ta+mom-38f-ens                                     Sh=-0.17 Wr= -27.6% WM=5/13 → $59
+  L-deriv+ta+mom-38f runtime: 387s
+
+================================================================================
+  M-all-safe-43f: 43 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'premium_zscore', 'taker_zscore', 'oi_ret_diverge', 'adx', 'rsi_14', 'bb_pband_20', 'ret_skew_24h', 'mfi_14', 'ret_168h', 'ret_1h', 'ret_4h', 'dist_from_high_24h', 'reversal_12v48', 'vol_of_vol', 'vol_crush', 'rvol_168h', 'btc_beta_168h', 'vol_ratio_24h']
+    LGB features: 43/43
+  ❌ M-all-safe-43f-lgb                                         Sh=+0.03 Wr= -44.7% WM=7/13 → $76
+    XGB features: 43/43
+  ❌ M-all-safe-43f-xgb                                         Sh=-0.28 Wr= -53.5% WM=7/13 → $54
+  ❌ M-all-safe-43f-ens                                         Sh=-0.25 Wr= -45.6% WM=7/13 → $57
+  M-all-safe-43f runtime: 437s
+
+================================================================================
+  N-all-reg-43f: 43 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'premium_zscore', 'taker_zscore', 'oi_ret_diverge', 'adx', 'rsi_14', 'bb_pband_20', 'ret_skew_24h', 'mfi_14', 'ret_168h', 'ret_1h', 'ret_4h', 'dist_from_high_24h', 'reversal_12v48', 'vol_of_vol', 'vol_crush', 'rvol_168h', 'btc_beta_168h', 'vol_ratio_24h']
+    LGB features: 43/43
+  ❌ N-all-reg-43f-lgb                                          Sh=-0.14 Wr= -49.2% WM=6/13 → $60
+    XGB features: 43/43
+  ❌ N-all-reg-43f-xgb                                          Sh=-0.28 Wr= -53.5% WM=7/13 → $54
+  ❌ N-all-reg-43f-ens                                          Sh=-0.30 Wr= -53.8% WM=8/13 → $53
+  N-all-reg-43f runtime: 430s
+
+================================================================================
+  N-38f-reg: 38 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'premium_zscore', 'taker_zscore', 'oi_ret_diverge', 'adx', 'rsi_14', 'bb_pband_20', 'ret_skew_24h', 'mfi_14', 'ret_168h', 'ret_1h', 'ret_4h', 'dist_from_high_24h', 'reversal_12v48']
+    LGB features: 38/38
+  ❌ N-38f-reg-lgb                                              Sh=+0.27 Wr= -33.8% WM=8/13 → $92
+    XGB features: 38/38
+  ⚠️ N-38f-reg-xgb                                              Sh=+0.30 Wr= -24.1% WM=8/13 → $96
+  ❌ N-38f-reg-ens                                              Sh=-0.20 Wr= -44.2% WM=5/13 → $57
+  N-38f-reg runtime: 382s
+
+================================================================================
+  N-33f-reg: 33 features
+================================================================================
+  Features: ['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h', 'mom_z_24h', 'oi_chg_12h', 'oi_chg_24h', 'oi_zscore', 'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence', 'atr_14', 'rvol_12h', 'gk_vol_24h', 'rvol_24h', 'iv_rv_spread', 'pct_coins_up_12h', 'pct_coins_up_1h', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'top_ls_ratio_zscore', 'global_ls_ratio_zscore', 'premium_zscore', 'taker_zscore', 'oi_ret_diverge', 'adx', 'rsi_14', 'bb_pband_20', 'ret_skew_24h', 'mfi_14']
+    LGB features: 33/33
+  ⚠️ N-33f-reg-lgb                                              Sh=+0.35 Wr= -24.0% WM=8/13 → $97
+    XGB features: 33/33
+  ❌ N-33f-reg-xgb                                              Sh=+0.47 Wr= -34.6% WM=7/13 → $109
+  ❌ N-33f-reg-ens                                              Sh=+0.29 Wr= -39.2% WM=7/13 → $90
+  N-33f-reg runtime: 313s
+
+================================================================================
+  R28b RESULTS SUMMARY
+================================================================================
+  F                          Sh=3.39  Eq=$3632  Worst=0.0%
+  G                          Sh=-0.08  Eq=$68  Worst=0.0%
+  H                          Sh=1.82  Eq=$510  Worst=0.0%
+  I                          Sh=1.83  Eq=$545  Worst=0.0%
+  J                          Sh=2.06  Eq=$703  Worst=0.0%
+  K                          Sh=0.11  Eq=$77  Worst=0.0%
+  L                          Sh=-0.17  Eq=$59  Worst=0.0%
+  M                          Sh=-0.25  Eq=$57  Worst=0.0%
+  N-43f-reg                  Sh=-0.30  Eq=$53  Worst=0.0%
+  N-38f-reg                  Sh=-0.20  Eq=$57  Worst=0.0%
+  N-33f-reg                  Sh=0.29  Eq=$90  Worst=0.0%
+
+  Total R28b runtime: 64.1 min
+  Done.

@@ -1,0 +1,75 @@
+================================================================================
+R44 — DYNAMIC UNIVERSE / COIN QUALITY FILTER
+================================================================================
+Feature set: r42_candidate
+{'n_long': 6, 'n_short': 3, 'rebal_hours': 12, 'trend_cutoff': 0.9, 'dyn_threshold': 0.7, 'ema_alpha': 0.5, 'hysteresis': 3}
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 123 cols
+
+[2] Training test predictions...
+  Training: r44_r42_candidate_test, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0490
+    W3/s0: train=1,628,167, test=89,343, IC=0.0372
+
+[3] Training validation proxy predictions for quality filter...
+  Training: r44_r42_candidate_val, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=101,197, IC=0.0313
+    W2/s0: train=1,484,524, test=94,572, IC=0.0589
+    W3/s0: train=1,628,167, test=96,657, IC=-0.0120
+
+[4] Quality filter snapshot:
+  W1: blocked_longs=['AAVE/USDT', 'ALGO/USDT', 'ATOM/USDT', 'AVAX/USDT', 'BNB/USDT', 'DOGE/USDT', 'DOT/USDT', 'EGLD/USDT', 'FIL/USDT', 'LDO/USDT', 'LTC/USDT', 'MANA/USDT', 'MATIC/USDT', 'SAND/USDT', 'SNX/USDT', 'UNI/USDT']
+  W2: blocked_longs=['ADA/USDT', 'ALGO/USDT', 'ARB/USDT', 'ATOM/USDT', 'AXS/USDT', 'BTC/USDT', 'CHZ/USDT', 'CRV/USDT', 'DOGE/USDT', 'DOT/USDT', 'EGLD/USDT', 'ETH/USDT', 'FLOW/USDT', 'MANA/USDT', 'OP/USDT', 'SOL/USDT', 'THETA/USDT', 'UNI/USDT']
+  W3: blocked_longs=['AAVE/USDT', 'ALGO/USDT', 'APT/USDT', 'CHZ/USDT', 'CRV/USDT', 'DOGE/USDT', 'DOT/USDT', 'ETH/USDT', 'FIL/USDT', 'INJ/USDT', 'MANA/USDT', 'NEAR/USDT', 'RUNE/USDT', 'SAND/USDT', 'SNX/USDT', 'XRP/USDT', 'XTZ/USDT']
+
+[5] Evaluating dynamic universe rules...
+  baseline...
+    -> W2=3.22, W3=2.50, ALL=1.13, avg_long_pool=33.3
+  liq30_combo35...
+    -> W2=1.97, W3=1.57, ALL=0.80, avg_long_pool=22.2
+  liq60_combo35...
+    -> W2=1.46, W3=2.39, ALL=0.59, avg_long_pool=22.3
+  quality_long_only...
+    -> W2=2.81, W3=2.17, ALL=0.82, avg_long_pool=16.6
+  liq30_plus_quality...
+    -> W2=1.47, W3=1.24, ALL=0.62, avg_long_pool=12.0
+
+[6] Best rules
+              rule  W2_sh  W3_sh  ALL_sh  ALL_cost  ALL_turn  avg_long_pool  avg_filtered_longs  delta_all_vs_baseline
+          baseline   3.22   2.50    1.13     19.21       4.5      33.264444           17.028889                   0.00
+ quality_long_only   2.81   2.17    0.82     16.01       3.5      16.560000           17.028889                  -0.31
+     liq30_combo35   1.97   1.57    0.80     15.52       3.4      22.163333           17.028889                  -0.33
+liq30_plus_quality   1.47   1.24    0.62     11.70       2.3      11.981111           17.028889                  -0.51
+     liq60_combo35   1.46   2.39    0.59     15.48       3.4      22.316667           17.028889                  -0.54
+
+[7] Toxic coin check
+window    symbol  blocked_by_quality
+    W1  XRP/USDT               False
+    W1  ADA/USDT               False
+    W1 SAND/USDT                True
+    W1  APT/USDT               False
+    W2  XRP/USDT               False
+    W2  ADA/USDT                True
+    W2 SAND/USDT               False
+    W2  APT/USDT               False
+    W3  XRP/USDT                True
+    W3  ADA/USDT               False
+    W3 SAND/USDT                True
+    W3  APT/USDT                True
+
+[8] Saved artifacts
+  Summary CSV: results_r44_dynamic_universe_summary.csv
+  Quality CSV: results_r44_quality_filter.csv
+  Toxic check CSV: results_r44_toxic_coin_check.csv

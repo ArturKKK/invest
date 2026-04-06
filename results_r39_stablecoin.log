@@ -1,0 +1,66 @@
+================================================================================
+R39.2 / R39.5 PILOT — STABLECOIN REGIME FEATURES
+================================================================================
+Conservative assumptions:
+- stablecoin daily features are shifted by +1 day before merge
+- market-level features are excluded from CS ranking so they survive model input
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 111 cols
+  Stable features: ['stable_supply_accel', 'stable_total_supply_chg30d', 'stable_total_supply_chg7d', 'stable_total_supply_chg7d_z', 'stable_usdt_dom_z', 'stable_usdt_vs_usdc_chg7d']
+
+[2] Training A_28f+stable_flow4...
+  Training: A_28f+stable_flow4, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=-0.0251
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0901
+    W3/s0: train=1,628,167, test=89,343, IC=0.0407
+
+[3] Evaluating A_28f+stable_flow4...
+  W1: Sh=-0.67 (gross= 0.24)  Eq=$    55  DD=-59.6%  WM=1/4  Cost=7.6%  Turn=5.6
+  W2: Sh= 2.46 (gross= 3.45)  Eq=$   183  DD=-34.0%  WM=4/4  Cost=6.2%  Turn=4.0
+  W3: Sh= 1.78 (gross= 2.73)  Eq=$   143  DD=-36.4%  WM=3/5  Cost=5.4%  Turn=3.8
+  ALL: Sh= 0.17 (gross= 0.92)  Eq=$    66  DD=-63.5%  Cost=19.3%  Turn=4.5
+window  sharpe  baseline_sharpe  delta_vs_baseline  cost_pct  avg_turnover
+    W1   -0.67            -0.69               0.02      7.57           5.6
+    W2    2.46            -0.98               3.44      6.16           4.0
+    W3    1.78             2.88              -1.10      5.43           3.8
+   ALL    0.17             0.47              -0.30     19.33           4.5
+
+[2] Training A_28f+stable_regime6...
+  Training: A_28f+stable_regime6, 34f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=-0.0178
+    W2/s0: train=1,484,524, test=85,569, IC=0.0005
+    W3/s0: train=1,628,167, test=89,343, IC=0.0457
+
+[3] Evaluating A_28f+stable_regime6...
+  W1: Sh=-2.95 (gross=-2.01)  Eq=$    24  DD=-81.4%  WM=2/4  Cost=7.3%  Turn=5.4
+  W2: Sh= 2.27 (gross= 3.34)  Eq=$   174  DD=-26.4%  WM=4/4  Cost=6.9%  Turn=4.5
+  W3: Sh= 0.14 (gross= 1.29)  Eq=$    92  DD=-38.8%  WM=3/5  Cost=6.0%  Turn=4.3
+  ALL: Sh=-0.72 (gross= 0.09)  Eq=$    22  DD=-86.3%  Cost=20.3%  Turn=4.8
+window  sharpe  baseline_sharpe  delta_vs_baseline  cost_pct  avg_turnover
+    W1   -2.95            -0.69              -2.26      7.26           5.4
+    W2    2.27            -0.98               3.25      6.90           4.5
+    W3    0.14             2.88              -2.74      5.99           4.3
+   ALL   -0.72             0.47              -1.19     20.33           4.8
+
+[4] Best uplift candidates
+  W2 best:
+            config       bundle window  n_new_features  sharpe  baseline_sharpe  delta_vs_baseline  sharpe_gross  equity  cost_pct  avg_turnover
+A_28f+stable_flow4 stable_flow4     W2               4    2.46            -0.98               3.44          3.45   183.0      6.16           4.0
+
+  ALL best:
+            config       bundle window  n_new_features  sharpe  baseline_sharpe  delta_vs_baseline  sharpe_gross  equity  cost_pct  avg_turnover
+A_28f+stable_flow4 stable_flow4    ALL               4    0.17             0.47               -0.3          0.92    66.0     19.33           4.5
+
+[5] Saved artifacts
+  Summary CSV: results_r39_stablecoin_summary.csv

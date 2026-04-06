@@ -1,0 +1,403 @@
+================================================================================
+  R29 — Exhaustive Forward Feature Selection
+  Date: 2026-04-02 13:51:21.688398
+  Candidates: 67 features
+================================================================================
+
+  Loading data...
+  OHLCV: 1,826,014 rows
+  Building research features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Building production features...
+  [R29] Building production-level features...
+    sym 1/35: AAVE/USDT
+    sym 11/35: CHZ/USDT
+    sym 21/35: LDO/USDT
+    sym 31/35: SOL/USDT
+  [R29] Production features added: 55 new columns (149 total)
+  Final: 1,826,014 rows, 149 cols
+  Available: 62/67
+  Missing: ['reversal_12v48', 'vol_crush', 'news_count_24h', 'news_sentiment_24h', 'news_volume_zscore']
+  Load/build time: 38s
+
+  [BASELINE] FEATURES_23
+  ❌ baseline-23f                                               Sh=+2.02 Wr= -34.5% WM=9/13 → $662
+  Baseline Sharpe: 2.02
+
+
+  [1/62] +btc_beta_168h (24f)
+  ❌ +btc_beta_168h                                             Sh=+1.13 Wr= -31.9% WM=8/13 → $223
+  Delta: -0.89  (420s)
+
+  [2/62] +btc_outperform (24f)
+  ⚠️ +btc_outperform                                            Sh=+2.24 Wr= -24.0% WM=9/13 → $854
+  Delta: +0.22  (392s)
+
+  [3/62] +funding_x_mom_12h (24f)
+  ⚠️ +funding_x_mom_12h                                         Sh=+2.24 Wr= -15.7% WM=9/13 → $851
+  Delta: +0.22  (560s)
+
+  [4/62] +funding_x_mom_24h (24f)
+  ❌ +funding_x_mom_24h                                         Sh=+1.66 Wr= -31.5% WM=10/13 → $416
+  Delta: -0.36  (535s)
+
+  [5/62] +global_ls_ratio (24f)
+  ❌ +global_ls_ratio                                           Sh=+2.77 Wr= -36.2% WM=10/13 → $1626
+  Delta: +0.76  (406s)
+
+  [6/62] +mom_z_12h (24f)
+  ❌ +mom_z_12h                                                 Sh=+1.94 Wr= -32.4% WM=9/13 → $596
+  Delta: -0.08  (446s)
+
+  [7/62] +oi_chg_1h (24f)
+  ❌ +oi_chg_1h                                                 Sh=+2.32 Wr= -26.5% WM=10/13 → $881
+  Delta: +0.30  (340s)
+
+  [8/62] +oi_chg_4h (24f)
+  ⚠️ +oi_chg_4h                                                 Sh=+2.42 Wr= -22.5% WM=9/13 → $1002
+  Delta: +0.40  (332s)
+
+  [9/62] +range_24h (24f)
+  ❌ +range_24h                                                 Sh=+1.95 Wr= -31.7% WM=9/13 → $629
+  Delta: -0.06  (358s)
+
+  [10/62] +taker_buy_sell_ratio (24f)
+  ⚠️ +taker_buy_sell_ratio                                      Sh=+2.64 Wr= -21.7% WM=9/13 → $1356
+  Delta: +0.63  (361s)
+
+  [11/62] +taker_cvd_4h (24f)
+  ⚠️ +taker_cvd_4h                                              Sh=+2.06 Wr= -17.3% WM=9/13 → $718
+  Delta: +0.04  (350s)
+
+  [12/62] +taker_imbalance (24f)
+  ⚠️ +taker_imbalance                                           Sh=+2.64 Wr= -21.7% WM=9/13 → $1356
+  Delta: +0.63  (322s)
+
+  [13/62] +top_ls_ratio (24f)
+  ⚠️ +top_ls_ratio                                              Sh=+2.04 Wr= -17.8% WM=9/13 → $710
+  Delta: +0.03  (343s)
+
+  [14/62] +vol_ratio_12h (24f)
+  ⚠️ +vol_ratio_12h                                             Sh=+2.56 Wr= -21.1% WM=9/13 → $1335
+  Delta: +0.54  (375s)
+
+  [15/62] +close_open_ratio (24f)
+  ⚠️ +close_open_ratio                                          Sh=+2.38 Wr= -18.6% WM=9/13 → $1007
+  Delta: +0.36  (353s)
+
+  [16/62] +upper_shadow (24f)
+  ⚠️ +upper_shadow                                              Sh=+2.35 Wr= -15.3% WM=10/13 → $1044
+  Delta: +0.33  (327s)
+
+  [17/62] +lower_shadow (24f)
+  ⚠️ +lower_shadow                                              Sh=+2.20 Wr= -23.9% WM=9/13 → $804
+  Delta: +0.19  (321s)
+
+  [18/62] +body (24f)
+  ⚠️ +body                                                      Sh=+1.91 Wr= -23.1% WM=9/13 → $581
+  Delta: -0.10  (354s)
+
+  [19/62] +buy_pressure (24f)
+  ⚠️ +buy_pressure                                              Sh=+2.63 Wr= -18.4% WM=9/13 → $1402
+  Delta: +0.61  (396s)
+
+  [20/62] +close_ma6_ratio (24f)
+  ⚠️ +close_ma6_ratio                                           Sh=+2.22 Wr= -22.7% WM=9/13 → $871
+  Delta: +0.20  (437s)
+
+  [21/62] +close_ma12_ratio (24f)
+  ⚠️ +close_ma12_ratio                                          Sh=+2.03 Wr= -22.8% WM=9/13 → $697
+  Delta: +0.01  (349s)
+
+  [22/62] +close_ma24_ratio (24f)
+  ⚠️ +close_ma24_ratio                                          Sh=+2.24 Wr= -18.5% WM=9/13 → $846
+  Delta: +0.22  (347s)
+
+  [23/62] +close_ma48_ratio (24f)
+  ⚠️ +close_ma48_ratio                                          Sh=+1.78 Wr= -21.2% WM=8/13 → $514
+  Delta: -0.24  (352s)
+
+  [24/62] +close_ma168_ratio (24f)
+  ❌ +close_ma168_ratio                                         Sh=+2.19 Wr= -26.6% WM=8/13 → $807
+  Delta: +0.18  (364s)
+
+  [25/62] +vol_ma6_ratio (24f)
+  ⚠️ +vol_ma6_ratio                                             Sh=+2.22 Wr= -19.5% WM=9/13 → $796
+  Delta: +0.21  (354s)
+
+  [26/62] +vol_ma12_ratio (24f)
+  ⚠️ +vol_ma12_ratio                                            Sh=+2.14 Wr= -21.8% WM=9/13 → $772
+  Delta: +0.12  (431s)
+
+  [27/62] +vol_ma24_ratio (24f)
+  ❌ +vol_ma24_ratio                                            Sh=+1.80 Wr= -34.3% WM=9/13 → $504
+  Delta: -0.22  (360s)
+
+  [28/62] +ret_std_24h (24f)
+  ⚠️ +ret_std_24h                                               Sh=+2.36 Wr= -23.1% WM=9/13 → $993
+  Delta: +0.35  (341s)
+
+  [29/62] +ret_sharpe_24h (24f)
+  ❌ +ret_sharpe_24h                                            Sh=+1.87 Wr= -30.3% WM=9/13 → $543
+  Delta: -0.14  (359s)
+
+  [30/62] +ret_std_168h (24f)
+  ❌ +ret_std_168h                                              Sh=+2.06 Wr= -29.5% WM=8/13 → $696
+  Delta: +0.04  (342s)
+
+  [31/62] +ret_sharpe_168h (24f)
+  ❌ +ret_sharpe_168h                                           Sh=+2.13 Wr= -27.4% WM=8/13 → $743
+  Delta: +0.12  (361s)
+
+  [32/62] +vol_mom_12h (24f)
+  ⚠️ +vol_mom_12h                                               Sh=+2.03 Wr= -23.0% WM=9/13 → $667
+  Delta: +0.02  (353s)
+
+  [33/62] +vol_mom_24h (24f)
+  ⚠️ +vol_mom_24h                                               Sh=+2.31 Wr= -24.4% WM=9/13 → $914
+  Delta: +0.29  (329s)
+
+  [34/62] +vol_price_corr_24h (24f)
+  ❌ +vol_price_corr_24h                                        Sh=+1.78 Wr= -27.5% WM=8/13 → $499
+  Delta: -0.24  (327s)
+
+  [35/62] +macd_diff (24f)
+  ❌ +macd_diff                                                 Sh=+1.72 Wr= -35.3% WM=8/13 → $467
+  Delta: -0.30  (328s)
+
+  [36/62] +stoch_k (24f)
+  ⚠️ +stoch_k                                                   Sh=+2.39 Wr= -21.5% WM=9/13 → $1024
+  Delta: +0.37  (353s)
+
+  [37/62] +cci_14 (24f)
+  ⚠️ +cci_14                                                    Sh=+2.25 Wr= -16.3% WM=9/13 → $846
+  Delta: +0.24  (339s)
+
+  [38/62] +willr_14 (24f)
+  ⚠️ +willr_14                                                  Sh=+2.10 Wr= -24.3% WM=9/13 → $735
+  Delta: +0.09  (327s)
+
+  [39/62] +adx_pos (24f)
+  ❌ +adx_pos                                                   Sh=+1.66 Wr= -37.7% WM=8/13 → $432
+  Delta: -0.35  (340s)
+
+  [40/62] +adx_neg (24f)
+  ❌ +adx_neg                                                   Sh=+1.50 Wr= -33.7% WM=8/13 → $363
+  Delta: -0.52  (342s)
+
+  [41/62] +gk_vol_48h (24f)
+  ⚠️ +gk_vol_48h                                                Sh=+1.90 Wr= -22.2% WM=8/13 → $563
+  Delta: -0.11  (329s)
+
+  [42/62] +gk_vol_168h (24f)
+  ✅ +gk_vol_168h                                               Sh=+2.43 Wr= -11.4% WM=8/13 → $1020
+  Delta: +0.41  (435s)
+
+  [43/62] +dollar_volume_24h_cs (24f)
+  ✅ +dollar_volume_24h_cs                                      Sh=+1.96 Wr=  -9.1% WM=9/13 → $593
+  Delta: -0.06  (482s)
+
+  [44/62] +amihud_illiq_24h_cs (24f)
+  ⚠️ +amihud_illiq_24h_cs                                       Sh=+1.66 Wr= -23.8% WM=7/13 → $442
+  Delta: -0.36  (329s)
+
+  [45/62] +range_per_dv_24h (24f)
+  ❌ +range_per_dv_24h                                          Sh=+1.76 Wr= -31.4% WM=9/13 → $489
+  Delta: -0.26  (399s)
+
+  [46/62] +mom_accel_12h (24f)
+  ⚠️ +mom_accel_12h                                             Sh=+2.27 Wr= -20.0% WM=9/13 → $877
+  Delta: +0.25  (331s)
+
+  [47/62] +range_expansion_12h (24f)
+  ❌ +range_expansion_12h                                       Sh=+2.02 Wr= -27.3% WM=9/13 → $655
+  Delta: +0.01  (319s)
+
+  [48/62] +range_position_12h (24f)
+  ⚠️ +range_position_12h                                        Sh=+2.20 Wr= -17.7% WM=9/13 → $864
+  Delta: +0.19  (350s)
+
+  [49/62] +vwap_12h_dist (24f)
+  ❌ +vwap_12h_dist                                             Sh=+2.20 Wr= -25.9% WM=9/13 → $804
+  Delta: +0.18  (340s)
+
+  [50/62] +direction_quality_12h (24f)
+  ❌ +direction_quality_12h                                     Sh=+2.03 Wr= -34.6% WM=9/13 → $666
+  Delta: +0.01  (315s)
+
+  [51/62] +basis_pct (24f)
+  ❌ +basis_pct                                                 Sh=+0.75 Wr= -29.3% WM=8/13 → $144
+  Delta: -1.27  (302s)
+
+  [52/62] +basis_change_12h (24f)
+  ⚠️ +basis_change_12h                                          Sh=+0.64 Wr= -23.4% WM=7/13 → $131
+  Delta: -1.37  (302s)
+
+  [53/62] +basis_change_24h (24f)
+  ❌ +basis_change_24h                                          Sh=+0.66 Wr= -27.7% WM=8/13 → $133
+  Delta: -1.36  (289s)
+
+  [54/62] +basis_zscore_7d (24f)
+  ❌ +basis_zscore_7d                                           Sh=+0.70 Wr= -27.7% WM=7/13 → $139
+  Delta: -1.31  (301s)
+
+  [55/62] +reversal_4v24 (24f)
+  ⚠️ +reversal_4v24                                             Sh=+1.96 Wr= -23.1% WM=9/13 → $619
+  Delta: -0.05  (333s)
+
+  [56/62] +reversal_24v168 (24f)
+  ⚠️ +reversal_24v168                                           Sh=+1.86 Wr= -22.8% WM=10/13 → $548
+  Delta: -0.16  (331s)
+
+  [57/62] +vol_surge_12h (24f)
+  ⚠️ +vol_surge_12h                                             Sh=+2.17 Wr= -20.7% WM=9/13 → $788
+  Delta: +0.16  (356s)
+
+  [58/62] +vol_surge_24h (24f)
+  ❌ +vol_surge_24h                                             Sh=+1.83 Wr= -29.4% WM=9/13 → $527
+  Delta: -0.18  (322s)
+
+  [59/62] +btc_beta_48h (24f)
+  ❌ +btc_beta_48h                                              Sh=+2.54 Wr= -27.5% WM=10/13 → $1291
+  Delta: +0.52  (338s)
+
+  [60/62] +oi_ret_interaction (24f)
+  ❌ +oi_ret_interaction                                        Sh=+2.06 Wr= -27.2% WM=10/13 → $703
+  Delta: +0.05  (330s)
+
+  [61/62] +oi_ret_interaction_12h (24f)
+  ❌ +oi_ret_interaction_12h                                    Sh=+1.83 Wr= -27.9% WM=9/13 → $525
+  Delta: -0.19  (319s)
+
+  [62/62] +funding_surprise (24f)
+  ✅ +funding_surprise                                          Sh=+2.15 Wr= -15.0% WM=8/13 → $720
+  Delta: +0.13  (329s)
+
+================================================================================
+  R29 FORWARD SELECTION RESULTS
+================================================================================
+  BASELINE (23f)                       Sh=2.02  Eq=$662  delta=+0.00
+  +btc_beta_168h                       Sh=1.13  Eq=$223  delta=-0.89
+  +btc_outperform                      Sh=2.24  Eq=$854  delta=+0.22 ★★★
+  +funding_x_mom_12h                   Sh=2.24  Eq=$851  delta=+0.22 ★★★
+  +funding_x_mom_24h                   Sh=1.66  Eq=$416  delta=-0.36
+  +global_ls_ratio                     Sh=2.77  Eq=$1626  delta=+0.76 ★★★
+  +mom_z_12h                           Sh=1.94  Eq=$596  delta=-0.08
+  +oi_chg_1h                           Sh=2.32  Eq=$881  delta=+0.30 ★★★
+  +oi_chg_4h                           Sh=2.42  Eq=$1002  delta=+0.40 ★★★
+  +range_24h                           Sh=1.95  Eq=$629  delta=-0.06
+  +taker_buy_sell_ratio                Sh=2.64  Eq=$1356  delta=+0.63 ★★★
+  +taker_cvd_4h                        Sh=2.06  Eq=$718  delta=+0.04 ★
+  +taker_imbalance                     Sh=2.64  Eq=$1356  delta=+0.63 ★★★
+  +top_ls_ratio                        Sh=2.04  Eq=$710  delta=+0.03 ★
+  +vol_ratio_12h                       Sh=2.56  Eq=$1335  delta=+0.54 ★★★
+  +close_open_ratio                    Sh=2.38  Eq=$1007  delta=+0.36 ★★★
+  +upper_shadow                        Sh=2.35  Eq=$1044  delta=+0.33 ★★★
+  +lower_shadow                        Sh=2.20  Eq=$804  delta=+0.19 ★★★
+  +body                                Sh=1.91  Eq=$581  delta=-0.10
+  +buy_pressure                        Sh=2.63  Eq=$1402  delta=+0.61 ★★★
+  +close_ma6_ratio                     Sh=2.22  Eq=$871  delta=+0.20 ★★★
+  +close_ma12_ratio                    Sh=2.03  Eq=$697  delta=+0.01 ★
+  +close_ma24_ratio                    Sh=2.24  Eq=$846  delta=+0.22 ★★★
+  +close_ma48_ratio                    Sh=1.78  Eq=$514  delta=-0.24
+  +close_ma168_ratio                   Sh=2.19  Eq=$807  delta=+0.18 ★★★
+  +vol_ma6_ratio                       Sh=2.22  Eq=$796  delta=+0.21 ★★★
+  +vol_ma12_ratio                      Sh=2.14  Eq=$772  delta=+0.12 ★★★
+  +vol_ma24_ratio                      Sh=1.80  Eq=$504  delta=-0.22
+  +ret_std_24h                         Sh=2.36  Eq=$993  delta=+0.35 ★★★
+  +ret_sharpe_24h                      Sh=1.87  Eq=$543  delta=-0.14
+  +ret_std_168h                        Sh=2.06  Eq=$696  delta=+0.04 ★
+  +ret_sharpe_168h                     Sh=2.13  Eq=$743  delta=+0.12 ★★★
+  +vol_mom_12h                         Sh=2.03  Eq=$667  delta=+0.02 ★
+  +vol_mom_24h                         Sh=2.31  Eq=$914  delta=+0.29 ★★★
+  +vol_price_corr_24h                  Sh=1.78  Eq=$499  delta=-0.24
+  +macd_diff                           Sh=1.72  Eq=$467  delta=-0.30
+  +stoch_k                             Sh=2.39  Eq=$1024  delta=+0.37 ★★★
+  +cci_14                              Sh=2.25  Eq=$846  delta=+0.24 ★★★
+  +willr_14                            Sh=2.10  Eq=$735  delta=+0.09 ★
+  +adx_pos                             Sh=1.66  Eq=$432  delta=-0.35
+  +adx_neg                             Sh=1.50  Eq=$363  delta=-0.52
+  +gk_vol_48h                          Sh=1.90  Eq=$563  delta=-0.11
+  +gk_vol_168h                         Sh=2.43  Eq=$1020  delta=+0.41 ★★★
+  +dollar_volume_24h_cs                Sh=1.96  Eq=$593  delta=-0.06
+  +amihud_illiq_24h_cs                 Sh=1.66  Eq=$442  delta=-0.36
+  +range_per_dv_24h                    Sh=1.76  Eq=$489  delta=-0.26
+  +mom_accel_12h                       Sh=2.27  Eq=$877  delta=+0.25 ★★★
+  +range_expansion_12h                 Sh=2.02  Eq=$655  delta=+0.01 ★
+  +range_position_12h                  Sh=2.20  Eq=$864  delta=+0.19 ★★★
+  +vwap_12h_dist                       Sh=2.20  Eq=$804  delta=+0.18 ★★★
+  +direction_quality_12h               Sh=2.03  Eq=$666  delta=+0.01 ★
+  +basis_pct                           Sh=0.75  Eq=$144  delta=-1.27
+  +basis_change_12h                    Sh=0.64  Eq=$131  delta=-1.37
+  +basis_change_24h                    Sh=0.66  Eq=$133  delta=-1.36
+  +basis_zscore_7d                     Sh=0.70  Eq=$139  delta=-1.31
+  +reversal_4v24                       Sh=1.96  Eq=$619  delta=-0.05
+  +reversal_24v168                     Sh=1.86  Eq=$548  delta=-0.16
+  +vol_surge_12h                       Sh=2.17  Eq=$788  delta=+0.16 ★★★
+  +vol_surge_24h                       Sh=1.83  Eq=$527  delta=-0.18
+  +btc_beta_48h                        Sh=2.54  Eq=$1291  delta=+0.52 ★★★
+  +oi_ret_interaction                  Sh=2.06  Eq=$703  delta=+0.05 ★
+  +oi_ret_interaction_12h              Sh=1.83  Eq=$525  delta=-0.19
+  +funding_surprise                    Sh=2.15  Eq=$720  delta=+0.13 ★★★
+
+  TOP 10 features by Sharpe:
+    +global_ls_ratio                     Sh=2.77  delta=+0.76
+    +taker_buy_sell_ratio                Sh=2.64  delta=+0.63
+    +taker_imbalance                     Sh=2.64  delta=+0.63
+    +buy_pressure                        Sh=2.63  delta=+0.61
+    +vol_ratio_12h                       Sh=2.56  delta=+0.54
+    +btc_beta_48h                        Sh=2.54  delta=+0.52
+    +gk_vol_168h                         Sh=2.43  delta=+0.41
+    +oi_chg_4h                           Sh=2.42  delta=+0.40
+    +stoch_k                             Sh=2.39  delta=+0.37
+    +close_open_ratio                    Sh=2.38  delta=+0.36
+
+  🏆 WINNERS (beat Sh=2.02):
+    +global_ls_ratio                     Sh=2.77  delta=+0.76
+    +taker_buy_sell_ratio                Sh=2.64  delta=+0.63
+    +taker_imbalance                     Sh=2.64  delta=+0.63
+    +buy_pressure                        Sh=2.63  delta=+0.61
+    +vol_ratio_12h                       Sh=2.56  delta=+0.54
+    +btc_beta_48h                        Sh=2.54  delta=+0.52
+    +gk_vol_168h                         Sh=2.43  delta=+0.41
+    +oi_chg_4h                           Sh=2.42  delta=+0.40
+    +stoch_k                             Sh=2.39  delta=+0.37
+    +close_open_ratio                    Sh=2.38  delta=+0.36
+    +ret_std_24h                         Sh=2.36  delta=+0.35
+    +upper_shadow                        Sh=2.35  delta=+0.33
+    +oi_chg_1h                           Sh=2.32  delta=+0.30
+    +vol_mom_24h                         Sh=2.31  delta=+0.29
+    +mom_accel_12h                       Sh=2.27  delta=+0.25
+    +cci_14                              Sh=2.25  delta=+0.24
+    +funding_x_mom_12h                   Sh=2.24  delta=+0.22
+    +close_ma24_ratio                    Sh=2.24  delta=+0.22
+    +btc_outperform                      Sh=2.24  delta=+0.22
+    +vol_ma6_ratio                       Sh=2.22  delta=+0.21
+    +close_ma6_ratio                     Sh=2.22  delta=+0.20
+    +lower_shadow                        Sh=2.20  delta=+0.19
+    +range_position_12h                  Sh=2.20  delta=+0.19
+    +vwap_12h_dist                       Sh=2.20  delta=+0.18
+    +close_ma168_ratio                   Sh=2.19  delta=+0.18
+    +vol_surge_12h                       Sh=2.17  delta=+0.16
+    +funding_surprise                    Sh=2.15  delta=+0.13
+    +vol_ma12_ratio                      Sh=2.14  delta=+0.12
+    +ret_sharpe_168h                     Sh=2.13  delta=+0.12
+    +willr_14                            Sh=2.10  delta=+0.09
+    +oi_ret_interaction                  Sh=2.06  delta=+0.05
+    +ret_std_168h                        Sh=2.06  delta=+0.04
+    +taker_cvd_4h                        Sh=2.06  delta=+0.04
+    +top_ls_ratio                        Sh=2.04  delta=+0.03
+    +vol_mom_12h                         Sh=2.03  delta=+0.02
+    +direction_quality_12h               Sh=2.03  delta=+0.01
+    +close_ma12_ratio                    Sh=2.03  delta=+0.01
+    +range_expansion_12h                 Sh=2.02  delta=+0.01
+
+  Total runtime: 382.9 min
+  Done.

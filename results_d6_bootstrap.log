@@ -1,0 +1,8 @@
+Downloading Binance depth snapshots for 50 symbols...
+Fetched: 50 rows, range=2026-04-05 11:56:44+00:00 -> 2026-04-05 11:56:44+00:00
+Median depth: bid_top10=$72,522, ask_top10=$53,562
+Saved 50 new snapshot rows to /Users/a.s.tabakov/Developer/invest/src/data/../../data/raw/orderbook_depth/binance_orderbook_depth_snapshots.parquet
+Built orderbook depth features: 50 rows
+Symbols: 50
+Range: 2026-04-05 11:00:00+00:00 -> 2026-04-05 11:00:00+00:00
+Saved to: /Users/a.s.tabakov/Developer/invest/src/features/../../data/features/binance_orderbook_depth_features.parquet

@@ -1,0 +1,101 @@
+================================================================================
+  R30 — MODEL OVERHAUL: Transaction costs, regime, features, rolling
+================================================================================
+
+[1] Loading data (CLEAN pipeline)...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Base: 1,826,014 rows, 94 cols
+  Added 9 extra features (clean)
+  After extras: 1,826,014 rows, 103 cols
+
+============================================================
+[EXP-A] Baseline: 23f, expanding, L2=1 (current prod, WITH costs)
+============================================================
+  Training: 23f-expand, 23f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=475,457, test=87,571, IC=0.0349
+    W2/s0: train=652,366, test=85,569, IC=0.0012
+    W3/s0: train=795,848, test=88,528, IC=0.0488
+
+============================================================
+[EXP-B] Extended features: ~37f, expanding, L2=1
+============================================================
+  Training: extended-expand, 37f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=13,941, test=2,593, IC=0.0287
+    W2/s0: train=19,077, test=2,593, IC=0.0123
+    W3/s0: train=23,421, test=2,703, IC=0.0473
+
+============================================================
+[EXP-C] Rolling 12mo: 23f, L2=1
+============================================================
+  Training: 23f-rolling12m, 23f, L2=1.0, rolling, 5 seeds × 3 windows
+    W1/s0: train=303,965, test=87,571, IC=0.0315
+    W2/s0: train=301,450, test=85,569, IC=0.0065
+    W3/s0: train=295,191, test=88,528, IC=0.0320
+
+============================================================
+[EXP-D] Extended + rolling 12mo: ~37f, L2=1
+============================================================
+  Training: ext-rolling12m, 37f, L2=1.0, rolling, 5 seeds × 3 windows
+    W1/s0: train=8,752, test=2,593, IC=-0.0660
+    W2/s0: train=8,752, test=2,593, IC=0.0815
+    W3/s0: train=8,760, test=2,703, IC=-0.0087
+
+============================================================
+[EXP-E] Extended + rolling + L2=5
+============================================================
+  Training: ext-rolling-L2=5, 37f, L2=5.0, rolling, 5 seeds × 3 windows
+    W1/s0: train=8,752, test=2,593, IC=-0.0263
+    W2/s0: train=8,752, test=2,593, IC=0.0789
+    W3/s0: train=8,760, test=2,703, IC=-0.0236
+
+
+================================================================================
+  RESULTS MATRIX: Model × Portfolio Config (WITH transaction costs)
+================================================================================
+
+────────────────────────────────────────────────────────────
+  EXP-A (baseline 23f)
+────────────────────────────────────────────────────────────
+
+  [6L3S_12h]
+  W1: Sh=-5.35  Eq=$    12  Wr=-17.9%  WM=1/4  Cost=68.2%  Turn=11.0
+  W2: Sh=-9.51  Eq=$     4  Wr=-25.2%  WM=0/4  Cost=70.3%  Turn=10.3
+  W3: Sh=-7.32  Eq=$     6  Wr=-17.5%  WM=0/5  Cost=58.4%  Turn=9.4
+  ALL: Sh=-4.69  Eq=$     0  Wr=-18.6%  Cost=199.7%
+
+  [3L2S_12h]
+  W1: Sh=-5.55  Eq=$     7  Wr=-23.0%  WM=0/4  Cost=77.0%  Turn=6.9
+  W2: Sh=-8.50  Eq=$     2  Wr=-25.6%  WM=0/4  Cost=83.1%  Turn=6.8
+  W3: Sh=-7.03  Eq=$     4  Wr=-23.4%  WM=0/5  Cost=69.0%  Turn=6.2
+  ALL: Sh=-4.72  Eq=$     0  Wr=-24.0%  Cost=224.3%
+
+  [3L2S_24h]
+  W1: Sh=-5.36  Eq=$    20  Wr=-16.8%  WM=0/4  Cost=45.3%  Turn=7.4
+  W2: Sh=-11.22  Eq=$     5  Wr=-20.2%  WM=0/4  Cost=52.3%  Turn=8.0
+  W3: Sh=-9.06  Eq=$     8  Wr=-23.4%  WM=1/5  Cost=45.2%  Turn=7.6
+  ALL: Sh=-5.13  Eq=$     0  Wr=-16.8%  Cost=136.6%
+
+  [6L3S_crash_skip]
+  W1: Sh=-4.84  Eq=$    15  Wr=-18.4%  WM=1/4  Cost=66.0%  Turn=11.0
+  W2: Sh=-9.51  Eq=$     4  Wr=-25.2%  WM=0/4  Cost=70.3%  Turn=10.3
+  W3: Sh=-7.29  Eq=$     6  Wr=-17.5%  WM=0/5  Cost=58.1%  Turn=9.5
+  ALL: Sh=-4.56  Eq=$     0  Wr=-18.6%  Cost=196.6%
+
+  [6L3S_crash_short]
+  W1: Sh=-5.86  Eq=$     5  Wr=-19.0%  WM=1/4  Cost=69.6%  Turn=11.0
+  W2: Sh=-9.51  Eq=$     4  Wr=-25.2%  WM=0/4  Cost=70.3%  Turn=10.3
+  W3: Sh=-7.51  Eq=$     6  Wr=-17.5%  WM=0/5  Cost=59.2%  Turn=9.5
+  ALL: Sh=-4.78  Eq=$     0  Wr=-19.0%  Cost=201.7%
+
+────────────────────────────────────────────────────────────
+  EXP-B (extended feats)
+────────────────────────────────────────────────────────────
+
+  [6L3S_12h]

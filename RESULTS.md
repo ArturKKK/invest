@@ -4336,3 +4336,385 @@ Best trial: AUC=0.5194, lr=0.035, leaves=42, min_child=168, max_depth=2
 **🏆 НОВЫЙ РЕКОРД: Sh=3.40, Eq=$3554** (LGB-binary-23f, min_child=50, cutoff=0.9, 12h rebal, 5L/3S)
 
 **🏆 Лучший risk-adjusted: Sh=3.36, Eq=$3371, Worst=-5.7%** (LGB+XGB ensemble cls, 5L/3S)
+
+---
+
+## R26 — Portfolio Config Optimization (2026-04-01)
+**Лог:** `results_r26.log`, `results_r26_resume.log`
+
+Оптимизация n_long/n_short, cutoff, dyn_threshold на R25-best (LGB+XGB ensemble, 23f).
+
+| Config | Sharpe | Equity | Worst Month | WM |
+|--------|--------|--------|-------------|-----|
+| 5L/3S (R25 base) | 3.36 | $3371 | -5.7% | 10/13 |
+| **6L/3S** | **3.39** | **$3607** | **-5.2%** | **10/13** |
+| 4L/3S | 3.16 | $2911 | -6.6% | 10/13 |
+| 7L/3S | 3.14 | $3157 | -10.6% | 10/13 |
+
+**Вывод:** 6L/3S → Sh=3.39, лучший результат. Deployed to VPS.
+
+---
+
+## R27 — Multi-Horizon & Target Engineering (2026-04-01)
+**Лог:** `results_r27.log`
+
+Тестирование альтернативных горизонтов, таргетов и конфигураций.
+
+| Experiment | Sharpe | Equity | Worst Month |
+|-----------|--------|--------|-------------|
+| baseline 12h (6L3S) | 3.39 | $3607 | -5.2% |
+| fwd_ret_24h | 1.22 | $250 | -19.1% |
+| fwd_ret_48h | 0.54 | $113 | -33.5% |
+| excess_ret (vs market) | 2.33 | $968 | -8.9% |
+
+**Вывод:** Все альтернативы хуже. 12h binary cls — оптимальный горизонт.
+
+---
+
+## R28 — Feature Expansion (2026-04-02)
+**Лог:** `results_r28.log`
+
+### R28a — Naive Expansion (14-56 features)
+Добавление пакетов фич: funding, volume, OI, TA, vol, derivatives.
+
+| Experiment | Features | Sharpe | Equity |
+|-----------|----------|--------|--------|
+| baseline | 23 | 3.39 | $3607 |
+| +funding (6) | 29 | 0.06 | $103 |
+| +volume (7) | 30 | 0.37 | $118 |
+| +all (56) | 56 | 0.35 | $112 |
+
+**Вывод:** Катастрофический провал. funding_rate_binance доминирует importance → оверфит.
+
+### R28b — Curated Per-Coin Groups
+**Лог:** `results_r28b.log`
+
+Тестирование тщательно отобранных групп из 5 фич каждая.
+
+| Group | Sharpe | Equity |
+|-------|--------|--------|
+| baseline | 3.39 | $3607 |
+| J-deriv (5f) | 1.60 | $318 |
+| K-ta (5f) | 1.77 | $442 |
+| L-momentum (5f) | 1.85 | $421 |
+| M-vol (5f) | 2.06 | $592 |
+| best combo | 1.46 | $316 |
+
+**Вывод:** Все 11 экспериментов провал. Даже по 5 фич ухудшают.
+
+### R28c — Single-Feature Forward Selection (23 candidates)
+**Лог:** `results_r28c.log`
+
+Каждый из 23 кандидатов добавлен по одному к FEATURES_23.
+
+| Best candidates | Sharpe | Delta |
+|----------------|--------|-------|
+| +rvol_168h | 3.00 | -0.39 |
+| +taker_zscore | 2.99 | -0.40 |
+| worst: +premium_zscore_12h | 0.60 | -2.79 |
+
+**Вывод:** ВСЕ 23 кандидата ухудшают baseline. FEATURES_23 — локальный оптимум в рамках research pipeline.
+
+---
+
+## R29 — Exhaustive Forward Selection (2026-04-02) ⭐⭐⭐
+**Лог:** `results_r29.log`
+
+### Причина
+R28c тестировал только ~23 фичи из research pipeline. Аудит обнаружил **167 дополнительных per-coin фич** в production pipeline (`run_trading.py build_features()`), которые не были доступны в research. Создана `build_production_features()` — реплицирует production feature engineering в research framework.
+
+### R29a — Individual Forward Selection (62 candidates)
+Каждый из 62 кандидатов добавлен по одному к FEATURES_23. Baseline Sh=2.02.
+
+**TOP 10 features by delta:**
+
+| Feature | Category | Sharpe | Delta |
+|---------|----------|--------|-------|
+| global_ls_ratio | Derivatives | 2.77 | +0.76 |
+| taker_buy_sell_ratio | Derivatives | 2.64 | +0.63 |
+| taker_imbalance | Derivatives | 2.64 | +0.63 |
+| buy_pressure | Price shape | 2.63 | +0.61 |
+| vol_ratio_12h | Volume | 2.56 | +0.54 |
+| btc_beta_48h | Cross-asset | 2.54 | +0.52 |
+| gk_vol_168h | Volatility | 2.43 | +0.41 |
+| oi_chg_4h | Derivatives | 2.42 | +0.40 |
+| stoch_k | TA | 2.39 | +0.37 |
+| close_open_ratio | Price shape | 2.38 | +0.36 |
+
+**Всего 38 из 62 кандидатов улучшили baseline.**
+
+**Toxic features (AVOID):**
+- basis_change_12h: -1.37
+- basis_change_24h: -1.36
+- basis_zscore_7d: -1.31
+- basis_pct: -1.27
+- btc_beta_168h: -0.89
+
+---
+
+## R29b — Combo Testing & Greedy Forward Selection (2026-04-02) ⭐⭐⭐
+**Лог:** `results_r29b.log`
+
+### EXP-B: Predefined Combos
+
+| Combo | Features | Sharpe | Equity | Delta |
+|-------|----------|--------|--------|-------|
+| BASELINE-23f | 23 | 2.02 | $662 | — |
+| TOP3 | 26 | 2.83 | $1782 | +0.81 |
+| TOP5 | 28 | 2.16 | $878 | +0.14 |
+| TOP7 | 30 | 2.44 | $1176 | +0.42 |
+| **TOP10** | **33** | **2.94** | **$1822** | **+0.93** |
+| TOP12 | 35 | 2.08 | $794 | +0.07 |
+| DIVERSE7 | 30 | 2.45 | $1233 | +0.43 |
+| ALL_d02 | 43 | 2.02 | $717 | +0.00 |
+
+### EXP-C: Greedy Forward Selection
+
+| Step | Added feature | Sharpe | Features |
+|------|--------------|--------|----------|
+| 0 | baseline | 2.02 | 23 |
+| 1 | +global_ls_ratio | 2.77 | 24 |
+| 2 | +ret_std_24h | 2.96 | 25 |
+| 3 | (no improvement, stop) | — | — |
+
+### EXP-D: Greedy Final — Regularization Sweep
+
+| Config | Sharpe | Equity | Worst Month | WM |
+|--------|--------|--------|-------------|-----|
+| 25f, L2=1.0 | 2.96 | $1986 | -21.7% | 9/13 |
+| 25f, L2=3.0 | 2.97 | $2124 | -16.9% | 9/13 |
+| **25f, L2=10.0** | **3.22** | **$2343** | **-17.5%** | **12/13** |
+
+### R29 Ключевые выводы
+
+1. **Production pipeline содержал 167 неиспользованных фич** — аудит показал огромный разрыв между research и production feature engineering.
+2. **38 из 62 кандидатов positive** — в отличие от R28c (0 из 23), production-only фичи содержат реальный сигнал.
+3. **Greedy отбор → 2 фичи: `global_ls_ratio` + `ret_std_24h`** — 25f total.
+4. **Сильная регуляризация (L2=10) → Sh=3.22, WM=12/13** — высокий L2 предотвращает оверфит на новые фичи.
+5. **Basis/premium features токсичны** (delta -1.27 to -1.37) — как и funding в R28.
+6. **Оптимальный набор: FEATURES_25 = FEATURES_23 + [global_ls_ratio, ret_std_24h], L2=10.0**
+
+**Следующий шаг:** Глубокая валидация FEATURES_25 (per-window breakdown, seed robustness, threshold sweep, bootstrap CI).
+
+
+---
+
+## R29c — Deep Validation of FEATURES_25
+
+**Дата:** 2026-04-03  
+**Скрипт:** `_research_r29c_deepval.py` → `results_r29c.log`  
+**Цель:** Всесторонняя валидация FEATURES_25 (= FEATURES_23 + [global_ls_ratio, ret_std_24h]) с L2=10  
+**Время выполнения:** 127.6 мин  
+
+### 1. Baseline vs FEATURES_25
+
+| Config | Sharpe | Equity | Worst Month | Win Months |
+|--------|--------|--------|-------------|------------|
+| BASELINE (23f, L2=1) | 2.02 | $662 | -34.5% | 9/13 |
+| **FEATURES_25 (25f, L2=10)** | **3.22** | **$2343** | **-17.5%** | **12/13** |
+| **Δ** | **+1.21** | | | |
+
+### 2. Per-Window Sharpe Breakdown
+
+| Config | W1 (Oct24–Jan25) | W2 (May–Aug25) | W3 (Nov25–Mar26) |
+|--------|-------------------|-----------------|-------------------|
+| BASELINE | Sh=4.06, $312, Wr=-15.5% | Sh=2.31, $171, Wr=-17.5% | Sh=1.65, $141, Wr=-9.5% |
+| FEAT25-L2=10 | Sh=4.13, $304, Wr=+6.0% | **Sh=0.80**, $108, Wr=-31.1% | **Sh=3.30**, $225, Wr=-17.5% |
+
+⚠️ **W2 деградация:** 2.31 → 0.80 — есть concern, но W3 с запасом компенсирует (1.65 → 3.30)
+
+### 3. Per-Seed Stability (FEAT25, L2=10)
+
+| Seed | Sharpe | Equity | Worst Month |
+|------|--------|--------|-------------|
+| 0 | 2.40 | $940 | -26.0% |
+| 7 | 2.62 | $1346 | -22.8% |
+| 13 | 2.23 | $836 | -21.1% |
+| 42 | 2.83 | $1415 | -28.1% |
+| 99 | 2.65 | $1394 | -19.8% |
+
+Все seed'ы > 2.0. Стабильность хорошая: range 2.23–2.83.
+
+### 4. Regularization Curve (L2 sweep, FEAT25)
+
+| L2 | Sharpe | Equity | Worst M | WM |
+|----|--------|--------|---------|----|
+| 0.5 | 2.49 | $1181 | -22.3% | 9/13 |
+| 1.0 | 2.96 | $1986 | -21.7% | 9/13 |
+| 3.0 | 2.97 | $2124 | -16.9% | 9/13 |
+| 5.0 | 2.50 | $1294 | -21.8% | 10/13 |
+| **10.0** | **3.22** | **$2343** | **-17.5%** | **12/13** |
+| 20.0 | 2.50 | $1095 | -10.5% | 7/13 |
+| 30.0 | 2.86 | $1905 | -19.7% | 10/13 |
+| 50.0 | 2.97 | $1974 | -11.3% | 11/13 |
+
+**L2=10 — чёткий оптимум.** Кривая не монотонная: спад после L2=5, пик на L2=10, снова спад.
+
+### 5. Num_Leaves Sweep (L2=10)
+
+| Leaves | Sharpe | Equity | Worst M | WM |
+|--------|--------|--------|---------|----|
+| 15 | 3.12 | $2502 | -19.4% | 11/13 |
+| 31 | 2.66 | $1377 | -21.1% | 9/13 |
+| 42 | 2.39 | $1050 | -16.0% | 9/13 |
+| **63** | **3.22** | **$2343** | **-17.5%** | **12/13** |
+| 85 | 2.50 | $1169 | -16.5% | 10/13 |
+| 127 | 2.58 | $1141 | -26.0% | 10/13 |
+
+**num_leaves=63 — optimal.** 15 тоже неплохо (3.12), но пик на 63.
+
+### 6. Portfolio Config Sweep (FEAT25-L2=10 predictions)
+
+| Config | thr=0.5 | thr=0.7 | thr=0.9 |
+|--------|---------|---------|---------|
+| **4L/3S** | Sh=3.30, $2448 | Sh=3.26, $2651 | **Sh=3.37, $3261** |
+| 5L/3S | Sh=3.22, $2216 | Sh=3.17, $2383 | Sh=3.29, $2930 |
+| 6L/3S | Sh=3.24, $2151 | Sh=3.22, $2343 | Sh=3.32, $2839 |
+| 7L/3S | Sh=3.20, $1962 | Sh=3.19, $2154 | Sh=3.29, $2601 |
+| 8L/4S | Sh=2.40, $740 | Sh=2.43, $810 | Sh=2.57, $979 |
+| 6L/2S | Sh=2.71, $1898 | Sh=2.71, $2097 | Sh=2.76, $2429 |
+| 5L/5S | Sh=2.45, $731 | Sh=2.47, $785 | Sh=2.64, $961 |
+
+**thr=0.9 лучше всех.** Лучший: **4L/3S thr=0.9 → Sh=3.37, $3261**. WM=12/13 для всех 4L-6L configs.
+
+### 7. Bootstrap Confidence Interval
+
+Месячные доходности: n=13, mean=30.8%, std=29.5%
+
+| Percentile | FEAT25 Sharpe | Baseline Sharpe |
+|------------|---------------|-----------------|
+| 5th | 2.29 | — |
+| 25th | 3.14 | — |
+| **Median** | **3.75** | **2.10** |
+| 75th | 4.47 | — |
+| 95th | 5.78 | — |
+
+- **P(Sharpe > 2.0) = 98%** ✅
+- **P(Sharpe > 3.0) = 79%**
+- **P(FEAT25 > BASELINE) = 96%** ✅
+
+### 8. Ablation Study
+
+| Removed Feature | Sharpe | Delta |
+|----------------|--------|-------|
+| global_ls_ratio | 2.58 | -0.64 |
+| ret_std_24h | 2.59 | -0.64 |
+
+Обе фичи одинаково важны. Удаление любой из них → существенная деградация.
+
+### 9. Feature Importance (LGB gain)
+
+| Feature | Importance | Note |
+|---------|-----------|------|
+| **global_ls_ratio** | **8.9%** | ★★ NEW |
+| ls_divergence | 8.6% | |
+| oi_zscore | 8.0% | |
+| taker_cvd_24h | 7.2% | |
+| gk_vol_24h | 7.2% | |
+| atr_14 | 7.1% | |
+| ret_24h | 7.0% | |
+| mom_z_24h | 6.9% | |
+| ret_48h | 5.8% | |
+| oi_chg_24h | 5.3% | |
+| **ret_std_24h** | **5.3%** | ★★ NEW |
+| rvol_24h | 3.8% | |
+| ... (13 minor) | <3.5% | |
+
+`global_ls_ratio` — #1 по важности! `ret_std_24h` — #11, но ablation показывает равный вклад.
+
+### 10. Hyperparam Robustness (L2=10, leaves=63)
+
+| Param | Value | Sharpe | Equity | Worst M |
+|-------|-------|--------|--------|---------|
+| lr | 0.01 | 2.15 | $835 | -28.8% |
+| **lr** | **0.03** | **3.22** | **$2343** | **-17.5%** |
+| lr | 0.05 | 2.60 | $1264 | -28.2% |
+| lr | 0.10 | 2.58 | $1232 | -34.4% |
+| min_child | 50 | 3.08 | $2075 | -17.1% |
+| **min_child** | **100** | **3.22** | **$2343** | **-17.5%** |
+| min_child | 150 | 2.65 | $1515 | -19.3% |
+| min_child | 200 | 2.48 | $1159 | -16.2% |
+
+**lr=0.03, min_child=100 — optimal.** Совпадает с дефолтами.
+
+### R29c Conclusions
+
+1. **FEATURES_25 подтверждён:** Sh=3.22, Δ=+1.21 над baseline, P(>baseline)=96%.
+2. **Оба новых фича критически важны:** ablation -0.64 каждый, `global_ls_ratio` — #1 по importance.
+3. **Конфигурация стабильна:** L2=10, leaves=63, lr=0.03, min_child=100 — все дефолтные значения оптимальны.
+4. **Лучший портфель:** 4L/3S thr=0.9 → Sh=3.37 (вместо текущего 6L/3S).
+5. **⚠️ W2 деградация:** Sh=0.80 vs base 2.31 — на периоде May-Aug25. W1 и W3 компенсируют.
+6. **Bootstrap CI:** 5th pct = 2.29, median = 3.75 — уверенно выше 2.0 даже в worst case.
+
+**Рекомендация:** ~~FEATURES_25 + L2=10 + 4L/3S thr=0.9 → кандидат на деплой~~ **ОТМЕНЕНО — см. R29d ниже.**  
+**Осторожность:** W2 деградация требует мониторинга. Возможно стоит проверить на дополнительном OOS окне.
+
+
+---
+
+## R29d — DIAGNOSTIC: Sharpe discrepancy + Data contamination
+
+**Дата:** 2026-04-03  
+**Скрипт:** `_research_r29d_diagnostic.py` → `results_r29d.log`  
+**Цель:** Выяснить, почему R29c baseline = 2.02 при том что R25/R26 давали 3.36–3.39
+
+### КЛЮЧЕВАЯ НАХОДКА: `build_production_features()` КОНТАМИНИРУЕТ ДАННЫЕ
+
+R29c вызывал `build_production_features()` перед тренировкой, что изменило NaN-паттерн в `oi_chg_12h` и `oi_chg_24h` (~600 дополнительных NaN). Это привело к тому, что обучающие выборки слегка отличаются, и модель обучается на других данных.
+
+### Сравнительная таблица (все RAW Sharpe, без комиссий)
+
+| Config | Data Pipeline | Sharpe | Equity | Worst M | WM |
+|--------|--------------|--------|--------|---------|----|
+| **23f L2=1 6L/3S** | **CLEAN (как R25/R26)** | **3.39** | **$3632** | **-3.0%** | **10/13** |
+| 23f L2=1 5L/3S | CLEAN (как R25) | 3.36 | $3371 | -5.7% | 10/13 |
+| 23f L2=1 6L/3S | PROD (с build_prod) | 2.02 | $662 | -34.5% | 9/13 |
+| 23f L2=10 | CLEAN | 2.79 | $1865 | -14.3% | 10/13 |
+| **25f L2=10 6L/3S** | **PROD** | **3.22** | **$2343** | **-17.5%** | **12/13** |
+| 23f no_cs_rank | CLEAN | 0.89 | $176 | -18.4% | 7/13 |
+
+### Что это значит
+
+1. **CLEAN baseline (R25/R26 пайплайн) = Sh=3.39** — воспроизводится точь-в-точь
+2. **PROD baseline (R29c пайплайн) = Sh=2.02** — контаминация от `build_production_features()`
+3. **FEAT25 L2=10 = Sh=3.22** — НЕ бьёт текущий прод (3.39)!
+4. Дельта +1.20 в R29c была относительно **загрязнённого** baseline (2.02), а не реального (3.39)
+
+### Per-Window: CLEAN vs FEAT25
+
+| Window | CLEAN 23f L2=1 | FEAT25 L2=10 (PROD) |
+|--------|----------------|----------------------|
+| W1 (Oct24-Jan25) | Sh=4.52, Wr=-2.3% | Sh=4.13, Wr=+6.0% |
+| W2 (May-Aug25) | Sh=1.67, Wr=-28.6% | **Sh=0.80, Wr=-31.1%** |
+| W3 (Nov25-Mar26) | Sh=1.10, Wr=-20.1% | **Sh=3.30, Wr=-17.5%** |
+
+- W2 у обоих слабый (IC ~0.02, ICIR ~0.08), но FEAT25 ещё хуже
+- W3 у FEAT25 подозрительно сильный — возможный overfit на последний период
+
+### W2 Deep Dive (May-Aug 2025)
+
+| Config | IC | ICIR | Jul-25 IC |
+|--------|-----|------|-----------|
+| CLEAN 23f | 0.020 | 0.081 | **-0.013** |
+| PROD 23f | 0.018 | 0.073 | -0.016 |
+| FEAT25 L2=10 | 0.019 | 0.083 | -0.012 |
+
+IC у всех конфигов слабый в W2. Июль 2025 — отрицательный IC у всех. W2 — просто сложный рыночный период.
+
+### Leakage Check
+
+**Shuffled targets → Sh=-0.21** (у нормальной модели Sh=3.22). Утечки нет.
+
+### R29d Conclusions
+
+1. **R29c результаты НЕВАЛИДНЫ для сравнения с продом.** baseline 2.02 ≠ реальный прод 3.39. Разница вызвана `build_production_features()`.
+2. **FEAT25 (Sh=3.22) НЕ бьёт текущий прод (Sh=3.39).** Деплоить нельзя.
+3. **W2 (May-Aug25) — объективно сложный период.** IC близок к 0, июль негативный. Это не баг модели, а рыночный regime.
+4. **W3 улучшение (1.10 → 3.30) подозрительно.** Может быть overfit на последний период.
+5. **Утечки нет** — shuffled test ok.
+6. **L2=10 вредит чистому baseline** (3.39 → 2.79 на CLEAN 23f).
+
+### Статус: FEATURES_25 — НЕ ДЕПЛОИТЬ
+
+Текущая продовая модель (23f, L2=1, 6L/3S → Sh=3.39) остаётся лучшей.  
+Для реального улучшения нужно: (a) починить контаминацию в `build_production_features()`, (b) тестировать новые фичи на CLEAN пайплайне, или (c) найти способ добавить `global_ls_ratio`/`ret_std_24h` без `build_production_features()`.

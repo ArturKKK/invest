@@ -1,0 +1,87 @@
+================================================================================
+R48 — Phase 3 + Phase 4
+================================================================================
+
+[DATA] Loading ...
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Base frame: 1,826,014 rows × 123 cols
+
+  ⚠️  No Phase 1+2 winners file — no extra features for combo
+
+================================================================================
+  PHASE 3 — HYBRID COST MODEL
+================================================================================
+
+  Training champion_31f predictions (once, for all cost tests) ...
+  Training: p3_31f, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+
+  Win    Unif_Sh   Hyb_Sh  LiqWt_Sh  Unif_C%  Hyb_C%  LiqWt_C%
+  ───── ──────── ──────── ───────── ──────── ─────── ─────────
+  W1      +0.60   +0.98    +0.17     6.5%    3.5%      9.1%
+  W2      +2.86   +3.53    +0.18     7.1%    3.5%     10.1%
+  W3      +2.03   +2.52    +1.95     5.8%    2.8%      8.1%
+  ALL     +1.31   +1.66    +0.53    19.2%    9.8%     27.3%
+  → Saved results_r48_phase3_summary.csv
+
+  Best cost model: hybrid (ALL=1.66)
+  → Saved results_r48_phase3_best.json
+
+================================================================================
+  PHASE 4 — BEST COMBO
+================================================================================
+
+  Cost model: hybrid
+
+  [A] champion_30f (no CG) ...
+  Training: A_30f_noCG, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0490
+    W3/s0: train=1,628,167, test=89,343, IC=0.0372
+    W1=+0.40  W2=+3.89  W3=+2.99  ALL=+1.51  cost=9.7%  Δ+0.20
+
+  [B] champion_31f uniform cost (R47 reference) ...
+  Training: B_31f_uniform, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+    W1=+0.60  W2=+2.86  W3=+2.03  ALL=+1.31  cost=19.2%  
+
+  [C] champion_31f hybrid cost ...
+  Training: C_31f_hybrid, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+    W1=+0.98  W2=+3.53  W3=+2.52  ALL=+1.66  cost=9.8%  Δ+0.35
+
+======================================================================
+  R48 FINAL SUMMARY
+======================================================================
+
+  Config                             W1     W2     W3    ALL   Cost%   Δ_ALL
+  ────────────────────────────── ────── ────── ────── ────── ─────── ───────
+  C_31f_hybrid                   +0.98 +3.53 +2.52 +1.66    9.8%   +0.35
+  A_30f_noCG                     +0.40 +3.89 +2.99 +1.51    9.7%   +0.20
+  B_31f_uniform                  +0.60 +2.86 +2.03 +1.31   19.2%   +0.00
+
+  → Saved results_r48_phase4_summary.csv
+
+  ──────────────────────────────────────────────────────────────────────
+  🏆 NEW CHAMPION: C_31f_hybrid → ALL=1.66 (prev 1.31, Δ=+0.35)

@@ -1,0 +1,219 @@
+================================================================================
+  R32 — KAGGLE-INSPIRED FEATURES
+================================================================================
+
+[1] Loading data...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Base: 1,826,014 rows, 94 cols
+  Added 6 extra features (clean, from OHLCV)
+  [KAGGLE] Added 2 features (rel_volume_cs, ret_skew_168h)
+  Final: 1,826,014 rows, 102 cols
+
+[1b] Feature availability:
+  FEAT_26: 26/26 ✓
+  FEAT_27_VOL: 27/27 ✓
+  FEAT_27_SKEW: 27/27 ✓
+  FEAT_28: 28/28 ✓
+
+============================================================
+[2] TRAINING MODELS
+============================================================
+
+[EXP-A] Baseline: 26f
+  Training: A_26f, 26f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0363
+    W2/s0: train=1,484,524, test=85,569, IC=0.0090
+    W3/s0: train=1,628,167, test=89,343, IC=0.0478
+
+[EXP-B] +rel_volume_cs: 27f
+  Training: B_27f_vol, 27f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0371
+    W2/s0: train=1,484,524, test=85,569, IC=0.0082
+    W3/s0: train=1,628,167, test=89,343, IC=0.0558
+
+[EXP-C] +ret_skew_168h: 27f
+  Training: C_27f_skew, 27f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0380
+    W2/s0: train=1,484,524, test=85,569, IC=0.0185
+    W3/s0: train=1,628,167, test=89,343, IC=0.0369
+
+[EXP-D] +both: 28f
+  Training: D_28f, 28f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0320
+    W2/s0: train=1,484,524, test=85,569, IC=0.0085
+    W3/s0: train=1,628,167, test=89,343, IC=0.0523
+
+
+================================================================================
+  RESULTS: R32 Kaggle Features
+================================================================================
+
+────────────────────────────────────────────────────────────
+  A_26f
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-0.30 (gross= 0.55)  Eq=$    63  DD=-52.7%  WM=2/4  Cost=7.1%  Turn=5.2
+  W2: Sh= 0.80 (gross= 1.74)  Eq=$   107  DD=-57.5%  WM=3/4  Cost=6.5%  Turn=4.2
+  W3: Sh= 1.75 (gross= 2.70)  Eq=$   144  DD=-37.1%  WM=3/5  Cost=6.0%  Turn=4.3
+  ALL: Sh= 0.77 (gross= 1.53)  Eq=$   142  DD=-52.7%  Cost=19.8%  Turn=4.6
+
+  [6L3S_12h]
+  W1: Sh=-0.37 (gross= 1.48)  Eq=$    65  DD=-51.1%  WM=2/4  Cost=14.3%  Turn=11.6
+  W2: Sh= 0.05 (gross= 2.28)  Eq=$    83  DD=-67.1%  WM=3/4  Cost=14.8%  Turn=10.9
+  W3: Sh= 0.93 (gross= 3.13)  Eq=$   112  DD=-31.6%  WM=4/5  Cost=12.7%  Turn=10.2
+  ALL: Sh= 0.43 (gross= 2.07)  Eq=$    90  DD=-56.3%  Cost=42.9%  Turn=11.2
+
+  [3L2S_ema05]
+  W1: Sh=-0.44 (gross= 0.61)  Eq=$    46  DD=-82.6%  WM=2/4  Cost=11.0%  Turn=4.8
+  W2: Sh= 0.21 (gross= 1.52)  Eq=$    79  DD=-68.8%  WM=3/4  Cost=11.2%  Turn=4.5
+  W3: Sh= 1.50 (gross= 2.63)  Eq=$   135  DD=-47.1%  WM=3/5  Cost=9.1%  Turn=3.9
+  ALL: Sh= 0.27 (gross= 1.16)  Eq=$    45  DD=-90.3%  Cost=31.6%  Turn=4.4
+
+────────────────────────────────────────────────────────────
+  B_27f_vol
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-1.22 (gross=-0.37)  Eq=$    42  DD=-64.3%  WM=2/4  Cost=7.2%  Turn=5.3
+  W2: Sh= 0.90 (gross= 1.89)  Eq=$   111  DD=-55.9%  WM=3/4  Cost=6.7%  Turn=4.4
+  W3: Sh= 2.75 (gross= 3.67)  Eq=$   195  DD=-32.2%  WM=5/5  Cost=5.7%  Turn=4.0
+  ALL: Sh= 0.74 (gross= 1.47)  Eq=$   134  DD=-67.5%  Cost=19.9%  Turn=4.7
+
+  [6L3S_12h]
+  W1: Sh= 0.04 (gross= 2.01)  Eq=$    78  DD=-39.8%  WM=2/4  Cost=14.7%  Turn=11.9
+  W2: Sh= 0.87 (gross= 3.24)  Eq=$   110  DD=-57.2%  WM=2/4  Cost=14.7%  Turn=10.9
+  W3: Sh= 0.62 (gross= 2.70)  Eq=$   102  DD=-38.0%  WM=3/5  Cost=12.5%  Turn=10.2
+  ALL: Sh= 0.70 (gross= 2.39)  Eq=$   131  DD=-44.8%  Cost=42.4%  Turn=11.1
+
+  [3L2S_ema05]
+  W1: Sh=-0.28 (gross= 0.76)  Eq=$    48  DD=-77.7%  WM=2/4  Cost=11.3%  Turn=4.9
+  W2: Sh= 0.88 (gross= 2.14)  Eq=$   105  DD=-73.5%  WM=3/4  Cost=10.8%  Turn=4.3
+  W3: Sh= 1.47 (gross= 2.60)  Eq=$   133  DD=-43.4%  WM=4/5  Cost=9.0%  Turn=3.9
+  ALL: Sh= 0.31 (gross= 1.19)  Eq=$    48  DD=-88.7%  Cost=31.2%  Turn=4.4
+
+────────────────────────────────────────────────────────────
+  C_27f_skew
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-0.78 (gross= 0.02)  Eq=$    54  DD=-58.6%  WM=1/4  Cost=6.4%  Turn=4.6
+  W2: Sh= 0.18 (gross= 1.25)  Eq=$    90  DD=-49.8%  WM=3/4  Cost=6.6%  Turn=4.3
+  W3: Sh= 1.98 (gross= 2.94)  Eq=$   154  DD=-41.8%  WM=4/5  Cost=5.9%  Turn=4.2
+  ALL: Sh= 0.53 (gross= 1.26)  Eq=$   106  DD=-58.6%  Cost=18.7%  Turn=4.3
+
+  [6L3S_12h]
+  W1: Sh= 0.46 (gross= 2.34)  Eq=$    92  DD=-40.4%  WM=3/4  Cost=13.8%  Turn=11.2
+  W2: Sh=-0.24 (gross= 2.15)  Eq=$    79  DD=-59.8%  WM=2/4  Cost=14.5%  Turn=10.7
+  W3: Sh= 0.73 (gross= 3.11)  Eq=$   107  DD=-45.5%  WM=3/5  Cost=12.7%  Turn=10.2
+  ALL: Sh= 0.16 (gross= 1.80)  Eq=$    67  DD=-59.8%  Cost=41.0%  Turn=10.7
+
+  [3L2S_ema05]
+  W1: Sh=-1.77 (gross=-0.74)  Eq=$    23  DD=-86.5%  WM=2/4  Cost=10.6%  Turn=4.6
+  W2: Sh= 0.33 (gross= 1.62)  Eq=$    84  DD=-73.3%  WM=3/4  Cost=10.8%  Turn=4.3
+  W3: Sh= 1.56 (gross= 2.68)  Eq=$   138  DD=-48.9%  WM=3/5  Cost=9.1%  Turn=3.9
+  ALL: Sh=-0.28 (gross= 0.59)  Eq=$    16  DD=-93.6%  Cost=31.1%  Turn=4.4
+
+────────────────────────────────────────────────────────────
+  D_28f
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-0.69 (gross= 0.05)  Eq=$    52  DD=-55.6%  WM=2/4  Cost=6.4%  Turn=4.6
+  W2: Sh=-0.98 (gross=-0.05)  Eq=$    57  DD=-71.3%  WM=2/4  Cost=6.5%  Turn=4.2
+  W3: Sh= 2.88 (gross= 3.82)  Eq=$   201  DD=-29.5%  WM=5/5  Cost=5.7%  Turn=4.0
+  ALL: Sh= 0.47 (gross= 1.15)  Eq=$    93  DD=-58.2%  Cost=18.6%  Turn=4.3
+
+  [6L3S_12h]
+  W1: Sh= 0.62 (gross= 2.45)  Eq=$    97  DD=-42.1%  WM=3/4  Cost=13.7%  Turn=11.0
+  W2: Sh= 0.32 (gross= 2.53)  Eq=$    92  DD=-56.1%  WM=2/4  Cost=14.3%  Turn=10.5
+  W3: Sh= 0.66 (gross= 2.67)  Eq=$   103  DD=-42.5%  WM=3/5  Cost=12.3%  Turn=9.9
+  ALL: Sh= 0.65 (gross= 2.24)  Eq=$   123  DD=-42.1%  Cost=40.6%  Turn=10.6
+
+  [3L2S_ema05]
+  W1: Sh=-0.93 (gross= 0.05)  Eq=$    36  DD=-78.6%  WM=1/4  Cost=10.1%  Turn=4.4
+  W2: Sh=-0.71 (gross= 0.51)  Eq=$    52  DD=-78.5%  WM=2/4  Cost=10.7%  Turn=4.2
+  W3: Sh= 1.46 (gross= 2.47)  Eq=$   131  DD=-45.2%  WM=4/5  Cost=8.7%  Turn=3.7
+  ALL: Sh= 0.32 (gross= 1.16)  Eq=$    48  DD=-88.2%  Cost=30.4%  Turn=4.3
+
+
+================================================================================
+  SUMMARY (sorted by W3 net Sharpe)
+================================================================================
+
+Experiment     Config             W1net W2net W3net W3grs ALLnt    Eq$    DD%  Turn  Cost%
+─────────────────────────────────────────────────────────────────────────────────────────────────────────
+D_28f          6L3S_ema05_h3      -0.69 -0.98  2.88  3.82  0.47 $  201 -29.5%  4.3  18.6% ★
+B_27f_vol      6L3S_ema05_h3      -1.22  0.90  2.75  3.67  0.74 $  195 -32.2%  4.7  19.9% ★
+C_27f_skew     6L3S_ema05_h3      -0.78  0.18  1.98  2.94  0.53 $  154 -41.8%  4.3  18.7% ◆
+A_26f          6L3S_ema05_h3      -0.30  0.80  1.75  2.70  0.77 $  144 -37.1%  4.6  19.8% ◆
+C_27f_skew     3L2S_ema05         -1.77  0.33  1.56  2.68 -0.28 $  138 -48.9%  4.4  31.1% ◆
+A_26f          3L2S_ema05         -0.44  0.21  1.50  2.63  0.27 $  135 -47.1%  4.4  31.6% ◆
+B_27f_vol      3L2S_ema05         -0.28  0.88  1.47  2.60  0.31 $  133 -43.4%  4.4  31.2% ◆
+D_28f          3L2S_ema05         -0.93 -0.71  1.46  2.47  0.32 $  131 -45.2%  4.3  30.4% ◆
+A_26f          6L3S_12h           -0.37  0.05  0.93  3.13  0.43 $  112 -31.6% 11.2  42.9%
+C_27f_skew     6L3S_12h            0.46 -0.24  0.73  3.11  0.16 $  107 -45.5% 10.7  41.0%
+D_28f          6L3S_12h            0.62  0.32  0.66  2.67  0.65 $  103 -42.5% 10.6  40.6%
+B_27f_vol      6L3S_12h            0.04  0.87  0.62  2.70  0.70 $  102 -38.0% 11.1  42.4%
+
+
+================================================================================
+  HEAD-TO-HEAD: A (26f baseline) vs B/C/D
+================================================================================
+
+  [6L3S_ema05_h3] Baseline A_26f: W3=1.75
+    B_27f_vol      W3=2.75  Δ=+1.00  ✅ BETTER
+    C_27f_skew     W3=1.98  Δ=+0.23  ✅ BETTER
+    D_28f          W3=2.88  Δ=+1.13  ✅ BETTER
+
+  [6L3S_12h] Baseline A_26f: W3=0.93
+    B_27f_vol      W3=0.62  Δ=-0.31  ❌ WORSE
+    C_27f_skew     W3=0.73  Δ=-0.20  ❌ WORSE
+    D_28f          W3=0.66  Δ=-0.27  ❌ WORSE
+
+  [3L2S_ema05] Baseline A_26f: W3=1.50
+    B_27f_vol      W3=1.47  Δ=-0.03  ⚠️ ~SAME
+    C_27f_skew     W3=1.56  Δ=+0.06  ⚠️ ~SAME
+    D_28f          W3=1.46  Δ=-0.04  ⚠️ ~SAME
+
+
+================================================================================
+  MONTHLY IC — D_28f
+================================================================================
+
+Month            IC      N
+────────────────────────────
+2024-10     +0.0571  13872
+2024-11     +0.0422  24480
+2024-12     +0.0348  25296
+2025-01     +0.0060  24072
+2025-05     +0.0320  13464
+2025-06     +0.0236  23760
+2025-07     +0.0097  24552
+2025-08     +0.0161  23793
+2025-11     +0.0440  12672
+2025-12     +0.0321  24552
+2026-01     +0.0411  24552
+2026-02     +0.0191  22176
+2026-03     +0.0171   4995
+
+Mean IC: 0.0288, IC>0: 13/13, ICIR: 1.99
+
+
+✅ R32 complete in 19.4 min
+
+================================================================================
+  VERDICT
+================================================================================
+  Best overall: D_28f × 6L3S_ema05_h3
+  W3 Sharpe: net=2.88, gross=3.82
+  Best baseline (A_26f): W3 net=1.75
+  Delta: +1.13
+  ✅ KAGGLE FEATURES HELP! +1.13 net Sharpe improvement

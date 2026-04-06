@@ -165,7 +165,31 @@ DEFAULT_RISK = {
 
 # ── Partial rebalance settings ──
 REBALANCE_THRESHOLD = 0.12  # 12% — don't resize if |target-live|/target < this
-LIMIT_ORDER_WAIT = 12       # seconds to wait for limit fill before market fallback
+LIMIT_ORDER_WAIT = 20       # seconds to wait for limit fill before market fallback
+LIMIT_PRICE_AGGRESSION = 0.0003  # cross spread by 0.03% for higher fill rate
+
+# ── R49.1: Maker-First Execution Tiers ──────────────────────
+# TIER1: top-5 liquid coins → genuinely try post-only maker fills
+# TIER2: mid-cap → use existing aggressive limit (near-taker)
+# TIER3: small-cap → plain market orders
+_TIER1_SYMS = {'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT'}
+_TIER1_OKX = {SYMBOLS_TO_OKX.get(s) for s in _TIER1_SYMS if SYMBOLS_TO_OKX.get(s)}
+_TIER3_SYMS = {
+    'SAND/USDT', 'LDO/USDT', 'INJ/USDT', 'APT/USDT', 'ARB/USDT',
+    'GALA/USDT', 'FTM/USDT', 'MATIC/USDT',
+}
+
+# Maker-first parameters (R49.1)
+MAKER_TTL_SECONDS = 90        # wait per attempt for post-only fill
+MAKER_MAX_RETRIES = 3         # attempts before market fallback
+MAKER_MID_OFFSET = 0.00005   # 0.5bp inside mid for initial placement
+MAKER_AGGR_STEP = 0.00010    # widen 1bp per retry toward spread
+EXEC_LOG_PATH = 'trading_logs/execution_log.csv'
+EXEC_LOG_HEADER = (
+    'timestamp,symbol,okx_sym,tier,side,order_type,attempt,'
+    'bid,ask,mid,limit_px,fill_price,spread_bps,slippage_bps,'
+    'effective_bps,filled_qty,cost_usd,fill_time_s,was_maker\n'
+)
 
 
 # ============================================================
@@ -1343,7 +1367,9 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     if state.get('stopped', False):
         if dd > risk_cfg['dd_resume']:
             state['stopped'] = False
-            print(f"   🟢 DD recovered to {dd*100:.1f}%, resuming trading")
+            # Reset peak to current equity to avoid deadlock
+            state['peak'] = equity
+            print(f"   🟢 DD recovered to {dd*100:.1f}%, resuming trading (peak reset to {equity:.2f})")
         else:
             print(f"   🔴 DD stop active ({dd*100:.1f}%), skipping cycle")
             return []
@@ -1828,6 +1854,172 @@ def _is_order_filled(order):
             and filled is not None and float(filled) > 0)
 
 
+def _log_execution(symbol, okx_sym, side, tier, attempt, order_type,
+                   ticker_info, limit_px, order, fill_time_s, was_maker):
+    """Write per-trade execution metrics to EXEC_LOG_PATH for R49 pilot analysis."""
+    try:
+        fill_price = float(order.get('average', 0) or order.get('price', 0) or 0)
+        filled_qty = float(order.get('filled', 0) or 0)
+        cost_usd = float(order.get('cost', 0) or 0)
+        bid = float(ticker_info.get('bid', 0)) if ticker_info else 0
+        ask = float(ticker_info.get('ask', 0)) if ticker_info else 0
+        mid = (bid + ask) / 2 if bid > 0 and ask > 0 else fill_price
+        spread_bps = (ask / bid - 1) * 10000 if bid > 0 else 0
+        # slippage vs mid (positive = paid more than mid for buy, or received less for sell)
+        if mid > 0 and fill_price > 0:
+            raw_slip = (fill_price / mid - 1) * 10000
+            slippage_bps = raw_slip if side == 'buy' else -raw_slip
+        else:
+            slippage_bps = 0
+        # effective bps = slippage + fee (maker ~-1bp, taker ~+5bp on OKX)
+        fee_bps = -1.0 if was_maker else 5.0
+        effective_bps = slippage_bps + fee_bps
+
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trading_logs')
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, 'execution_log.csv')
+        write_header = not os.path.exists(log_path)
+        with open(log_path, 'a') as f:
+            if write_header:
+                f.write(EXEC_LOG_HEADER)
+            f.write(
+                f"{datetime.now(timezone.utc).isoformat()},"
+                f"{symbol},{okx_sym},{tier},{side},{order_type},{attempt},"
+                f"{bid:.8g},{ask:.8g},{mid:.8g},{limit_px:.8g if limit_px else ''},"
+                f"{fill_price:.8g},{spread_bps:.2f},{slippage_bps:.2f},"
+                f"{effective_bps:.2f},{filled_qty},{cost_usd:.4f},"
+                f"{fill_time_s:.1f},{1 if was_maker else 0}\n"
+            )
+    except Exception:
+        pass
+
+
+def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, params):
+    """
+    R49.1 — Post-only maker-first limit order for TIER1 symbols.
+
+    Strategy:
+      - Attempt 1: post-only limit at mid +/- MAKER_MID_OFFSET (0.5bp inside spread)
+      - Attempt 2: post-only limit at mid +/- (MAKER_MID_OFFSET + MAKER_AGGR_STEP)
+      - Attempt 3: aggressive limit at bid/ask (like _limit_with_fallback)
+      - Final: market fallback
+
+    Logs: effective_bps, was_maker, fill_time_s to trading_logs/execution_log.csv
+    Returns: order dict (filled) or None on failure
+    """
+    import time as _time
+
+    tier = 'T1'
+
+    if ticker_info is None:
+        result = exchange.create_order(symbol=okx_sym, type='market', side=side,
+                                       amount=amount, params=params)
+        result = _settle_order(exchange, result, okx_sym)
+        _log_execution(symbol, okx_sym, side, tier, 0, 'market_no_ticker',
+                       ticker_info, None, result, 0, False)
+        _log_fill(okx_sym, side, result, ticker_info, 'market')
+        return result
+
+    bid = float(ticker_info['bid'])
+    ask = float(ticker_info['ask'])
+    mid = (bid + ask) / 2
+
+    # Three maker attempts: increasingly aggressive toward taker
+    # Attempt 1: deep inside spread (true post-only)
+    # Attempt 2: mid (neutral)
+    # Attempt 3: just inside bid/ask (near-taker, may still get maker fill)
+    offsets = [
+        MAKER_MID_OFFSET,
+        MAKER_MID_OFFSET + MAKER_AGGR_STEP,
+        MAKER_MID_OFFSET + 2 * MAKER_AGGR_STEP,
+    ]
+
+    for attempt, offset in enumerate(offsets, start=1):
+        if side == 'buy':
+            limit_px = round(mid - offset * mid, 8)  # below mid
+        else:
+            limit_px = round(mid + offset * mid, 8)  # above mid
+
+        # Clamp to not cross spread (would become taker)
+        if side == 'buy':
+            limit_px = min(limit_px, bid * 0.9999)  # stay below ask
+        else:
+            limit_px = max(limit_px, ask * 1.0001)  # stay above bid
+
+        maker_params = {**params, 'execType': 'post_only'}
+        t0 = _time.time()
+        order_id = None
+        try:
+            order = exchange.create_order(
+                symbol=okx_sym, type='limit', side=side,
+                amount=amount, price=limit_px, params=maker_params
+            )
+            order_id = order['id']
+        except Exception as e:
+            # post_only rejection (would cross spread) → skip to next attempt
+            if 'post_only' in str(e).lower() or '51119' in str(e):
+                print(f"         [MAKER] Attempt {attempt} post_only rejected for {symbol} → retry")
+                continue
+            # Other error → fall through to market
+            print(f"         [MAKER] Attempt {attempt} failed for {symbol}: {str(e)[:80]}")
+            break
+
+        # Poll for fill up to MAKER_TTL_SECONDS
+        filled = False
+        while _time.time() - t0 < MAKER_TTL_SECONDS:
+            _time.sleep(2)
+            try:
+                check = exchange.fetch_order(order_id, okx_sym)
+                if check['status'] == 'closed':
+                    fill_time_s = _time.time() - t0
+                    # Determine if maker fill (fee negative or very low)
+                    fee_rate = abs(float(check.get('fee', {}).get('cost', 0) or 0)) / max(float(check.get('cost', 1e-10) or 1e-10), 1e-10)
+                    was_maker = fee_rate < 0.0003  # taker fee ~0.05%, maker ~0% or rebate
+                    _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_limit',
+                                   ticker_info, limit_px, check, fill_time_s, was_maker)
+                    _log_fill(okx_sym, side, check, ticker_info, 'limit')
+                    print(f"         [MAKER] {'✅' if was_maker else '🟡'} "
+                          f"{'MAKER' if was_maker else 'TAKER'} fill {symbol} "
+                          f"attempt={attempt} t={fill_time_s:.0f}s eff_bps≈{(-1 if was_maker else 5):.0f}")
+                    return check
+                if check['status'] == 'canceled':
+                    break
+            except Exception:
+                pass
+
+        # Cancel and try next attempt
+        if order_id:
+            try:
+                exchange.cancel_order(order_id, okx_sym)
+            except Exception:
+                pass
+            # Check if filled during cancel race
+            try:
+                check = exchange.fetch_order(order_id, okx_sym)
+                if check['status'] == 'closed':
+                    fill_time_s = _time.time() - t0
+                    _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_limit_racewin',
+                                   ticker_info, limit_px, check, fill_time_s, True)
+                    _log_fill(okx_sym, side, check, ticker_info, 'limit')
+                    return check
+            except Exception:
+                pass
+
+        print(f"         [MAKER] Attempt {attempt} unfilled for {symbol} → {'retry' if attempt < len(offsets) else 'market fallback'}")
+
+    # All maker attempts exhausted → market fallback
+    t0 = _time.time()
+    result = exchange.create_order(symbol=okx_sym, type='market', side=side,
+                                   amount=amount, params=params)
+    result = _settle_order(exchange, result, okx_sym)
+    fill_time_s = _time.time() - t0
+    _log_execution(symbol, okx_sym, side, tier, len(offsets) + 1, 'market_fallback',
+                   ticker_info, None, result, fill_time_s, False)
+    _log_fill(okx_sym, side, result, ticker_info, 'market_fallback')
+    print(f"         [MAKER] ⏩ Market fallback for {symbol}")
+    return result
+
+
 def _log_fill(symbol, side, order, ticker_info, order_type):
     """Log per-fill execution details to trading_logs/fills.csv."""
     try:
@@ -1873,8 +2065,14 @@ def _limit_with_fallback(exchange, symbol, side, amount, ticker_info,
         _log_fill(symbol, side, result, ticker_info, 'market')
         return result
 
-    # Limit price: bid for buys (sit on book), ask for sells
-    limit_price = ticker_info['bid'] if side == 'buy' else ticker_info['ask']
+    # Limit price: cross the spread slightly for higher fill rate
+    # buy at ask - small offset (closer to mid), sell at bid + small offset
+    bid = ticker_info['bid']
+    ask = ticker_info['ask']
+    if side == 'buy':
+        limit_price = round(ask * (1 + LIMIT_PRICE_AGGRESSION), 8)  # slightly above ask
+    else:
+        limit_price = round(bid * (1 - LIMIT_PRICE_AGGRESSION), 8)  # slightly below bid
     if not limit_price or limit_price <= 0:
         result = exchange.create_order(symbol=symbol, type='market', side=side,
                                      amount=amount, params=params)
@@ -2065,11 +2263,18 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
             continue
         try:
             _, ticker_info = _convert_usd_to_contracts(exchange, markets, okx_sym, 0)
-            order = _limit_with_fallback(
-                exchange, okx_sym, close_side, live_info['contracts'], ticker_info,
-                params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True},
-                use_limit=use_limit
-            )
+            if sym in _TIER1_SYMS:
+                order = _maker_first_limit(
+                    exchange, sym, okx_sym, close_side, live_info['contracts'],
+                    ticker_info,
+                    params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True}
+                )
+            else:
+                order = _limit_with_fallback(
+                    exchange, okx_sym, close_side, live_info['contracts'], ticker_info,
+                    params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True},
+                    use_limit=use_limit
+                )
             if _is_order_filled(order):
                 print(f"      ✅ Closed {side} {sym} → {order.get('id', '?')}")
                 actions['closed'].add(key)
@@ -2115,7 +2320,10 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 order_side = 'sell' if side == 'long' else 'buy'
                 params = {'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True}
                 tag = '↓'
-            order = _limit_with_fallback(
+            order = _maker_first_limit(
+                exchange, sym, okx_sym, order_side, contracts_delta,
+                ticker_info, params=params
+            ) if sym in _TIER1_SYMS else _limit_with_fallback(
                 exchange, okx_sym, order_side, contracts_delta, ticker_info,
                 params=params, use_limit=use_limit
             )
@@ -2153,7 +2361,10 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
         try:
             contracts, ticker_info = _convert_usd_to_contracts(
                 exchange, markets, okx_sym, pos['usd'])
-            order = _limit_with_fallback(
+            order = _maker_first_limit(
+                exchange, pos['symbol'], okx_sym, order_side, contracts,
+                ticker_info, params={'tdMode': 'isolated', 'posSide': 'net'}
+            ) if pos['symbol'] in _TIER1_SYMS else _limit_with_fallback(
                 exchange, okx_sym, order_side, contracts, ticker_info,
                 params={'tdMode': 'isolated', 'posSide': 'net'},
                 use_limit=use_limit
@@ -2187,7 +2398,10 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
             try:
                 contracts, ticker_info = _convert_usd_to_contracts(
                     exchange, markets, okx_sym, pos['usd'])
-                order = _limit_with_fallback(
+                order = _maker_first_limit(
+                    exchange, pos['symbol'], okx_sym, order_side, contracts,
+                    ticker_info, params={'tdMode': 'isolated', 'posSide': 'net'}
+                ) if pos['symbol'] in _TIER1_SYMS else _limit_with_fallback(
                     exchange, okx_sym, order_side, contracts, ticker_info,
                     params={'tdMode': 'isolated', 'posSide': 'net'},
                     use_limit=use_limit
@@ -3073,7 +3287,7 @@ def main():
             next_rebal_str = next_time.strftime('%H:%M UTC')
             print(f"\n   ⏰ Next: {next_rebal_str} ({sleep/60:.0f} min)")
 
-            # Sleep in short intervals, refreshing dashboard each tick
+            # Sleep in short intervals, refreshing dashboard + DD check each tick
             DASH_INTERVAL = 60  # 1 minute
             remaining = max(sleep, 60)
             while remaining > 0:
@@ -3083,6 +3297,37 @@ def main():
                                      next_rebal_str, args.rebal_hours)
                 except Exception:
                     pass
+
+                # ── Minute-by-minute DD check ──
+                if exchange and not state.get('stopped', False):
+                    try:
+                        bal = exchange.fetch_balance()
+                        total_usdt = float(bal.get('USDT', {}).get('total', 0))
+                        exch_pos = exchange.fetch_positions()
+                        upnl = sum(float(p.get('unrealizedPnl', 0))
+                                   for p in exch_pos if float(p.get('contracts', 0)) > 0)
+                        live_equity = total_usdt + upnl
+                        peak = state.get('peak', args.capital)
+                        dd = live_equity / peak - 1 if peak > 0 else 0
+
+                        if dd < risk_cfg['dd_stop']:
+                            state['stopped'] = True
+                            state['equity'] = live_equity
+                            print(f"\n   🚨 INTRA-CYCLE DD STOP: equity={live_equity:.2f}, "
+                                  f"dd={dd*100:.1f}% (limit {risk_cfg['dd_stop']*100:.0f}%)")
+                            print(f"   🛑 Emergency close all positions...")
+                            close_all(exchange)
+                            save_state(state, state_path)
+                            if bot.enabled:
+                                try:
+                                    bot.alert_error(
+                                        f"DD STOP: eq=${live_equity:.0f}, dd={dd*100:.1f}%",
+                                        context="intra_cycle_dd")
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        pass  # don't break monitoring loop for DD check errors
+
                 chunk = min(DASH_INTERVAL, remaining)
                 time.sleep(chunk)
                 remaining -= chunk

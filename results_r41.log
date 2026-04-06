@@ -1,0 +1,88 @@
+================================================================================
+R41 — CONSOLIDATION RUN
+================================================================================
+Canonical execution config:
+{'n_long': 6, 'n_short': 3, 'rebal_hours': 12, 'trend_cutoff': 0.9, 'dyn_threshold': 0.7, 'ema_alpha': 0.5, 'hysteresis': 3}
+R35a features: ['ret_dispersion_12h', 'cs_rank_ma_5', 'oi_chg_12h_cs', 'taker_cvd_12h_cs', 'cum_funding_24h_cs']
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 123 cols
+
+[2] Training model matrix sequentially...
+
+  Training A_28f (28f, new_vs_28f=0)...
+  Training: A_28f, 28f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0323
+    W2/s0: train=1,484,524, test=85,569, IC=0.0108
+    W3/s0: train=1,628,167, test=89,343, IC=0.0515
+
+  Training A_28f+r35a (33f, new_vs_28f=5)...
+  Training: A_28f+r35a, 33f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0645
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0375
+    W3/s0: train=1,628,167, test=89,343, IC=0.0327
+
+  Training D_30f (30f, new_vs_28f=2)...
+  Training: D_30f, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0417
+    W2/s0: train=1,484,524, test=85,569, IC=0.0170
+    W3/s0: train=1,628,167, test=89,343, IC=0.0529
+
+  Training D_30f+r35a (35f, new_vs_28f=7)...
+  Training: D_30f+r35a, 35f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0641
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0411
+    W3/s0: train=1,628,167, test=89,343, IC=0.0529
+
+[3] Building simple blend...
+
+[4] Evaluating canonical matrix...
+  A_28f...
+  A_28f+liq70 + liq70...
+  A_28f+r35a...
+  A_28f+r35a+liq70 + liq70...
+  D_30f...
+  D_30f+liq70 + liq70...
+  D_30f+r35a...
+  D_30f+r35a+liq70 + liq70...
+  blend_r35a_d30f...
+  blend_r35a_d30f+liq70 + liq70...
+
+[5] Best configs
+  W2:
+          config  sharpe  delta_vs_baseline  cost_pct  avg_turnover
+      A_28f+r35a    3.03               2.82      7.28           4.9
+           D_30f    1.80               1.59      5.66           3.5
+     D_30f+liq70    1.62               1.41      3.73           1.3
+ blend_r35a_d30f    1.54               1.33      6.16           4.0
+A_28f+r35a+liq70    1.49               1.28      4.25           1.6
+     A_28f+liq70    1.47               1.26      3.86           1.4
+  W3:
+               config  sharpe  delta_vs_baseline  cost_pct  avg_turnover
+          A_28f+liq70    2.81               0.46      4.04           1.7
+blend_r35a_d30f+liq70    2.49               0.14      3.94           1.6
+                A_28f    2.35               0.00      5.73           4.1
+     A_28f+r35a+liq70    2.35               0.00      3.82           1.6
+                D_30f    2.32              -0.03      5.37           3.7
+      blend_r35a_d30f    2.10              -0.25      5.07           3.5
+  ALL:
+          config  sharpe  delta_vs_baseline  cost_pct  avg_turnover
+           A_28f    0.74               0.00     18.40           4.2
+ blend_r35a_d30f    0.70              -0.04     17.37           3.9
+      A_28f+r35a    0.64              -0.10     18.56           4.3
+      D_30f+r35a    0.44              -0.30     18.23           4.2
+           D_30f    0.31              -0.43     16.97           3.8
+D_30f+r35a+liq70    0.23              -0.51     12.23           1.6
+
+[6] Saved artifacts
+  Summary CSV: results_r41_summary.csv

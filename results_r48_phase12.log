@@ -1,0 +1,145 @@
+================================================================================
+R48 Phase 1+2 — TAKER DERIVATIVES + RESIDUALIZED LIQUIDATIONS
+================================================================================
+
+[1] Loading CoinGlass daily data ...
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+
+[2] Loading research frame ...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Base frame: 1,826,014 rows × 123 cols
+
+[3] Merging CG features ...
+  CG features: 9 per-sym + 3 mkt
+
+======================================================================
+  Phase 1 — Taker Imbalance Derivatives
+======================================================================
+
+  Adding derivative features ...
+    cg_taker_imb_ma3: 67.6% non-null
+    cg_taker_imb_delta: 67.6% non-null
+    cg_taker_imb_cs_demean: 67.6% non-null
+
+  IC Scan on derivatives ...
+
+  Feature                         mean_IC   |IC|    ICIR
+  ────────────────────────────── ──────── ────── ───────
+  cg_taker_imb_ma3                -0.031 0.031  -0.31
+  cg_taker_imb_cs_demean          -0.010 0.010  -0.28
+  cg_taker_imb_delta              -0.004 0.004  -0.08
+
+  WF Ablation (champion_31f + derivative) ...
+
+  [baseline] champion_31f ...
+  Training: champion_31f, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+    W1=+0.60  W2=+2.86  W3=+2.03  ALL=+1.31  cost=19.2%  
+
+  [cg_taker_imb_ma3] ...
+  Training: +cg_taker_imb_ma3, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0751
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0489
+    W3/s0: train=1,628,167, test=89,343, IC=0.0378
+    W1=-0.50  W2=+3.37  W3=+3.13  ALL=+0.94  cost=19.0%  Δ-0.37
+
+  [cg_taker_imb_delta] ...
+  Training: +cg_taker_imb_delta, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0719
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0589
+    W3/s0: train=1,628,167, test=89,343, IC=0.0247
+    W1=+1.09  W2=+1.04  W3=+2.76  ALL=+1.23  cost=20.7%  Δ-0.08
+
+  [cg_taker_imb_cs_demean] ...
+  Training: +cg_taker_imb_cs_demean, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0690
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0478
+    W3/s0: train=1,628,167, test=89,343, IC=0.0340
+    W1=-0.45  W2=+2.68  W3=+3.00  ALL=+0.73  cost=19.2%  Δ-0.58
+
+  Phase 1 Summary:
+                 config  W1_sh  W2_sh  W3_sh  ALL_sh  ALL_cost
+           champion_31f   0.60   2.86   2.03    1.31     19.16
+    +cg_taker_imb_delta   1.09   1.04   2.76    1.23     20.71
+      +cg_taker_imb_ma3  -0.50   3.37   3.13    0.94     19.01
++cg_taker_imb_cs_demean  -0.45   2.68   3.00    0.73     19.21
+  → Saved results_r48_phase1_summary.csv
+
+======================================================================
+  Phase 2 — Residualized Liquidations
+======================================================================
+
+  Computing residualized features ...
+    cg_liq_imb_resid_bin: 67.6% non-null
+    Computing rolling regression residual (slow) ...
+    cg_liq_imb_resid_roll: 67.5% non-null
+    mkt_cg_liq_imb_resid: 67.6% non-null
+
+  IC Scan on residualized features ...
+
+  Feature                         mean_IC   |IC|    ICIR
+  ────────────────────────────── ──────── ────── ───────
+  cg_liq_imb_resid_bin            +0.060 0.060  +0.48
+  mkt_cg_liq_imb_resid            +0.059 0.059  +0.33
+  cg_liq_imb_resid_roll           -0.002 0.004  -0.02
+
+  WF Ablation (champion_31f + residualized) ...
+
+  [baseline] champion_31f ...
+  Training: champion_31f, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+    W1=+0.60  W2=+2.86  W3=+2.03  ALL=+1.31  cost=19.2%  
+
+  [cg_liq_imb_resid_bin] ...
+  Training: +cg_liq_imb_resid_bin, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0696
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0491
+    W3/s0: train=1,628,167, test=89,343, IC=0.0295
+    W1=-0.67  W2=+2.69  W3=+1.37  ALL=+0.71  cost=19.2%  Δ-0.60
+
+  [cg_liq_imb_resid_roll] ...
+  Training: +cg_liq_imb_resid_roll, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0742
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0492
+    W3/s0: train=1,628,167, test=89,343, IC=0.0319
+    W1=-0.72  W2=+2.37  W3=+1.90  ALL=+0.61  cost=19.3%  Δ-0.70
+
+  [mkt_cg_liq_imb_resid] ...
+  Training: +mkt_cg_liq_imb_resid, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0274
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0588
+    W3/s0: train=1,628,167, test=89,343, IC=-0.0009
+    W1=-0.94  W2=+2.33  W3=+1.89  ALL=+0.13  cost=19.4%  Δ-1.18
+
+  Phase 2 Summary:
+                config  W1_sh  W2_sh  W3_sh  ALL_sh  ALL_cost
+          champion_31f   0.60   2.86   2.03    1.31     19.16
+ +cg_liq_imb_resid_bin  -0.67   2.69   1.37    0.71     19.18
++cg_liq_imb_resid_roll  -0.72   2.37   1.90    0.61     19.30
+ +mkt_cg_liq_imb_resid  -0.94   2.33   1.89    0.13     19.35
+  → Saved results_r48_phase2_summary.csv
+
+================================================================================
+R48 Phase 1+2 — COMPLETE
+================================================================================
+
+  Phase 1: no improvement over baseline
+  Phase 2: no improvement over baseline

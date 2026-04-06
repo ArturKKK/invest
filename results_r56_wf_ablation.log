@@ -1,0 +1,224 @@
+======================================================================
+  R56 — WF Ablation: Feature Substitution Experiments
+======================================================================
+
+[LOAD] Building model frame with R55 features...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  Loading CG OI...
+    CG OI features: 51,360 rows, 35 symbols
+  Loading CG Funding...
+    CG FR features: 49,043 rows, 33 symbols
+  Loading CG Basis...
+    CG Basis features: 42,039 rows, 27 symbols
+  Loading CG Position Ratio...
+    CG PosRatio features: 49,955 rows, 33 symbols
+
+  Loading Binance hourly OI...
+    Binance daily OI: 75,357 rows, 50 symbols
+  Loading Binance 8h funding...
+    Binance daily FR: 96,698 rows, 50 symbols
+
+  Building disagreement features...
+    OI disagreement: 49,416 rows
+    FR disagreement: 48,218 rows
+
+  ══ R55 feature table: 53,111 rows, 35 syms, 12 features ══
+  Features: ['cg_date', 'cg_oi_chg_1d', 'cg_oi_range', 'cg_fr_close', 'cg_fr_range', 'cg_basis_close', 'cg_basis_chg', 'cg_basis_z_60d', 'cg_pos_ls_ratio', 'cg_pos_ls_z_60d', 'cg_oi_disagreement', 'cg_fr_disagreement']
+  Merged 11 R55 features into model frame (1,826,014 rows)
+  NaN counts (native handling): {'cg_oi_chg_1d': np.int64(641866), 'cg_oi_range': np.int64(641866), 'cg_fr_close': np.int64(672925), 'cg_fr_range': np.int64(672925), 'cg_basis_close': np.int64(837318), 'cg_basis_chg': np.int64(837318), 'cg_basis_z_60d': np.int64(841206), 'cg_pos_ls_ratio': np.int64(651831), 'cg_pos_ls_z_60d': np.int64(656583)}
+
+  Model frame: 1,826,014 rows, 35 symbols
+  Champion features: 31 (31f = 30 base + cg_taker_imb)
+  R55 features available: ['cg_oi_chg_1d', 'cg_oi_range', 'cg_fr_close', 'cg_fr_range', 'cg_basis_close', 'cg_basis_chg', 'cg_basis_z_60d', 'cg_pos_ls_ratio', 'cg_pos_ls_z_60d', 'cg_oi_disagreement', 'cg_fr_disagreement']
+  Basis coverage: 27/35 symbols
+
+======================================================================
+  PHASE 0 — Feature Importance (LGB gain)
+======================================================================
+
+  Extracting LGB feature importance (gain)...
+    W1: 1,307,473 train, 2 rounds
+    W2: 1,484,524 train, 13 rounds
+    W3: 1,628,167 train, 94 rounds
+
+  Feature importance (sorted by avg gain):
+window               W1   W2    W3  avg_gain
+feature                                     
+cum_funding_24h     180 6066 50247     18831
+pct_coins_up_12h    543 6492 33491     13509
+mom_z_24h          1623 7729 19273      9542
+ret_24h            1402 5504 17404      8103
+iv_rv_spread        654 4902 16228      7261
+ret_skew_168h       417 2763 15992      6390
+cg_taker_imb        526 1874 14896      5765
+ret_168h            662 2212 14381      5752
+ls_divergence       473 2049 13476      5333
+gk_vol_24h          223 3198 11840      5087
+oi_zscore           523 2597  9127      4082
+atr_14              712 1796  9031      3847
+pct_coins_up_1h     800 1711  8857      3789
+rel_volume_cs       345 1493  9011      3616
+ret_48h             178 1007  7156      2780
+rvol_24h             64 1539  5829      2477
+oi_chg_24h          141  780  6244      2388
+residual_12h        243 1497  4496      2079
+dist_from_high_24h   87  920  5158      2055
+taker_cvd_24h        39  549  5246      1945
+cs_rank_ma_5        216  710  4171      1699
+residual_24h          0  815  3907      1574
+ret_dispersion_12h    0 1100  3412      1504
+taker_cvd_12h         0  163  3411      1191
+rvol_12h             84  387  2950      1141
+oi_chg_12h            0  372  2733      1035
+ret_12h               0  151  1675       608
+hour_sin              0    0   665       222
+dow_cos               0    0     0         0
+dow_sin               0    0     0         0
+hour_cos              0    0     0         0
+
+  3 weakest features: ['dow_cos', 'dow_sin', 'hour_cos']
+  → Will replace: 'dow_cos' in experiment 2.1
+
+======================================================================
+  PHASE 1 — Baselines
+======================================================================
+
+  [1.0] Baseline: Champion 31f on 35 coins (hybrid costs)
+  [baseline_35] Training 31f ensemble (cs_rank_exclude=['ret_dispersion_12h'])...
+  Training: baseline_35, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+  [baseline_35] Evaluating...
+  W1: Sh= 0.98 (gross= 1.41)  Eq=$   109  DD=-51.4%  WM=3/4  Cost=3.5%  Turn=4.7
+  W2: Sh= 3.53 (gross= 4.18)  Eq=$   231  DD=-22.6%  WM=4/4  Cost=3.5%  Turn=4.7
+  W3: Sh= 2.52 (gross= 2.96)  Eq=$   183  DD=-34.1%  WM=5/5  Cost=2.8%  Turn=4.1
+  ALL: Sh= 1.66 (gross= 2.03)  Eq=$   462  DD=-51.4%  Cost=9.8%  Turn=4.4
+
+  [1.1] Coverage test: Champion 31f on 27 coins (basis universe)
+  [baseline_27] Universe: 27 symbols
+  [baseline_27] Training 31f ensemble (cs_rank_exclude=['ret_dispersion_12h'])...
+  Training: baseline_27, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,102,521, test=70,011, IC=0.0496
+    W2/s0: train=1,241,193, test=70,011, IC=-0.0148
+    W3/s0: train=1,358,481, test=73,099, IC=0.0361
+  [baseline_27] Evaluating...
+  W1: Sh=-1.17 (gross=-0.89)  Eq=$    43  DD=-68.5%  WM=1/4  Cost=2.4%  Turn=3.8
+  W2: Sh= 2.26 (gross= 2.75)  Eq=$   162  DD=-29.4%  WM=4/4  Cost=2.7%  Turn=3.9
+  W3: Sh= 1.05 (gross= 1.42)  Eq=$   116  DD=-34.2%  WM=4/5  Cost=2.2%  Turn=3.3
+  ALL: Sh= 0.09 (gross= 0.36)  Eq=$    57  DD=-80.5%  Cost=7.3%  Turn=3.6
+
+  Baseline 35: ALL=+1.66
+  Baseline 27: ALL=+0.09
+  ΔCoverage: 1.57
+  ⚠️  Coverage difference > 0.10 → basis experiments will compare against baseline_27
+
+======================================================================
+  PHASE 2 — Basis Substitution Experiments
+======================================================================
+
+  [2.1] Replace 'dow_cos' → 'cg_basis_z_60d' (31f)
+  [2.1_dow_cos→basis_z] Training 31f ensemble (cs_rank_exclude=['ret_dispersion_12h'])...
+  Training: 2.1_dow_cos→basis_z, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0687
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0521
+    W3/s0: train=1,628,167, test=89,343, IC=0.0435
+  [2.1_dow_cos→basis_z] Evaluating...
+  W1: Sh=-0.35 (gross= 0.06)  Eq=$    63  DD=-50.9%  WM=2/4  Cost=3.4%  Turn=4.6
+  W2: Sh= 2.30 (gross= 2.88)  Eq=$   171  DD=-31.8%  WM=3/4  Cost=3.5%  Turn=4.8
+  W3: Sh= 2.03 (gross= 2.49)  Eq=$   156  DD=-39.3%  WM=3/5  Cost=2.7%  Turn=3.9
+  ALL: Sh= 0.91 (gross= 1.27)  Eq=$   172  DD=-50.9%  Cost=9.4%  Turn=4.4
+
+  [2.2] Replace 'cum_funding_24h' → 'cg_basis_z_60d' (31f)
+  [2.2_funding→basis_z] Training 31f ensemble (cs_rank_exclude=['ret_dispersion_12h'])...
+  Training: 2.2_funding→basis_z, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0639
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0630
+    W3/s0: train=1,628,167, test=89,343, IC=0.0392
+  [2.2_funding→basis_z] Evaluating...
+  W1: Sh=-0.29 (gross= 0.14)  Eq=$    66  DD=-49.1%  WM=1/4  Cost=3.4%  Turn=4.8
+  W2: Sh= 2.30 (gross= 2.88)  Eq=$   167  DD=-23.8%  WM=4/4  Cost=3.3%  Turn=4.5
+  W3: Sh= 1.94 (gross= 2.41)  Eq=$   151  DD=-35.6%  WM=4/5  Cost=2.8%  Turn=3.8
+  ALL: Sh= 0.97 (gross= 1.35)  Eq=$   187  DD=-49.1%  Cost=9.7%  Turn=4.5
+
+======================================================================
+  PHASE 3 — OI/FR Substitution Experiments (conditional)
+======================================================================
+  Phase 2 had no winner → running Phase 3 (FR/OI substitutions)
+
+  [3.1] Replace 'cum_funding_24h' → 'cg_fr_close'
+  [3.1_funding→fr_close] Training 31f ensemble (cs_rank_exclude=['ret_dispersion_12h'])...
+  Training: 3.1_funding→fr_close, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0794
+    W2/s0: train=1,484,524, test=85,569, IC=0.0043
+    W3/s0: train=1,628,167, test=89,343, IC=0.0513
+  [3.1_funding→fr_close] Evaluating...
+  W1: Sh= 0.35 (gross= 0.77)  Eq=$    84  DD=-48.0%  WM=2/4  Cost=3.5%  Turn=5.0
+  W2: Sh= 2.67 (gross= 3.29)  Eq=$   191  DD=-23.9%  WM=3/4  Cost=3.7%  Turn=5.0
+  W3: Sh= 0.46 (gross= 0.97)  Eq=$    97  DD=-47.9%  WM=2/5  Cost=3.1%  Turn=4.7
+  ALL: Sh= 1.36 (gross= 1.75)  Eq=$   309  DD=-49.5%  Cost=10.2%  Turn=5.0
+
+  [3.2] Replace 'cum_funding_24h' → 'cg_fr_disagreement'
+  [3.2_funding→fr_disagree] Training 31f ensemble (cs_rank_exclude=['ret_dispersion_12h'])...
+  Training: 3.2_funding→fr_disagree, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0668
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0584
+    W3/s0: train=1,628,167, test=89,343, IC=0.0413
+  [3.2_funding→fr_disagree] Evaluating...
+  W1: Sh=-0.45 (gross= 0.00)  Eq=$    63  DD=-55.7%  WM=2/4  Cost=3.5%  Turn=4.8
+  W2: Sh= 2.16 (gross= 2.69)  Eq=$   167  DD=-45.5%  WM=3/4  Cost=3.4%  Turn=4.5
+  W3: Sh= 1.45 (gross= 1.94)  Eq=$   131  DD=-38.6%  WM=4/5  Cost=2.8%  Turn=3.8
+  ALL: Sh= 0.75 (gross= 1.13)  Eq=$   138  DD=-59.9%  Cost=9.9%  Turn=4.5
+
+  [3.3] Replace 'oi_zscore' → 'cg_oi_chg_1d'
+  [3.3_oizscore→oi_chg] Training 31f ensemble (cs_rank_exclude=['ret_dispersion_12h'])...
+  Training: 3.3_oizscore→oi_chg, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0600
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0450
+    W3/s0: train=1,628,167, test=89,343, IC=0.0373
+  [3.3_oizscore→oi_chg] Evaluating...
+  W1: Sh=-1.13 (gross=-0.75)  Eq=$    42  DD=-67.6%  WM=2/4  Cost=3.3%  Turn=4.4
+  W2: Sh= 2.93 (gross= 3.50)  Eq=$   209  DD=-25.1%  WM=4/4  Cost=3.5%  Turn=4.6
+  W3: Sh= 2.60 (gross= 3.05)  Eq=$   186  DD=-34.2%  WM=3/5  Cost=2.8%  Turn=4.1
+  ALL: Sh= 0.32 (gross= 0.67)  Eq=$    75  DD=-73.9%  Cost=9.7%  Turn=4.4
+
+======================================================================
+  PHASE 4 — Double Substitution (conditional)
+======================================================================
+  No winners from Phase 2/3, skipping double swap
+
+======================================================================
+  R56 RESULTS TABLE
+======================================================================
+
+| # | Experiment | ALL | W1 | W2 | W3 | Cost% | ΔSharpe | Decision |
+|---|-----------|-----|----|----|----|----|---------|----------|
+| baseline_35 | Baseline 35-coin | +1.66 | +0.98 | +3.53 | +2.52 | 9.8% | — | baseline |
+| baseline_27 | Baseline 27-coin | +0.09 | -1.17 | +2.26 | +1.05 | 7.3% | — | baseline |
+| 2.1 | weakest→basis_z | +0.91 | -0.35 | +2.30 | +2.03 | 9.4% | -0.75 | 🚫 VETO(W2) |
+| 2.2 | cum_funding→basis_z | +0.97 | -0.29 | +2.30 | +1.94 | 9.7% | -0.69 | 🚫 VETO(W2) |
+| 3.1 | cum_funding→cg_fr_close | +1.36 | +0.35 | +2.67 | +0.46 | 10.2% | -0.30 | 🚫 VETO(W2) |
+| 3.2 | cum_funding→fr_disagree | +0.75 | -0.45 | +2.16 | +1.45 | 9.9% | -0.91 | 🚫 VETO(W2) |
+| 3.3 | oi_zscore→cg_oi_chg_1d | +0.32 | -1.13 | +2.93 | +2.60 | 9.7% | -1.34 | 🚫 VETO(W2) |
+
+  Baseline ALL Sharpe: 1.66
+  No winners (all ΔSharpe ≤ 0.05)
+
+======================================================================
+  R56 COMPLETE
+======================================================================

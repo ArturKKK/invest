@@ -1,0 +1,122 @@
+
+================================================================================
+R39.1 — DEAD DATA INSPECTION
+================================================================================
+
+================================================================================
+stablecoin_supply.parquet
+================================================================================
+shape: (2285, 16)
+columns (16): ['date', 'USDT_supply', 'USDT_mcap', 'USDC_supply', 'USDC_mcap', 'DAI_supply', 'DAI_mcap', 'total_stable_supply', 'USDT_supply_chg7d', 'USDT_supply_chg30d', 'USDC_supply_chg7d', 'USDC_supply_chg30d', 'DAI_supply_chg7d', 'DAI_supply_chg30d', 'total_stable_supply_chg7d', 'total_stable_supply_chg30d']
+time column: date
+date range: 2020-01-01 00:00:00 -> 2026-04-03 00:00:00
+median resolution: 24.0h
+top null ratios:
+  USDT_supply_chg30d             1.31%
+  USDC_supply_chg30d             1.31%
+  DAI_supply_chg30d              1.31%
+  total_stable_supply_chg30d     1.31%
+  USDT_supply_chg7d              0.31%
+  USDC_supply_chg7d              0.31%
+  DAI_supply_chg7d               0.31%
+  total_stable_supply_chg7d      0.31%
+  date                           0.00%
+  USDT_supply                    0.00%
+  USDT_mcap                      0.00%
+  USDC_supply                    0.00%
+top numeric columns by non-null count:
+  USDT_supply                      2285
+  USDT_mcap                        2285
+  USDC_supply                      2285
+  USDC_mcap                        2285
+  DAI_supply                       2285
+  DAI_mcap                         2285
+  total_stable_supply              2285
+  USDT_supply_chg7d                2278
+  USDC_supply_chg7d                2278
+  DAI_supply_chg7d                 2278
+candidate features for next stage:
+  - total_stable_supply_chg7d / chg30d
+  - USDT_supply_chg7d, USDC_supply_chg7d
+  - stablecoin mcap breadth / dominance if total crypto cap available
+
+================================================================================
+defi_tvl_daily.parquet
+================================================================================
+shape: (39978, 8)
+columns (8): ['date', 'symbol', 'chain_tvl_usd', 'protocol_tvl_usd', 'chain_tvl_usd_chg7d', 'chain_tvl_usd_chg30d', 'protocol_tvl_usd_chg7d', 'protocol_tvl_usd_chg30d']
+time column: date
+date range: 2020-01-01 00:00:00+00:00 -> 2026-04-05 00:00:00+00:00
+median resolution: 24.0h
+symbols (20): ['AAVE/USDT', 'ADA/USDT', 'ALGO/USDT', 'ARB/USDT', 'AVAX/USDT', 'BNB/USDT', 'BTC/USDT', 'COMP/USDT', 'CRV/USDT', 'ETH/USDT', 'FTM/USDT', 'LDO/USDT', 'MATIC/USDT', 'MKR/USDT', 'NEAR/USDT'] ...
+top null ratios:
+  protocol_tvl_usd_chg30d       51.08%
+  protocol_tvl_usd_chg7d        50.79%
+  protocol_tvl_usd              50.70%
+  chain_tvl_usd_chg30d          50.05%
+  chain_tvl_usd_chg7d           49.47%
+  chain_tvl_usd                 49.30%
+  date                           0.00%
+  symbol                         0.00%
+top numeric columns by non-null count:
+  chain_tvl_usd                   20269
+  chain_tvl_usd_chg7d             20199
+  chain_tvl_usd_chg30d            19969
+  protocol_tvl_usd                19709
+  protocol_tvl_usd_chg7d          19674
+  protocol_tvl_usd_chg30d         19559
+candidate features for next stage:
+  - chain_tvl_usd_chg7d / chg30d
+  - protocol_tvl_usd_chg7d / chg30d
+  - cross-chain TVL breadth by timestamp
+
+================================================================================
+onchain_daily.parquet
+================================================================================
+shape: (20780, 21)
+columns (21): ['date', 'symbol', 'AdrActCnt', 'TxCnt', 'CapMrktCurUSD', 'AdrBalCnt', 'BlkCnt', 'SplyCur', 'HashRate', 'FlowInExUSD', 'FlowOutExUSD', 'AdrActCnt_chg7d', 'AdrActCnt_chg30d', 'TxCnt_chg7d', 'TxCnt_chg30d', 'CapMrktCurUSD_chg7d', 'CapMrktCurUSD_chg30d', 'AdrBalCnt_chg7d', 'AdrBalCnt_chg30d', 'FlowNetExUSD', 'FlowNetEx7d']
+time column: date
+date range: 2020-01-01 00:00:00 -> 2026-04-03 00:00:00
+median resolution: 24.0h
+symbols (10): ['AAVE/USDT', 'ADA/USDT', 'BTC/USDT', 'DOGE/USDT', 'DOT/USDT', 'ETH/USDT', 'LINK/USDT', 'LTC/USDT', 'UNI/USDT', 'XRP/USDT']
+top null ratios:
+  FlowOutExUSD                  78.01%
+  FlowInExUSD                   78.01%
+  FlowNetExUSD                  78.01%
+  FlowNetEx7d                   78.01%
+  HashRate                      62.26%
+  BlkCnt                        34.02%
+  CapMrktCurUSD_chg30d           1.95%
+  AdrBalCnt_chg30d               1.48%
+  AdrActCnt_chg30d               1.44%
+  TxCnt_chg30d                   1.44%
+  CapMrktCurUSD_chg7d            0.85%
+  CapMrktCurUSD                  0.51%
+top numeric columns by non-null count:
+  AdrActCnt                       20780
+  TxCnt                           20780
+  SplyCur                         20772
+  AdrBalCnt                       20772
+  TxCnt_chg7d                     20709
+  AdrActCnt_chg7d                 20709
+  AdrBalCnt_chg7d                 20702
+  CapMrktCurUSD                   20674
+  CapMrktCurUSD_chg7d             20604
+  AdrActCnt_chg30d                20480
+candidate features for next stage:
+  - AdrActCnt_chg7d / chg30d
+  - TxCnt_chg7d / chg30d
+  - FlowNetExUSD / FlowNetEx7d for BTC, ETH
+
+================================================================================
+SUMMARY
+================================================================================
+                     file status  rows  cols time_col  resolution_h  symbols
+stablecoin_supply.parquet     ok  2285    16     date          24.0        0
+   defi_tvl_daily.parquet     ok 39978     8     date          24.0       20
+    onchain_daily.parquet     ok 20780    21     date          24.0       10
+
+Verdict:
+- stablecoin_supply.parquet: market-level regime candidate, cheap to test
+- onchain_daily.parquet: likely usable only for subset of symbols; verify coverage before production use
+- defi_tvl_daily.parquet: mostly regime/breadth use-case, likely not direct per-coin alpha

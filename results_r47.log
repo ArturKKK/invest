@@ -1,0 +1,172 @@
+================================================================================
+R47 — COINGLASS FEATURE RESEARCH
+================================================================================
+
+[1] Loading CoinGlass daily data ...
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+
+[2] Loading research frame (OHLCV + FEAT_30 + R35) ...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Base frame: 1,826,014 rows × 123 cols
+
+[3] Merging CG features (shift-1d lookahead-safe) ...
+  Per-symbol CG features: ['cg_liq_total', 'cg_liq_imbalance', 'cg_liq_zscore', 'cg_liq_accel', 'cg_taker_imb', 'cg_taker_imb_z', 'cg_ls_ratio', 'cg_ls_zscore']
+  Market-level CG features (no CS-rank): ['mkt_cg_liq_total', 'mkt_cg_liq_log', 'mkt_cg_liq_imb']
+  CG coverage: 67.6% non-null (first feature)
+
+[4] IC Scan (TRAIN data only, each WF window) ...
+
+  Flag  Feature                       mean_IC   |IC|    ICIR  nWin
+  ───── ──────────────────────────── ──────── ────── ─────── ─────
+  🔥     mkt_cg_liq_imb                +0.0862 0.0862  +0.479     3
+  🔥     cg_liq_imbalance              +0.0627 0.0627  +0.509     3
+  🔥     cg_taker_imb                  -0.0323 0.0323  -0.324     3
+  🔥     mkt_cg_liq_log                +0.0309 0.0309  +0.165     3
+  🔥     mkt_cg_liq_total              +0.0309 0.0309  +0.165     3
+  🔥     cg_taker_imb_z                -0.0309 0.0309  -0.292     3
+  ✅     cg_liq_zscore                 +0.0190 0.0190  +0.151     3
+  ✅     cg_ls_zscore                  +0.0175 0.0175  +0.207     3
+        cg_liq_total                  +0.0130 0.0130  +0.158     3
+        cg_ls_ratio                   +0.0126 0.0126  +0.217     3
+        cg_liq_accel                  +0.0044 0.0044  +0.030     3
+
+[5] Redundancy check vs FEAT_30 ...
+
+  Flag            new_feat                  old_feat                       corr
+  ─────────────── ───────────────────────── ──────────────────────────── ──────
+  ⚠️ redundant    cg_liq_total              taker_cvd_24h                -0.586
+  ⚠️ redundant    mkt_cg_liq_imb            ret_48h                      -0.570
+  ⚠️ redundant    cg_liq_imbalance          ret_48h                      -0.558
+  ⚠️ redundant    cg_ls_ratio               ls_divergence                -0.538
+  ⚠️ redundant    cg_liq_total              taker_cvd_12h                -0.511
+  ↔️ partial      cg_liq_zscore             iv_rv_spread                 -0.430
+  ↔️ partial      cg_liq_zscore             gk_vol_24h                   +0.417
+  ↔️ partial      cg_liq_zscore             rvol_24h                     +0.403
+  ↔️ partial      cg_taker_imb_z            ret_48h                      +0.395
+  ↔️ partial      cg_taker_imb              ret_48h                      +0.388
+  ↔️ partial      cg_liq_zscore             atr_14                       +0.379
+  ↔️ partial      mkt_cg_liq_imb            oi_zscore                    -0.350
+  ↔️ partial      cg_liq_imbalance          oi_zscore                    -0.335
+  ↔️ partial      mkt_cg_liq_imb            ret_24h                      -0.333
+  ↔️ partial      mkt_cg_liq_imb            mom_z_24h                    -0.330
+  ↔️ partial      cg_liq_imbalance          ret_168h                     -0.325
+  ↔️ partial      cg_liq_imbalance          mom_z_24h                    -0.311
+  ↔️ partial      cg_liq_imbalance          ret_24h                      -0.311
+  ↔️ partial      cg_liq_zscore             rvol_12h                     +0.306
+
+[6] Event study: top-1% liquidation spikes ...
+
+  Event study: top-1% liq_intensity (12355 events, threshold=1.4e+03)
+
+  Sign                   n   fwd_ret_12h_mean  fwd_ret_12h_med  fwd_ret_12h_std
+  ────────────────── ───── ────────────────── ──────────────── ────────────────
+  long_liq_dom        7495           +0.0000          +0.0003           0.0171  (t=+0.10)
+  short_liq_dom       4848           +0.0008          +0.0005           0.0134  (t=+4.16)
+  rest_of_univ       1221460           -0.0001          -0.0005           0.0362
+
+[7] Walk-Forward ablation (6 candidates): ['cg_taker_imb', 'mkt_cg_liq_log', 'mkt_cg_liq_total', 'cg_taker_imb_z', 'cg_liq_zscore', 'cg_ls_zscore']
+
+  [baseline] Champion_30f ...
+  Training: champion_30f, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0490
+    W3/s0: train=1,628,167, test=89,343, IC=0.0372
+    W1=+0.01  W2=+3.22  W3=+2.50  ALL=+1.13  cost=19.2%  
+
+  [cg_taker_imb] ...
+  Training: champion+cg_taker_imb, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+    W1=+0.60  W2=+2.86  W3=+2.03  ALL=+1.31  cost=19.2%  
+
+  [mkt_cg_liq_log] ...
+  Training: champion+mkt_cg_liq_log, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0344
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0178
+    W3/s0: train=1,628,167, test=89,343, IC=-0.0374
+    W1=-1.50  W2=-0.56  W3=+1.77  ALL=+0.07  cost=20.9%  
+
+  [mkt_cg_liq_total] ...
+  Training: champion+mkt_cg_liq_total, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0344
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0178
+    W3/s0: train=1,628,167, test=89,343, IC=-0.0374
+    W1=-1.50  W2=-0.56  W3=+1.77  ALL=+0.07  cost=20.9%  
+
+  [cg_taker_imb_z] ...
+  Training: champion+cg_taker_imb_z, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0657
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0518
+    W3/s0: train=1,628,167, test=89,343, IC=0.0427
+    W1=-0.72  W2=+3.06  W3=+2.97  ALL=+0.28  cost=19.3%  
+
+  [cg_liq_zscore] ...
+  Training: champion+cg_liq_zscore, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0626
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0451
+    W3/s0: train=1,628,167, test=89,343, IC=0.0396
+    W1=-1.49  W2=+2.79  W3=+2.33  ALL=-0.04  cost=19.2%  
+
+  [cg_ls_zscore] ...
+  Training: champion+cg_ls_zscore, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0586
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0447
+    W3/s0: train=1,628,167, test=89,343, IC=0.0400
+    W1=-0.91  W2=+4.03  W3=+2.17  ALL=+0.54  cost=19.1%  
+
+  [mkt_cg_liq_log + mkt_cg_liq_total] ...
+  Training: champion+t_cg_liq_log+cg_liq_total, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0333
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0534
+    W3/s0: train=1,628,167, test=89,343, IC=0.0034
+    W1=-0.60  W2=+2.33  W3=+1.76  ALL=+1.03  cost=20.9%  
+
+  [mkt_cg_liq_log + cg_liq_zscore] ...
+  Training: champion+t_cg_liq_log+g_liq_zscore, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0327
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0702
+    W3/s0: train=1,628,167, test=89,343, IC=0.0034
+    W1=-0.25  W2=+0.05  W3=+0.65  ALL=+0.79  cost=19.9%  
+
+  [mkt_cg_liq_total + cg_liq_zscore] ...
+  Training: champion+cg_liq_total+g_liq_zscore, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0327
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0702
+    W3/s0: train=1,628,167, test=89,343, IC=0.0034
+    W1=-0.25  W2=+0.05  W3=+0.65  ALL=+0.79  cost=19.9%  
+
+[8] Results saved → /Users/a.s.tabakov/Developer/invest/results_r47_summary.csv
+
+================================================================================
+  TOP RESULTS (sorted by ALL Sharpe)
+================================================================================
+                            config  W1_sh  W2_sh  W3_sh  ALL_sh  delta_all  ALL_cost
+             champion+cg_taker_imb   0.60   2.86   2.03    1.31       0.18     19.16
+                      champion_30f   0.01   3.22   2.50    1.13       0.00     19.22
+champion+t_cg_liq_log+cg_liq_total  -0.60   2.33   1.76    1.03      -0.10     20.85
+champion+t_cg_liq_log+g_liq_zscore  -0.25   0.05   0.65    0.79      -0.34     19.88
+champion+cg_liq_total+g_liq_zscore  -0.25   0.05   0.65    0.79      -0.34     19.88
+             champion+cg_ls_zscore  -0.91   4.03   2.17    0.54      -0.59     19.15
+           champion+cg_taker_imb_z  -0.72   3.06   2.97    0.28      -0.85     19.26
+           champion+mkt_cg_liq_log  -1.50  -0.56   1.77    0.07      -1.06     20.92
+         champion+mkt_cg_liq_total  -1.50  -0.56   1.77    0.07      -1.06     20.92
+            champion+cg_liq_zscore  -1.49   2.79   2.33   -0.04      -1.17     19.24
+
+  Baseline ALL Sharpe:  1.13
+  Best ALL Sharpe:      1.31  (champion+cg_taker_imb)
+  🔥 IMPROVEMENT: +0.18 → NEW CHAMPION CANDIDATE

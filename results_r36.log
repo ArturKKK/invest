@@ -1,0 +1,84 @@
+================================================================================
+R36 — REGIME GATING
+================================================================================
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 111 cols
+
+[2] Training experts...
+  Training: A_28f, 28f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0328
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0010
+    W3/s0: train=1,628,167, test=89,343, IC=0.0515
+  Training: D_30f, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0460
+    W2/s0: train=1,484,524, test=85,569, IC=0.0103
+    W3/s0: train=1,628,167, test=89,343, IC=0.0499
+  Training: A_28f+stable_flow4, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=-0.0251
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0901
+    W3/s0: train=1,628,167, test=89,343, IC=0.0407
+
+[3] Evaluating standalone experts...
+  W1: Sh=-1.18 (gross=-0.42)  Eq=$    45  DD=-64.6%  WM=1/4  Cost=6.2%  Turn=4.4
+  W2: Sh= 0.54 (gross= 1.53)  Eq=$    98  DD=-61.6%  WM=3/4  Cost=6.7%  Turn=4.4
+  W3: Sh= 1.95 (gross= 2.87)  Eq=$   153  DD=-29.1%  WM=4/5  Cost=5.6%  Turn=3.9
+  ALL: Sh= 0.32 (gross= 1.02)  Eq=$    77  DD=-76.4%  Cost=18.8%  Turn=4.3
+  W1: Sh=-0.47 (gross= 0.18)  Eq=$    55  DD=-66.2%  WM=3/4  Cost=5.9%  Turn=4.1
+  W2: Sh= 1.06 (gross= 1.85)  Eq=$   116  DD=-55.4%  WM=3/4  Cost=5.4%  Turn=3.3
+  W3: Sh= 2.84 (gross= 3.76)  Eq=$   197  DD=-28.8%  WM=5/5  Cost=5.4%  Turn=3.8
+  ALL: Sh= 0.92 (gross= 1.55)  Eq=$   173  DD=-66.2%  Cost=16.9%  Turn=3.8
+  W1: Sh=-0.61 (gross= 0.28)  Eq=$    54  DD=-57.2%  WM=2/4  Cost=7.7%  Turn=5.7
+  W2: Sh= 2.76 (gross= 3.83)  Eq=$   195  DD=-34.3%  WM=4/4  Cost=6.3%  Turn=4.1
+  W3: Sh= 1.97 (gross= 3.00)  Eq=$   148  DD=-34.1%  WM=3/5  Cost=5.4%  Turn=3.7
+  ALL: Sh= 0.37 (gross= 1.08)  Eq=$    83  DD=-65.8%  Cost=19.0%  Turn=4.4
+
+[4] Evaluating gated blends...
+  W1: Sh=-1.13 (gross=-0.40)  Eq=$    43  DD=-68.7%  WM=1/4  Cost=6.3%  Turn=4.5
+  W2: Sh= 0.49 (gross= 1.49)  Eq=$    97  DD=-62.2%  WM=3/4  Cost=6.7%  Turn=4.4
+  W3: Sh= 2.15 (gross= 3.09)  Eq=$   160  DD=-26.6%  WM=5/5  Cost=5.5%  Turn=3.9
+  ALL: Sh= 0.27 (gross= 0.95)  Eq=$    70  DD=-76.2%  Cost=18.7%  Turn=4.3
+  W1: Sh=-1.33 (gross=-0.48)  Eq=$    43  DD=-63.5%  WM=2/4  Cost=6.8%  Turn=5.0
+  W2: Sh= 3.72 (gross= 4.90)  Eq=$   251  DD=-23.1%  WM=4/4  Cost=6.7%  Turn=4.4
+  W3: Sh= 2.06 (gross= 3.00)  Eq=$   154  DD=-37.6%  WM=3/5  Cost=5.2%  Turn=3.6
+  ALL: Sh= 0.29 (gross= 1.02)  Eq=$    77  DD=-66.6%  Cost=18.8%  Turn=4.3
+  W1: Sh=-1.90 (gross=-1.08)  Eq=$    30  DD=-73.8%  WM=1/4  Cost=7.1%  Turn=5.2
+  W2: Sh= 3.17 (gross= 4.22)  Eq=$   220  DD=-33.9%  WM=4/4  Cost=6.3%  Turn=4.1
+  W3: Sh= 2.24 (gross= 3.23)  Eq=$   161  DD=-35.2%  WM=4/5  Cost=5.4%  Turn=3.7
+  ALL: Sh= 0.15 (gross= 0.87)  Eq=$    63  DD=-79.5%  Cost=18.8%  Turn=4.3
+
+[5] Best gating configs
+  W2:
+                  config  sharpe  cost_pct  avg_turnover
+gate_stable_base_vs_flow    3.72      6.71           4.4
+         gate_tri_regime    3.17      6.29           4.1
+      expert_stable_flow    2.76      6.34           4.1
+        expert_stability    1.06      5.40           3.3
+             expert_base    0.54      6.71           4.4
+  W3:
+                     config  sharpe  cost_pct  avg_turnover
+           expert_stability    2.84      5.43           3.8
+            gate_tri_regime    2.24      5.38           3.7
+gate_rvol_base_vs_stability    2.15      5.55           3.9
+   gate_stable_base_vs_flow    2.06      5.23           3.6
+         expert_stable_flow    1.97      5.37           3.7
+  ALL:
+                     config  sharpe  cost_pct  avg_turnover
+           expert_stability    0.92     16.88           3.8
+         expert_stable_flow    0.37     19.01           4.4
+                expert_base    0.32     18.78           4.3
+   gate_stable_base_vs_flow    0.29     18.77           4.3
+gate_rvol_base_vs_stability    0.27     18.72           4.3
+
+[6] Saved artifacts
+  Summary CSV: results_r36_gating_summary.csv

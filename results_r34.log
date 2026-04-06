@@ -1,0 +1,194 @@
+================================================================================
+R34 — W2 ATTRIBUTION (baseline)
+================================================================================
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 105 cols
+
+[2] Training ensemble predictions...
+  Training: A_28f, 28f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0320
+    W2/s0: train=1,484,524, test=85,569, IC=0.0085
+    W3/s0: train=1,628,167, test=89,343, IC=0.0523
+
+[3] Building W2 frame...
+  W2 rows: 85,569
+
+[4] Conditional IC report...
+
+  Top mean timestamp IC by btc_rvol_24h bin:
+    low:
+      dist_from_high_24h     mean_ts_ic=+0.0774 pooled_ic=+0.0271
+      gk_vol_24h             mean_ts_ic=+0.0154 pooled_ic=+0.0200
+      atr_14                 mean_ts_ic=+0.0135 pooled_ic=+0.0196
+      ls_divergence          mean_ts_ic=+0.0051 pooled_ic=-0.0016
+      iv_rv_spread           mean_ts_ic=+0.0042 pooled_ic=-0.0146
+    mid:
+      iv_rv_spread           mean_ts_ic=+0.0915 pooled_ic=+0.0392
+      dist_from_high_24h     mean_ts_ic=+0.0304 pooled_ic=+0.0080
+      ls_divergence          mean_ts_ic=+0.0174 pooled_ic=+0.0112
+      oi_chg_24h             mean_ts_ic=-0.0009 pooled_ic=+0.0025
+      oi_chg_12h             mean_ts_ic=-0.0133 pooled_ic=-0.0076
+    high:
+      iv_rv_spread           mean_ts_ic=+0.0505 pooled_ic=+0.0133
+      dist_from_high_24h     mean_ts_ic=+0.0283 pooled_ic=+0.0083
+      ret_24h                mean_ts_ic=-0.0071 pooled_ic=+0.0044
+      oi_chg_24h             mean_ts_ic=-0.0083 pooled_ic=+0.0041
+      residual_24h           mean_ts_ic=-0.0094 pooled_ic=+0.0030
+
+  Top mean timestamp IC by breadth_12h bin:
+    low:
+      iv_rv_spread           mean_ts_ic=+0.0520 pooled_ic=+0.0187
+      dist_from_high_24h     mean_ts_ic=+0.0453 pooled_ic=+0.0148
+      ls_divergence          mean_ts_ic=+0.0098 pooled_ic=+0.0110
+      taker_cvd_24h          mean_ts_ic=-0.0091 pooled_ic=-0.0052
+      taker_cvd_12h          mean_ts_ic=-0.0183 pooled_ic=-0.0075
+    mid:
+      dist_from_high_24h     mean_ts_ic=+0.0815 pooled_ic=+0.0287
+      iv_rv_spread           mean_ts_ic=+0.0557 pooled_ic=+0.0184
+      ls_divergence          mean_ts_ic=+0.0027 pooled_ic=+0.0012
+      oi_chg_24h             mean_ts_ic=-0.0070 pooled_ic=-0.0005
+      taker_cvd_12h          mean_ts_ic=-0.0199 pooled_ic=-0.0053
+    high:
+      iv_rv_spread           mean_ts_ic=+0.0372 pooled_ic=-0.0039
+      oi_chg_24h             mean_ts_ic=+0.0070 pooled_ic=+0.0151
+      mom_z_24h              mean_ts_ic=+0.0063 pooled_ic=+0.0142
+      dist_from_high_24h     mean_ts_ic=+0.0052 pooled_ic=-0.0024
+      oi_zscore              mean_ts_ic=+0.0023 pooled_ic=+0.0107
+
+  Top mean timestamp IC by dispersion_12h bin:
+    low:
+      dist_from_high_24h     mean_ts_ic=+0.0556 pooled_ic=+0.0231
+      gk_vol_24h             mean_ts_ic=+0.0339 pooled_ic=+0.0273
+      atr_14                 mean_ts_ic=+0.0327 pooled_ic=+0.0274
+      rvol_24h               mean_ts_ic=+0.0244 pooled_ic=+0.0242
+      ls_divergence          mean_ts_ic=+0.0224 pooled_ic=+0.0143
+    mid:
+      iv_rv_spread           mean_ts_ic=+0.0873 pooled_ic=+0.0328
+      dist_from_high_24h     mean_ts_ic=+0.0492 pooled_ic=+0.0151
+      oi_chg_12h             mean_ts_ic=-0.0019 pooled_ic=-0.0017
+      oi_chg_24h             mean_ts_ic=-0.0037 pooled_ic=+0.0025
+      taker_cvd_12h          mean_ts_ic=-0.0078 pooled_ic=-0.0051
+    high:
+      iv_rv_spread           mean_ts_ic=+0.0833 pooled_ic=+0.0277
+      dist_from_high_24h     mean_ts_ic=+0.0313 pooled_ic=+0.0080
+      ls_divergence          mean_ts_ic=-0.0111 pooled_ic=-0.0067
+      mom_z_24h              mean_ts_ic=-0.0138 pooled_ic=+0.0058
+      oi_chg_24h             mean_ts_ic=-0.0142 pooled_ic=-0.0003
+
+  Top mean timestamp IC by market_funding_24h bin:
+    low:
+      dist_from_high_24h     mean_ts_ic=+0.0853 pooled_ic=+0.0370
+      iv_rv_spread           mean_ts_ic=+0.0268 pooled_ic=+0.0052
+      taker_cvd_24h          mean_ts_ic=+0.0007 pooled_ic=-0.0019
+      taker_cvd_12h          mean_ts_ic=-0.0011 pooled_ic=-0.0024
+      cum_funding_24h        mean_ts_ic=-0.0044 pooled_ic=+0.0004
+    mid:
+      iv_rv_spread           mean_ts_ic=+0.0654 pooled_ic=+0.0203
+      dist_from_high_24h     mean_ts_ic=+0.0371 pooled_ic=+0.0102
+      ls_divergence          mean_ts_ic=+0.0133 pooled_ic=+0.0044
+      taker_cvd_12h          mean_ts_ic=-0.0009 pooled_ic=+0.0033
+      taker_cvd_24h          mean_ts_ic=-0.0060 pooled_ic=+0.0002
+    high:
+      iv_rv_spread           mean_ts_ic=+0.0539 pooled_ic=+0.0140
+      oi_chg_24h             mean_ts_ic=+0.0260 pooled_ic=+0.0167
+      residual_24h           mean_ts_ic=+0.0243 pooled_ic=+0.0199
+      ret_24h                mean_ts_ic=+0.0201 pooled_ic=+0.0185
+      mom_z_24h              mean_ts_ic=+0.0168 pooled_ic=+0.0191
+
+[5] Position trace + leg decomposition...
+window  long_leg_sharpe  short_leg_sharpe  portfolio_sharpe  avg_turnover  avg_cost_pct
+    W1         1.614087         -1.584735         -0.651456      4.609589      0.043852
+    W2        -1.711831          0.376398         -1.012295      4.257862      0.041117
+    W3        -0.144224          2.119765          2.876809      3.979310      0.038950
+
+[5b] Official simulation cross-check...
+window  official_sharpe  trace_sharpe  official_turnover  official_cost_pct  delta_trace_vs_official
+    W1            -0.69     -0.651456                4.6               6.39                 0.038544
+    W2            -0.98     -1.012295                4.2               6.53                -0.032295
+    W3             2.88      2.876809                4.0               5.65                -0.003191
+
+[6] Coin contribution report (W2 gross contribution)...
+  Worst contributors:
+   symbol  side  gross_contribution  mean_fwd_ret  appearances  new_entries
+ XTZ/USDT short           -0.063719      0.017184           22            6
+ UNI/USDT short           -0.051986      0.017028           22            8
+  OP/USDT short           -0.051398      0.005950           54           11
+DOGE/USDT short           -0.027950      0.012109           15            2
+ XRP/USDT  long           -0.027715     -0.004209           74           10
+ ADA/USDT  long           -0.022294     -0.004862           58           12
+MANA/USDT short           -0.020298      0.010289           14            5
+AAVE/USDT short           -0.019620      0.005753           24            8
+SAND/USDT  long           -0.018808     -0.008547           27            8
+ APT/USDT  long           -0.017124     -0.004770           44            8
+
+  Best contributors:
+    symbol  side  gross_contribution  mean_fwd_ret  appearances  new_entries
+  LDO/USDT short            0.115073     -0.015519           45           14
+  INJ/USDT short            0.056660     -0.010718           31            8
+  SNX/USDT short            0.027561     -0.005475           28            7
+  AXS/USDT short            0.025815     -0.020120            8            3
+ NEAR/USDT short            0.025723     -0.007282           18            8
+  SOL/USDT  long            0.020730      0.005035           59           13
+THETA/USDT short            0.020297     -0.013531            9            6
+  ADA/USDT short            0.017682     -0.007944           13            1
+  CHZ/USDT short            0.017012     -0.010207           10            2
+  ARB/USDT short            0.015701     -0.000913           35           11
+
+[7] Rank stability diagnostics...
+window  mean_rank_corr  mean_top_change_ratio  mean_bottom_change_ratio  rebalances
+    W2         0.56151               0.509259                  0.663580         217
+    W3         0.56328               0.511161                  0.577381         225
+
+[8] Per-window feature importance...
+  W1:
+         feature avg_gain gain_pct test_mean_ts_ic test_pooled_ic
+pct_coins_up_12h  6,875.1    13.6%             NaN            NaN
+       mom_z_24h  5,316.7    10.5%         -0.0382        -0.0145
+         ret_24h  4,866.2     9.7%         -0.0453        -0.0182
+    iv_rv_spread  4,408.0     8.7%         +0.0779        +0.0358
+ cum_funding_24h  3,824.1     7.6%         -0.0386        -0.0250
+      gk_vol_24h  2,815.2     5.6%         -0.0776        -0.0352
+   ret_skew_168h  2,531.8     5.0%         -0.0244        -0.0100
+        ret_168h  2,323.5     4.6%         -0.0397        -0.0107
+  W2:
+         feature avg_gain gain_pct test_mean_ts_ic test_pooled_ic
+ cum_funding_24h 31,175.6    17.4%         -0.0245        -0.0108
+pct_coins_up_12h 23,561.5    13.2%             NaN            NaN
+       mom_z_24h 14,116.4     7.9%         -0.0429        -0.0094
+         ret_24h 12,228.2     6.8%         -0.0386        -0.0084
+      gk_vol_24h 10,311.6     5.8%         -0.0405        -0.0089
+    iv_rv_spread  9,945.1     5.6%         +0.0487        +0.0119
+   ret_skew_168h  9,516.8     5.3%         -0.0273        -0.0096
+        ret_168h  7,780.2     4.4%         -0.0481        -0.0119
+  W3:
+         feature avg_gain gain_pct test_mean_ts_ic test_pooled_ic
+ cum_funding_24h 31,836.3    15.7%         -0.0021        -0.0032
+pct_coins_up_12h 27,562.5    13.6%             NaN            NaN
+       mom_z_24h 14,724.4     7.3%         -0.0459        -0.0128
+         ret_24h 13,388.9     6.6%         -0.0609        -0.0185
+    iv_rv_spread 12,966.6     6.4%         +0.0644        +0.0307
+   ret_skew_168h 11,104.0     5.5%         -0.0162        -0.0105
+        ret_168h 10,174.6     5.0%         +0.0033        +0.0030
+   ls_divergence  9,071.8     4.5%         -0.0363        -0.0148
+
+[9] Saved artifacts
+  Conditional IC CSV: results_r34_w2_conditional_ic.csv
+  Coin contribution CSV: results_r34_w2_coin_contrib.csv
+  Feature importance CSV: results_r34_feature_importance.csv
+
+Verdict focus:
+- Compare W2 long_leg_sharpe vs short_leg_sharpe
+- Compare W2 rank churn vs W3 rank churn
+- Inspect whether specific coins dominate the negative contribution tail
+- Check whether W2 high-gain features also keep positive post-hoc test IC

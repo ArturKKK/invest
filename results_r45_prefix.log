@@ -1,0 +1,86 @@
+================================================================================
+R45 — CALIBRATED SOFT GATE
+================================================================================
+Base expert: r42_candidate
+{'n_long': 6, 'n_short': 3, 'rebal_hours': 12, 'trend_cutoff': 0.9, 'dyn_threshold': 0.7, 'ema_alpha': 0.5, 'hysteresis': 3}
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 129 cols
+
+[2] Training test experts...
+  Training: expert_r42, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0434
+    W2/s0: train=1,484,524, test=85,569, IC=0.0088
+    W3/s0: train=1,628,167, test=89,343, IC=0.0541
+  Training: expert_stability, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0460
+    W2/s0: train=1,484,524, test=85,569, IC=0.0103
+    W3/s0: train=1,628,167, test=89,343, IC=0.0499
+  Training: expert_stable_flow, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=-0.0251
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0901
+    W3/s0: train=1,628,167, test=89,343, IC=0.0407
+
+[3] Training validation experts for calibration...
+  Training: expert_r42_val, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=101,197, IC=0.0127
+    W2/s0: train=1,484,524, test=94,572, IC=0.0537
+    W3/s0: train=1,628,167, test=96,657, IC=0.0360
+  Training: expert_stability_val, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=101,197, IC=0.0092
+    W2/s0: train=1,484,524, test=94,572, IC=0.0533
+    W3/s0: train=1,628,167, test=96,657, IC=0.0439
+  Training: expert_stable_flow_val, 32f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=101,197, IC=0.0754
+    W2/s0: train=1,484,524, test=94,572, IC=-0.0390
+    W3/s0: train=1,628,167, test=96,657, IC=0.0339
+
+[4] Calibrating soft blends on validation slices...
+
+[5] Evaluating experts and soft blends...
+  expert_r42...
+  expert_stability...
+  expert_stable_flow...
+  soft_r42_vs_stability...
+  soft_r42_vs_flow...
+  soft_tri...
+
+[6] Best configs
+  W2:
+               config  sharpe  cost_pct  avg_turnover
+     soft_r42_vs_flow    3.09      6.30           4.1
+   expert_stable_flow    2.76      6.34           4.1
+             soft_tri    2.20      6.30           4.1
+     expert_stability    1.06      5.40           3.3
+soft_r42_vs_stability    0.57      6.27           4.0
+           expert_r42   -0.03      6.40           4.1
+  W3:
+               config  sharpe  cost_pct  avg_turnover
+     expert_stability    2.84      5.43           3.8
+soft_r42_vs_stability    2.72      5.66           4.0
+   expert_stable_flow    1.97      5.37           3.7
+             soft_tri    1.91      5.27           3.6
+     soft_r42_vs_flow    1.69      4.98           3.4
+           expert_r42    1.60      5.57           3.9
+  ALL:
+               config  sharpe  cost_pct  avg_turnover
+     expert_stability    0.92     16.88           3.8
+             soft_tri    0.91     17.42           3.9
+     soft_r42_vs_flow    0.83     17.89           4.1
+soft_r42_vs_stability    0.68     17.69           4.0
+           expert_r42    0.48     18.25           4.2
+   expert_stable_flow    0.37     19.01           4.4
+
+[7] Saved artifacts
+  Summary CSV: results_r45_soft_gate_summary.csv
+  Calibration CSV: results_r45_soft_gate_calibration.csv

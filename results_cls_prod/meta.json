@@ -1,0 +1,78 @@
+{
+  "model_type": "binary_classification_ensemble",
+  "models": {
+    "lgb": {
+      "n_seeds": 5,
+      "pattern": "lgb_cls_seed_*.txt",
+      "params": {
+        "objective": "binary",
+        "metric": "auc",
+        "learning_rate": 0.03,
+        "num_leaves": 63,
+        "min_child_samples": 100,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "lambda_l2": 1.0,
+        "n_jobs": -1
+      }
+    },
+    "xgb": {
+      "n_seeds": 5,
+      "pattern": "xgb_cls_seed_*.json",
+      "params": {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "learning_rate": 0.03,
+        "max_depth": 6,
+        "min_child_weight": 100,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "reg_lambda": 1.0,
+        "n_jobs": -1,
+        "verbosity": 0
+      }
+    }
+  },
+  "features": [
+    "ret_12h",
+    "ret_24h",
+    "ret_48h",
+    "residual_12h",
+    "residual_24h",
+    "mom_z_24h",
+    "oi_chg_12h",
+    "oi_chg_24h",
+    "oi_zscore",
+    "taker_cvd_12h",
+    "taker_cvd_24h",
+    "ls_divergence",
+    "atr_14",
+    "rvol_12h",
+    "gk_vol_24h",
+    "rvol_24h",
+    "iv_rv_spread",
+    "pct_coins_up_12h",
+    "pct_coins_up_1h",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos"
+  ],
+  "n_features": 23,
+  "seeds": [
+    0,
+    7,
+    13,
+    42,
+    99
+  ],
+  "ensemble_method": "rank_normalize_then_average",
+  "train_rows": 991297,
+  "trained_through": "2026-03-07",
+  "portfolio": {
+    "n_long": 5,
+    "n_short": 3,
+    "rebal_hours": 12
+  },
+  "source": "R25 EXP-A (LGB+XGB cls ensemble, Sh=3.36, Worst=-5.7%)"
+}

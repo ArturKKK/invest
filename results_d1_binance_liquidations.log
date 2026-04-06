@@ -1,0 +1,11 @@
+======================================================================
+  BINANCE FUTURES DATA DOWNLOADER (data.binance.vision + API)
+  50 symbols
+  Metrics: 2021-12-01 → 2026-04-03 (1584 days)
+  Funding: skip
+  Premium: skip
+  Liquidations: 2021-12-01 → now
+======================================================================
+
+📊 Downloading liquidation snapshots (50 symbols)...
+   [1/50] BTCUSDT: 1585 days → 0 hourly rows (0 cached)      [2/50] ETHUSDT: 1585 days → 0 hourly rows (0 cached)      [3/50] BNBUSDT: 1585 days → 0 hourly rows (0 cached)   

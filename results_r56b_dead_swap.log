@@ -1,0 +1,117 @@
+======================================================================
+  R56b — Dead Feature Substitution (with correct cs_rank_exclude)
+======================================================================
+
+[LOAD] Building model frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  Loading CG OI...
+    CG OI features: 51,360 rows, 35 symbols
+  Loading CG Funding...
+    CG FR features: 49,043 rows, 33 symbols
+  Loading CG Basis...
+    CG Basis features: 42,039 rows, 27 symbols
+  Loading CG Position Ratio...
+    CG PosRatio features: 49,955 rows, 33 symbols
+
+  Loading Binance hourly OI...
+    Binance daily OI: 75,357 rows, 50 symbols
+  Loading Binance 8h funding...
+    Binance daily FR: 96,698 rows, 50 symbols
+
+  Building disagreement features...
+    OI disagreement: 49,416 rows
+    FR disagreement: 48,218 rows
+
+  ══ R55 feature table: 53,111 rows, 35 syms, 12 features ══
+  Features: ['cg_date', 'cg_oi_chg_1d', 'cg_oi_range', 'cg_fr_close', 'cg_fr_range', 'cg_basis_close', 'cg_basis_chg', 'cg_basis_z_60d', 'cg_pos_ls_ratio', 'cg_pos_ls_z_60d', 'cg_oi_disagreement', 'cg_fr_disagreement']
+  Merged 11 R55 features into model frame (1,826,014 rows)
+  NaN counts (native handling): {'cg_oi_chg_1d': np.int64(641866), 'cg_oi_range': np.int64(641866), 'cg_fr_close': np.int64(672925), 'cg_fr_range': np.int64(672925), 'cg_basis_close': np.int64(837318), 'cg_basis_chg': np.int64(837318), 'cg_basis_z_60d': np.int64(841206), 'cg_pos_ls_ratio': np.int64(651831), 'cg_pos_ls_z_60d': np.int64(656583)}
+
+  Frame: 1,826,014 rows, 35 symbols
+  R55 features: ['cg_oi_chg_1d', 'cg_oi_range', 'cg_fr_close', 'cg_fr_range', 'cg_basis_close', 'cg_basis_chg', 'cg_basis_z_60d', 'cg_pos_ls_ratio', 'cg_pos_ls_z_60d', 'cg_oi_disagreement', 'cg_fr_disagreement']
+
+======================================================================
+  B0 — Baseline: Champion 31f (correct cs_rank_exclude)
+======================================================================
+  cs_rank_exclude: ['ret_dispersion_12h']
+  [baseline_31f] Training 31f, no_rank=['ret_dispersion_12h']
+  Training: baseline_31f, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+  W1: Sh= 0.98 (gross= 1.41)  Eq=$   109  DD=-51.4%  Cost=3.5%
+  W2: Sh= 3.53 (gross= 4.18)  Eq=$   231  DD=-22.6%  Cost=3.5%
+  W3: Sh= 2.52 (gross= 2.96)  Eq=$   183  DD=-34.1%  Cost=2.8%
+  ALL: Sh= 1.66 (gross= 2.03)  Eq=$   462  DD=-51.4%  Cost=9.8%
+
+======================================================================
+  B1_dow_cos→fr_disagree: dow_cos → cg_fr_disagreement
+======================================================================
+  [B1_dow_cos→fr_disagree] Training 31f, no_rank=['ret_dispersion_12h']
+  Training: B1_dow_cos→fr_disagree, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0743
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0493
+    W3/s0: train=1,628,167, test=89,343, IC=0.0398
+  W1: Sh=-0.47 (gross=-0.06)  Eq=$    58  DD=-58.6%  Cost=3.5%
+  W2: Sh= 1.51 (gross= 2.09)  Eq=$   135  DD=-38.5%  Cost=3.6%
+  W3: Sh= 2.89 (gross= 3.34)  Eq=$   211  DD=-37.4%  Cost=3.0%
+  ALL: Sh= 0.94 (gross= 1.34)  Eq=$   180  DD=-61.8%  Cost=10.0%
+
+======================================================================
+  B2_hour_cos→fr_disagree: hour_cos → cg_fr_disagreement
+======================================================================
+  [B2_hour_cos→fr_disagree] Training 31f, no_rank=['ret_dispersion_12h']
+  Training: B2_hour_cos→fr_disagree, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0673
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0526
+    W3/s0: train=1,628,167, test=89,343, IC=0.0398
+  W1: Sh=-0.98 (gross=-0.55)  Eq=$    48  DD=-62.0%  Cost=3.6%
+  W2: Sh= 1.86 (gross= 2.49)  Eq=$   150  DD=-23.5%  Cost=3.8%
+  W3: Sh= 3.10 (gross= 3.58)  Eq=$   217  DD=-42.9%  Cost=2.9%
+  ALL: Sh= 0.78 (gross= 1.18)  Eq=$   146  DD=-64.5%  Cost=10.0%
+
+======================================================================
+  B3_dow_cos→oi_chg: dow_cos → cg_oi_chg_1d
+======================================================================
+  [B3_dow_cos→oi_chg] Training 31f, no_rank=['ret_dispersion_12h']
+  Training: B3_dow_cos→oi_chg, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0648
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0504
+    W3/s0: train=1,628,167, test=89,343, IC=0.0431
+  W1: Sh=-0.22 (gross= 0.20)  Eq=$    68  DD=-54.7%  Cost=3.3%
+  W2: Sh= 3.66 (gross= 4.29)  Eq=$   247  DD=-23.1%  Cost=3.6%
+  W3: Sh= 1.72 (gross= 2.20)  Eq=$   142  DD=-40.9%  Cost=3.0%
+  ALL: Sh= 0.76 (gross= 1.15)  Eq=$   143  DD=-54.7%  Cost=9.8%
+
+======================================================================
+  R56b RESULTS TABLE
+======================================================================
+
+| # | Experiment | ALL | W1 | W2 | W3 | Cost% | ΔSharpe | Decision |
+|---|-----------|-----|----|----|----|----|---------|----------|
+| B0 | Baseline 31f (fixed) | +1.66 | +0.98 | +3.53 | +2.52 | 9.8% | — | baseline |
+| B1_dow_cos→fr_disagree | dow_cos→cg_fr_disagreement | +0.94 | -0.47 | +1.51 | +2.89 | 10.0% | -0.72 | 🚫 VETO(W2) |
+| B2_hour_cos→fr_disagree | hour_cos→cg_fr_disagreement | +0.78 | -0.98 | +1.86 | +3.10 | 10.0% | -0.88 | 🚫 VETO(W2) |
+| B3_dow_cos→oi_chg | dow_cos→cg_oi_chg_1d | +0.76 | -0.22 | +3.66 | +1.72 | 9.8% | -0.90 | 🚫 VETO(W1) |
+
+  Baseline ALL: +1.66
+  No winners (all ΔSharpe ≤ 0.05)
+
+======================================================================
+  R56b COMPLETE
+======================================================================

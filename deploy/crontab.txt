@@ -29,6 +29,9 @@ WRAP=/home/trader/invest/deploy/cron_wrapper.sh
 # Deribit DVOL (implied vol) — every 6 hours
 30 */6 * * * $WRAP dvol $ROOT/deploy/update_dvol.sh >> $ROOT/logs/dvol_update.log 2>&1
 
+# Binance spot orderbook depth snapshot — hourly
+35 * * * * $WRAP orderbook_depth $ROOT/deploy/update_orderbook_depth.sh >> $ROOT/logs/orderbook_depth.log 2>&1
+
 # ── Maintenance ──────────────────────────────────────────────
 
 # Log rotation — keep last 7 days

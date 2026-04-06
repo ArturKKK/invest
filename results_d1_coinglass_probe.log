@@ -1,0 +1,12 @@
+═══════════════════════════════════════════════════
+  CoinGlass Downloader
+  Python: /Users/a.s.tabakov/Developer/invest/venv/bin/python
+  Start:  2021-12-01
+═══════════════════════════════════════════════════
+🔍 Testing API key...
+   ❌ No CoinGlass API key found!
+      1. Get a key: https://www.coinglass.com/pricing (Hobbyist $29/mo)
+      2. Then either:
+         --api-key YOUR_KEY
+         export COINGLASS_API_KEY=YOUR_KEY
+         echo 'COINGLASS_API_KEY=YOUR_KEY' >> .env

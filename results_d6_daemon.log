@@ -1,0 +1,28 @@
+[2026-04-05 13:00:37.240770+00:00] D6 daemon sleeping until 2026-04-05 14:00:00.002551+00:00
+[2026-04-05 14:00:00.068340+00:00] D6 daemon cycle 1 — fetching depth snapshots...
+[2026-04-05 14:00:20.377006+00:00] D6 daemon cycle 1 — saved 50 snapshots, feature rows now 200
+[2026-04-05 14:00:20.377468+00:00] D6 daemon sleeping until 2026-04-05 15:00:00.000080+00:00
+[2026-04-05 15:00:00.068248+00:00] D6 daemon cycle 2 — fetching depth snapshots...
+[2026-04-05 15:00:17.595522+00:00] D6 daemon cycle 2 — saved 50 snapshots, feature rows now 250
+[2026-04-05 15:00:17.595698+00:00] D6 daemon sleeping until 2026-04-05 16:00:00.000087+00:00
+[2026-04-05 16:00:00.064650+00:00] D6 daemon cycle 3 — fetching depth snapshots...
+[2026-04-05 16:00:13.233319+00:00] D6 daemon cycle 3 — saved 50 snapshots, feature rows now 300
+[2026-04-05 16:00:13.233724+00:00] D6 daemon sleeping until 2026-04-05 17:00:00.000080+00:00
+[2026-04-05 17:00:00.062779+00:00] D6 daemon cycle 4 — fetching depth snapshots...
+[2026-04-05 17:00:09.809988+00:00] D6 daemon cycle 4 — saved 50 snapshots, feature rows now 350
+[2026-04-05 17:00:09.810461+00:00] D6 daemon sleeping until 2026-04-05 18:00:00.000095+00:00
+[2026-04-05 18:00:00.060738+00:00] D6 daemon cycle 5 — fetching depth snapshots...
+[2026-04-05 18:00:10.802669+00:00] D6 daemon cycle 5 — saved 50 snapshots, feature rows now 400
+[2026-04-05 18:00:10.803055+00:00] D6 daemon sleeping until 2026-04-05 19:00:00.000088+00:00
+[2026-04-05 19:00:00.151866+00:00] D6 daemon cycle 6 — fetching depth snapshots...
+[2026-04-05 19:00:11.549402+00:00] D6 daemon cycle 6 — saved 50 snapshots, feature rows now 450
+[2026-04-05 19:00:11.553226+00:00] D6 daemon sleeping until 2026-04-05 20:00:00.001302+00:00
+[2026-04-05 20:00:00.070297+00:00] D6 daemon cycle 7 — fetching depth snapshots...
+[2026-04-05 20:00:10.152183+00:00] D6 daemon cycle 7 — saved 50 snapshots, feature rows now 500
+[2026-04-05 20:00:10.152611+00:00] D6 daemon sleeping until 2026-04-05 21:00:00.000086+00:00
+Traceback (most recent call last):
+  File "/Users/a.s.tabakov/Developer/invest/src/data/run_orderbook_depth_daemon.py", line 90, in <module>
+    main()
+  File "/Users/a.s.tabakov/Developer/invest/src/data/run_orderbook_depth_daemon.py", line 84, in main
+    time.sleep(sleep_seconds)
+KeyboardInterrupt

@@ -1,0 +1,1441 @@
+# MEGA PROMPT — Полная история крипто ML-торговой системы
+
+> Этот документ содержит ВСЮ историю проекта: все модели, все фичи, все результаты, все ошибки.
+> Используй как полный контекст при работе с любой AI-моделью.
+> Последнее обновление: 6 апреля 2026 (после R48 COMPLETE. Новый чемпион: 31f + hybrid tiered costs → ALL=1.66).
+
+---
+
+## Оглавление
+1. [Описание системы](#1-описание-системы)
+2. [Данные](#2-данные)
+3. [Продакшн система](#3-продакшн-система-run_tradingpy)
+4. [Модели в production registry](#4-модели-в-production-registry)
+5. [Полная история фич](#5-полная-история-фич)
+6. [Pipeline v1–v8: Эволюция пайплайна](#6-pipeline-v1v8-эволюция-пайплайна)
+7. [Research Rounds R1–R39: Полная хронология](#7-research-rounds-r1r39-полная-хронология)
+8. [История утечек данных (Data Leakage)](#8-история-утечек-данных-data-leakage)
+9. [Execution Layer эксперименты (Overnight v10–v15)](#9-execution-layer-эксперименты-overnight-v10v15)
+10. [AI Consultation Documents](#10-ai-consultation-documents)
+11. [Установленные факты и выводы](#11-установленные-факты-и-выводы)
+12. [Текущее состояние и нерешённые проблемы](#12-текущее-состояние-и-нерешённые-проблемы)
+
+---
+
+## 1. Описание системы
+
+**Цель**: Систематическая крипто long/short портфельная стратегия. Предсказываем 12-часовой forward return для 35 монет, ранжируем cross-sectionally, идём long top-N / short bottom-N. Ребалансировка каждые 12 часов на OKX perpetual futures.
+
+**Стек**:
+- Python 3.13, macOS M3 Pro (dev), VPS 185.42.163.63 (production)
+- **pandas ≤2.x ОБЯЗАТЕЛЬНО** (pandas 3.0 ломает groupby.apply → тихо меняет все фичи, Sharpe 1.66→1.02)
+- LightGBM 4.6.0, XGBoost, CatBoost, scikit-learn
+- Данные: Binance OHLCV + Derivatives + Funding + OI + Taker Flow
+- Биржа: OKX demo → OKX live (perpetual futures)
+
+**Ключевые параметры**:
+- `LEVERAGE = 5`, `CAPITAL = 100 USDT`
+- `HORIZON = 12` (предсказание на 12 часов вперёд)
+- `REBAL_HOURS = 12` (ребалансировка каждые 12 часов)
+- `N_LONG = 6`, `N_SHORT = 3`
+- `SEEDS = [0, 7, 13, 42, 99]`
+- Walk-forward валидация на 3 окнах (W1, W2, W3)
+
+**VPS**: root@185.42.163.63 (SSH через SOCKS5 proxy), `/home/trader/invest/`
+- Текущий статус: ОСТАНОВЛЕН (DD=-21.9%, stopped=True)
+- ⚠️ НИКОГДА не деплоить на VPS без явного запроса пользователя. Каждый редеплой стоит ~$5 в комиссиях.
+
+---
+
+## 2. Данные
+
+### 2.1. Основные данные
+
+| Источник | Файл | Частота | Покрытие |
+|----------|------|---------|----------|
+| Binance Spot OHLCV | `data/raw/*_1h.parquet` | 1h свечи | 50 монет, 2021+, ~2.5M строк |
+| Binance Futures Metrics | `binance_futures_metrics.parquet` | 1h | Dec 2021+, 1.8M строк |
+| Binance Funding Rates | `binance_funding_rates.parquet` | 8h | Jan 2020+, 294K строк |
+| Binance Premium Index | `binance_premium_index.parquet` | varies | Имеется |
+| Fear & Greed Index | `fear_greed.parquet` | daily | Полная история |
+| Macro (FRED) | `macro_daily.parquet` | daily | VIX, SPX, DXY, Gold, Yields, HY spread |
+| Deribit DVOL | `deribit_dvol.parquet` | hourly | BTC+ETH implied vol |
+| CryptoCompare News | `crypto_news.parquet` | hourly | 950K статей, 67 месяцев |
+| On-chain | `btc_onchain.parquet`, `onchain_daily.parquet` | daily | BTC метрики |
+| DeFi TVL | `defi_tvl_daily.parquet` | daily | Protocol TVL |
+| Stablecoin Supply | `stablecoin_supply.parquet` | daily | Supply data |
+| Google Trends | `data/features/google_trends.parquet` | daily | Имеется |
+| CC Social | `data/features/cc_social_daily.parquet` | daily | Social metrics |
+
+### 2.2. Монеты
+
+**49 символов** (полный список):
+```
+BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX, DOT, LINK,
+UNI, ATOM, LTC, FIL, APT, ARB, OP, NEAR, AAVE, INJ,
+FTM, ALGO, SAND, MANA, AXS, THETA, RUNE, EGLD, XTZ, FLOW,
+CHZ, CRV, LDO, SNX, COMP, YFI, SUSHI, ENJ, BAT, ZIL,
+ONE, IOTA, ICX, ENS, IMX, GALA, MKR, GRT, ETC
+```
+
+**OKX заблокированные** (19 шт — нет на OKX demo): MATIC, UNI, APT, FTM, MANA, RUNE, EGLD, FLOW, SNX, ENJ, BAT, ONE, ICX, ENS, GALA, GRT, CHZ, MKR
+
+**Рабочий набор для research (SYM_35)**: 35 монет (49 минус заблокированные и неликвидные)
+
+---
+
+## 3. Продакшн система (run_trading.py)
+
+### 3.1. Архитектура
+
+```
+Main Loop:
+  Fetch OHLCV → build_features() → enrich(cross-asset, regime, derivatives,
+  sentiment, news) → generate_signal() → construct_portfolio() →
+  partial_rebalance(limit+market) → position_ledger_sync → trades.csv →
+  dashboard → state_persist → sleep(next_rebalance_boundary)
+```
+
+### 3.2. Генерация сигналов
+
+Три генератора сигналов (последовательно эволюционировали):
+
+1. **`generate_signal()`** — регрессионный ансамбль:
+   - LGB v6 (5 seeds) + LGB v7 (5 seeds) + CatBoost (5 seeds) + XGBoost (5 seeds)
+   - → mean prediction → z-score
+   - ~165 фич (включая news, macro, TA, derivatives)
+
+2. **`generate_signal_cls()`** — ТЕКУЩИЙ ЛУЧШИЙ, бинарная классификация:
+   - LGB classifier (5 seeds) + XGB classifier (5 seeds)
+   - Таргет: P(ret_12h > 0)
+   - → mean probability → rank → z-score
+   - 23-28 фич (FEATURES_23 или FEAT_28)
+
+3. **`generate_signal_ridge()`** — линейная модель с режимным масштабированием:
+   - Ridge alpha=1000, 14 фич
+   - mr_scale для режимного масштабирования
+
+### 3.3. Конструкция портфеля
+
+```python
+DEFAULT_RISK = {
+    'n_long': 6, 'n_short': 3,
+    'vol_target': 0.008, 'vol_lookback': 48,
+    'kelly_frac': 0.8,
+    'dd_stop': -0.15, 'dd_resume': -0.06,
+}
+```
+
+**Текущий лучший конфиг портфеля (6L3S_ema05_h3)**:
+```python
+{
+    "n_long": 6, "n_short": 3,
+    "rebal_hours": 12,
+    "trend_cutoff": 0.9,       # BTC trend filter
+    "dyn_threshold": 0.7,      # dynamic threshold
+    "ema_alpha": 0.5,          # EMA сглаживание сигнала
+    "hysteresis": 3,           # позиции держатся 3 цикла минимум
+}
+```
+
+**Элементы портфельной конструкции**:
+- Edge-boost sizing: weight ∝ (1 + edge/P75), cap 4x
+- Regime-conditional asymmetry: bull → 7L/2S, bear → 5L/4S
+- Vol scaling, DD circuit breaker
+- Partial rebalance (только изменения — HOLD saves costs)
+
+### 3.4. Стоимость торговли (Cost Model)
+
+```python
+taker_fee    = 0.0005   # 5 bps
+slippage     = 0.0002   # 2 bps
+funding_12h  = 0.00008  # ~1 bp per 12h
+cost_one_way = 0.0007   # 7 bps total
+```
+
+**⚠️ Издержки = 40-47% drag от gross до net Sharpe!**
+- Gross Sharpe 3.82 → Net Sharpe 2.88 (типичный случай)
+- Turnover ~4-5 позиций/ребалансировка при ema+hysteresis
+- Turnover ~10-11 без сглаживания (12h rebal)
+
+---
+
+## 4. Модели в production registry
+
+### model_registry.json — 7 поколений
+
+| Gen | Имя | Train End | Модели | Результат | Проблемы |
+|-----|-----|-----------|--------|-----------|----------|
+| 1 | v2.0-gbdt-no-calendar | 2025-12-01 | LGB v6+v7, CB, XGB × 5 seeds | OOS Sharpe 2.25 | — |
+| 2 | v2.0-fresh-data | 2026-02-01 | LGB v6+v7, CB, XGB × 5 seeds | **OOS Sharpe 8.43, +21.7%** | Предыдущий gen1 имел leakage |
+| 3 | gen3-calendar | 2026-02-01 | +9 calendar feats, +MLP | — | Calendar фичи потом оказались вредны |
+| 4 | v4-huber-4model-mz05 | — | Huber loss для всех 4 моделей | HAC 8.14, Sharpe 7.29, WR 65% | — |
+| 5 | v10-expanded-features | — | 200 фич | HAC 8.98, +22.3%, WR 69% | Раздутый feature set |
+| 6 | v14-champion-cb-solo | — | CatBoost solo, HPO 50 trials | +147.5%, HAC 5.48 | — |
+| **7** | **v15-cb-huber-fresh** | — | CatBoost Huber, 208 фич | **HAC: WA=6.91, WB=9.22, WC=7.17** | Текущий |
+
+**current_gen: 7** (v15-cb-huber-fresh-deploy)
+
+---
+
+## 5. Полная история фич
+
+### 5.1. Эволюция feature set
+
+```
+14 фич (Ridge baseline, R1-R16)
+  → 17 фич (R18: +vol features)
+  → 23 фич (R19: +breadth, seasonality) ← MAIN PRODUCTION SET
+  → 26 фич (R31: +ret_168h, cum_funding_24h, dist_from_high_24h)
+  → 27 фич (R32: +rel_volume_cs)
+  → 28 фич (R32: +ret_skew_168h) ← ТЕКУЩИЙ ЛУЧШИЙ для walk-forward
+  → 29-30 фич (R33: +btc_corr) — НЕ помогли W3, но стабилизируют W2
+```
+
+### 5.2. RIDGE_FEATURES (14 фич, исходный набор)
+
+```python
+RIDGE_FEATURES = [
+    'ret_12h', 'ret_24h', 'ret_48h',                    # Returns
+    'residual_12h', 'residual_24h',                       # BTC residuals
+    'mom_z_12h', 'mom_z_24h',                             # Momentum z-scores
+    'dist_from_high_24h',                                  # Price distance from high
+    'oi_chg_12h', 'oi_chg_24h', 'oi_zscore',             # Open Interest
+    'taker_cvd_12h', 'taker_cvd_24h',                     # Taker CVD
+    'ls_divergence',                                       # Long/Short divergence
+]
+```
+
+### 5.3. FEATURES_23 (основной production set, R19+)
+
+```python
+FEATURES_23 = [
+    # --- Returns & Momentum (6) ---
+    "ret_12h", "ret_24h", "ret_48h",
+    "residual_12h", "residual_24h",
+    "mom_z_24h",
+    # --- Derivatives (6) ---
+    "oi_chg_12h", "oi_chg_24h", "oi_zscore",
+    "taker_cvd_12h", "taker_cvd_24h", "ls_divergence",
+    # --- Volatility (5) ---
+    "atr_14", "rvol_12h", "gk_vol_24h", "rvol_24h", "iv_rv_spread",
+    # --- Market Breadth (2) ---
+    "pct_coins_up_12h", "pct_coins_up_1h",
+    # --- Seasonality (4) ---
+    "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+]
+```
+
+### 5.4. FEAT_26 (R31: +3 high-IC фичи)
+
+```python
+FEAT_26 = FEATURES_23 + [
+    "ret_168h",             # IC=-0.044, ICIR=-0.80 — strongest new
+    "cum_funding_24h",      # IC=-0.051, ICIR=-1.03
+    "dist_from_high_24h",   # IC=+0.020, ICIR=+0.36
+]
+```
+
+### 5.5. FEAT_28 (R32: +2 Kaggle features) ← ТЕКУЩИЙ ЛУЧШИЙ
+
+```python
+FEAT_28 = FEAT_26 + [
+    "rel_volume_cs",        # log(vol) - cs_mean(log(vol)), ICIR=-0.106, ОРТОГОНАЛЬНЫЙ
+    "ret_skew_168h",        # rolling 168h skewness, ICIR=-0.103
+]
+```
+
+### 5.6. Фичи R33 (тестированы, НЕ добавлены)
+
+```python
+# Тестировались, НЕ улучшили W3:
+"btc_corr_168h"    # ICIR=+0.172, rolling 168h correlation with BTC
+"btc_corr_24h"     # ICIR=+0.156, rolling 24h correlation with BTC
+"upvol_24h"        # ICIR=-0.163, upside volatility
+# Эти фичи СТАБИЛИЗИРУЮТ W2 (с -0.98 до +1.26), но снижают W3 peak
+```
+
+### 5.7. Фичи после R33 (тестированы, но не promoted в champion)
+
+```python
+# R35a — лучший новый bundle после R33
+"ret_dispersion_12h"   # market-level dispersion, strongest scan score, чинит W2
+"cs_rank_ma_5"         # rank persistence / CS momentum
+"oi_chg_12h_cs"        # cross-sectional OI change
+"taker_cvd_12h_cs"     # cross-sectional taker flow
+"cum_funding_24h_cs"   # cross-sectional funding level
+
+# R39 stablecoin pilot — сильный regime signal, но не direct champion add-on
+"stable_total_supply_chg7d"
+"stable_total_supply_chg30d"
+"stable_supply_accel"
+"stable_usdt_vs_usdc_chg7d"
+"stable_total_supply_chg7d_z"
+"stable_usdt_dom_z"
+```
+
+**Статус:**
+- `R35a` даёт лучший post-R33 feature uplift: `W2=-0.98 -> +3.03`, `W3=1.91`, `ALL=0.64`
+- `R35b` interactions блестяще работают только в `W3` (`3.34`), но не держат `ALL`
+- `R35c` temporal bundle умеренно полезен (`ALL=0.62`)
+- `R35d` market-only bundle подтвердил старый урок: market-level regime features в CS-модели легко превращаются в noise
+- stablecoin bundle из `R39` мощно чинит `W2`, но ухудшает `W3/ALL`, значит это скорее gate/regime signal, а не прямая добавка к champion model
+
+### 5.8. Полный каталог ВСЕХ тестированных фич и их статус
+
+#### ✅ В production (FEAT_28):
+| Фича | Группа | Описание | IC/ICIR | Статус |
+|------|--------|----------|---------|--------|
+| ret_12h | Returns | 12h return | — | Baseline |
+| ret_24h | Returns | 24h return | — | Baseline |
+| ret_48h | Returns | 48h return | — | Baseline |
+| ret_168h | Returns | 7d return | IC=-0.044 | R31 added |
+| residual_12h | Alpha | BTC residual 12h | — | Baseline |
+| residual_24h | Alpha | BTC residual 24h | — | Baseline |
+| mom_z_24h | Momentum | Momentum z-score 24h | — | Baseline |
+| dist_from_high_24h | Price | Distance from 24h high | IC=+0.020 | R31 added |
+| oi_chg_12h | Derivatives | OI change 12h | — | Baseline |
+| oi_chg_24h | Derivatives | OI change 24h | — | Baseline |
+| oi_zscore | Derivatives | OI z-score | — | Baseline |
+| taker_cvd_12h | Flow | Taker CVD 12h | — | Baseline |
+| taker_cvd_24h | Flow | Taker CVD 24h | — | Baseline |
+| ls_divergence | Positioning | Long/Short divergence | — | Baseline |
+| cum_funding_24h | Funding | Cumulative funding 24h | IC=-0.051 | R31 added |
+| atr_14 | Volatility | ATR 14-period | — | R19 added |
+| rvol_12h | Volatility | Realized vol 12h | — | R19 added |
+| gk_vol_24h | Volatility | Garman-Klass vol 24h | — | R19 added |
+| rvol_24h | Volatility | Realized vol 24h | — | R19 added |
+| iv_rv_spread | Volatility | Implied-Realized vol spread | — | R19 added |
+| pct_coins_up_12h | Breadth | % coins up 12h | — | R19 added |
+| pct_coins_up_1h | Breadth | % coins up 1h | — | R19 added |
+| hour_sin | Season | Hour of day (sin) | — | R19 added |
+| hour_cos | Season | Hour of day (cos) | — | R19 added |
+| dow_sin | Season | Day of week (sin) | — | R19 added |
+| dow_cos | Season | Day of week (cos) | — | R19 added |
+| rel_volume_cs | Volume | CS relative volume | ICIR=-0.106 | R32 added |
+| ret_skew_168h | Distribution | Rolling 7d skewness | ICIR=-0.103 | R32 added |
+
+#### ❌ Тестированы, не помогли / навредили:
+
+| Фича | IC/ICIR | Почему отброшена |
+|------|---------|------------------|
+| btc_corr_168h | ICIR=+0.172 | W3 -0.67 vs baseline |
+| btc_corr_24h | ICIR=+0.156 | W3 -0.13 vs baseline |
+| upvol_24h | ICIR=-0.163 | W3 -1.20 vs baseline |
+| mom_z_12h | — | Pruned in R12 (redundant) |
+| funding_rate_binance | IC=-0.057 | R28: CATASTROPHE with extended features |
+| global_ls_ratio | IC=+0.76Δ | R29d: data contamination found |
+| taker_buy_sell_ratio | IC=+0.63Δ | R29d: data contamination found |
+| buy_pressure | — | R30b: marginal |
+| ret_std_24h | — | R30b: marginal |
+| rsi_14, cci_14 | — | R30b: marginal |
+| fng_value, fng_zscore | — | Noise for CS models |
+| vix_close, dxy_close | — | Macro = noise for CS crypto |
+| adx, mfi_14 | — | Marginal, not worth complexity |
+| premium_zscore_12h | — | Not enough data coverage |
+| oi_velocity | — | Noisy |
+| taker_imb_z | — | Noisy |
+| vol_of_vol | — | Noisy |
+| fng_momentum | — | Noise |
+
+#### ❌ Крупные feature sets которые ПРОВАЛИЛИСЬ целиком:
+
+| Feature Set | Кол-во | Результат | Урок |
+|-------------|--------|-----------|------|
+| R28 FEAT_35 (+12 derivatives) | 35f | Ens Sh=0.06 | **КАТАСТРОФА** — больше фич = хуже |
+| R28 FEAT_50 (+macro/TA) | 50f | LGB Sh=-0.03 | **КАТАСТРОФА** |
+| R28 FEAT_65 (+momentum/vol) | 65f | LGB Sh=-0.69 | **САМЫЙ ХУДШИЙ** |
+| R28 FEAT_75 (+engineered) | 75f | Ens Sh=-0.38 | Все провалилось |
+| v8 (8 лет данных) | 165f | W2 Sh=-1.18 | Старые данные 2017-2020 = яд |
+
+### 5.9. Production pipeline фичи (v6, ~165 фич — для регрессионных моделей)
+
+Для полноты — в продакшн регрессионной модели используется ~165 фич:
+
+**Returns (9)**: 1h, 2h, 4h, 6h, 12h, 24h, 48h, 72h, 168h
+**Price shape (7)**: close_open_ratio, high_low_ratio, upper/lower shadow, body size
+**MA ratios (11)**: close_ma{6,12,24,48,72,168,336,720}_ratio + vol_ma equivalents
+**GK volatility (4)**: 12h, 24h, 48h, 168h
+**Rolling stats (15)**: std/skew/kurt/mean/sharpe at 24h/48h/168h
+**Volume (7)**: vol_mom, vwap_dev, vol_price_corr, buy_pressure
+**TA (22)**: RSI (6,12,14,24), MACD, Bollinger (20,48), ATR (14,24,48), ADX, Stochastic, CCI, Williams %R, OBV, MFI
+**Cross-asset (14)**: btc_ret_*, eth_ret_*, btc_vol_24h, market_dispersion, ret_vs_btc_24h
+**Regime (5)**: btc_above_ma720, btc_dd_720, btc_not_crashed
+**Macro (38)**: VIX/SPX/DXY/Gold/Yields/HY raw + changes + z-scores + interactions
+**FNG (4)**: value, extreme_fear/greed, ma7/30, momentum
+**Positioning (6)**: reversal_{4v24,12v48,24v168}, vol_surge_{12,24}h
+**BTC beta (2)**: 48h, 168h
+**News (9)**: sentiment, count, interactions (только CatBoost)
+**Derivatives (17)**: funding, OI, taker flow, premium, long/short ratio
+**DVOL (12)**: BTC/ETH implied vol, changes, spreads
+
+---
+
+## 6. Pipeline v1–v8: Эволюция пайплайна
+
+### v1 — ТОТАЛЬНЫЙ ПРОВАЛ
+- IC=0.005, Sharpe=-1.0, $1K→$6
+- **Проблема**: time features (hour_sin/dow_cos) доминировали модель → leakage
+- Нет CS normalization, overfitting (early stop at 51/2000 iterations)
+- **Урок**: Time features = data leakage в CS models
+
+### v2 — ПРОРЫВ
+- Cross-sectional rank normalization, time features removed
+- Rank IC=0.031, ICIR=0.36, **LS Sharpe=3.87** (gross)
+- Ensemble 3 моделей (rank/excess/raw) → Sharpe=4.21
+- **Урок**: CS rank normalization = essential. Long-Only = catastrophe.
+
+### v3
+- Multi-horizon targets (4h/12h/24h), cross-asset features, BTC regime filter
+- 109 features, best=4h horizon (Sharpe 3.82)
+- **Урок**: Regime filter USELESS (49.9% ON = coin flip)
+
+### v4
+- Feature selection (118→94), composite regime, 5-seed ensemble
+- Best: Ensemble Sharpe=4.00
+
+### v5 + HIST Transformer
+- Sentiment (FNG, funding), risk overlay (vol targeting, DD breaker)
+- HIST transformer: IC 0.0752 — cross-stock attention works
+- HIST+LGB ensemble: Sharpe 4.38 (best gross на тот момент)
+- **Урок**: Transformer работает, но сложная инфра, LGB проще и стабильнее
+
+### v6 — PRODUCTION WORKHORSE (регрессия)
+- **Критический фикс**: target aligned 12h (был 4h), matching 12h rebalance
+- HORIZON=12, 5 seeds, PURGE_DAYS=8
+- LGB: lr=0.01, max_depth=6, num_leaves=31, feature_fraction=0.5, bagging=0.7, min_child=200, L1/L2=1.0, n_estimators=5000
+- ~165 features (NO news in production), gain-based pruning (bottom 20%)
+- DDStop Sharpe 1.81
+
+### v7
+- Blended target: 75% ret_12h + 25% ret_24h
+- +8 features: range_position, vwpc, hh/ll_count, trend_strength, vol_crush, direction_quality
+- **Вывод**: v6 > v7. Correlation 0.957 — barely different. Occam's razor.
+
+### v8 — ПРОВАЛ
+- 8 лет данных (2017+), 5 purged WF windows
+- W2 (2023 test): Sharpe **-1.18**
+- **Урок**: В крипте 4 года > 8 лет. Рынок меняется слишком быстро. Старые данные = ЯД.
+
+### CatBoost
+- Ordered boosting, iterations=5000, lr=0.01, depth=6, l2_leaf_reg=3
+- **С news в production** — единственная модель где news помогают
+- DDStop Sharpe 1.51
+- **Урок**: CatBoost лучше обрабатывает шумные фичи (news, derivatives)
+
+### XGBoost
+- GPU hist, 186 features (включая 23 news interactions nx_*)
+- DDStop Sharpe 0.97-1.26, слабее чем ensemble
+
+---
+
+## 7. Research Rounds R1–R39: Полная хронология
+
+### Фаза 1: Ridge Model + Portfolio Construction (R2–R7B)
+
+#### R2
+- Ridge model, 14 фич, alpha grid [0.01-1000], CS rank target
+- Тесты: больше символов (30+), multi-horizon blend, momentum overlay, dynamic position count
+- Regime filter с BTC trend strength
+
+#### R3 / R3B
+- 50 символов, edge-weighted positions, 5x leverage
+- SYM_35 confirmed as sweet spot
+- vol_regime для dynamic exposure
+
+#### R4
+- Dispersion-aware sizing, rolling IC filter, equity momentum, fine-tuned dynamic exposure
+
+#### R5
+- Enhanced EQ-MOM, Kelly sizing, signal agreement, adaptive trend cutoff, sector-neutral, time-of-day filter
+
+#### R6 / R6B
+- Spread gate, regime-dependent N, strategy_momentum meta-signal
+- Best R6: SM48+6L3S → $1720
+- ~25 конфигурационных комбинаций
+
+#### R7 — КЛЮЧЕВОЙ ПОВОРОТ
+- Methodology AUDIT с explicit `audit_methodology()` function
+- Best config: 6L/3S, cutoff=0.8, dyn=0.5, eq_mom, kelly, SM48, regime_asym, vol_scale, ema=2
+- **Sharpe baseline: ~$2226**
+
+#### R7B
+- Combos best settings: SHRINK=0.1 ($1829 SAFEST), VOL-SCALE 7L5S ($2208 HIGHEST)
+
+### Фаза 2: Feature Expansion + LightGBM (R8–R9B)
+
+#### R8
+- Расширение 14→80+ фич: DVOL, Macro, Extended funding, Volume momentum, Cross-coin dispersion
+- `build_features_extended()` with ~80+ candidates
+
+#### R9 — ОТКРЫТИЕ LGBM 🏆
+- **KEY FINDING**: LightGBM IC 0.060-0.072 vs Ridge IC 0.013-0.027 (**5x лучше!**)
+- LGB params: lr=0.05, num_leaves=31, min_child=100, subsample=0.8, colsample=0.8
+- Result: Sh=4.21 (+0.62 vs baseline)
+- **Урок**: Нелинейные модели кардинально лучше Ridge для этих данных
+
+#### R9B
+- LGB + signal tweaks: EMA=None/3/4, shrink=0.05-0.15
+
+### Фаза 3: LGB Optimization + Feature Pruning (R11–R15.5)
+
+#### R11
+- Baseline: R10 LGB 5-seed nl=31, 14 feats → Sh=4.07
+- Seeds: [0, 7, 13, 42, 99], lr=0.05, 500 rounds, early_stop=30
+- Тесты: num_leaves sweep, expanded features, interaction features
+
+#### R12 — LEAKAGE AUDIT
+- 5 проверок: window gaps, overlap, fwd_ret formula, CS-ranking, features backward-looking
+- Feature pruning: 14→12 (dropped dist_from_high_24h, mom_z_12h)
+- Best: nl=63, TS-z 16f → Sh=4.37
+
+#### R13
+- FEATURES_12 confirmed
+- PROD_PARAMS: lr=0.03, nl=63, min_child=100, L2=1.0
+- Best: Sh=4.77, Eq=$5280
+
+#### R14
+- Extended walk-forward (5 windows), XGBoost comparison, bootstrap CI
+- Target alternatives: 6h/8h/24h → 12h confirmed best
+
+#### R15 / R15.5
+- Fine-grained HP grid, DART mode, target winsorization, Extra Trees
+- Best: Extra Trees (Sh=4.93), Winsorize 1% (Sh=4.87)
+
+### ⚠️ R16 — КРИТИЧЕСКИЙ АУДИТ
+
+**Найдены 2 бага:**
+1. **Over-annualization**: Sharpe был завышен на 56%
+2. **eq_mom_boost look-ahead bias**: заглядывание в будущее
+
+**Реальный Sharpe ≈ 1.75** (barebone L/S), не 4.77!
+
+### Фаза 4: Leakage Fix + Classification Discovery (R18–R21)
+
+#### R18
+- Расширение фич: News sentiment, TA, FNG, DVOL, Macro, derivatives
+- Extended от 12 до множества кандидатов
+
+#### R19 — ФИКС УТЕЧКИ В IC SCAN
+- **Проблема**: IC scan считался на TEST data → selection bias
+- **Фикс**: IC scan только на TRAIN
+- FEATURES_17 → FEATURES_23 (новые: breadth, seasonality)
+- R19 winner: LGB-23f, Sh=2.50
+
+#### R20
+- cutoff=0.9 → Sh=2.80, permutation p=0.0033
+- 6h rebal → Sh=2.88 (казалось лучше)
+
+#### R21 — КРИТИЧЕСКИЙ БАГ
+- **simulate() uses fwd_ret_12h but rebalances every 6h → hours 6-12 counted TWICE → Sharpe inflated by √2**
+- Все результаты 6h rebal = артефакт!
+- **РЕАЛЬНЫЙ BEST**: cutoff=0.9, 12h rebal → Sh=2.80
+
+### Фаза 5: Multi-Model + Ensemble (R22–R27)
+
+#### R22
+- HPO Optuna (40 trials), XGBoost, CatBoost, stacking
+- Ничего не побеждает LGB-23f Sh=2.80
+
+#### R23 — ПРОРЫВ: Classification 🏆
+- **Binary classification P(ret>0) → Sh=2.94** vs regression Sh=2.80
+- Worst month: -13.8% (вдвое лучше regression)
+- **Урок**: Для портфеля важен RANK, не точное значение → classification лучше
+
+#### R24
+- HPO for classification, CLS+EMA, blend, LambdaRank
+- Best: 5L/3S → Sh=2.98
+
+#### R25 — LGB+XGB ENSEMBLE 🏆
+- **LGB+XGB binary cls, 5L/3S → Sh=3.36, worst=-5.7%**
+- Формула: `0.5 * rank(LGB_prob) + 0.5 * rank(XGB_prob)`
+
+#### R26
+- 6L/3S → Sh=3.39 (marginally better)
+- Multi-Class: Sh=1.36 (fail), Focal Loss: crash, Interactions: Sh=1.74
+- **Вывод**: Изменения модели ВСЕ ПРОВАЛИЛИСЬ. Только portfolio config marginal.
+
+#### R27 — SIGNAL PLATEAU
+- Multi-horizon blending, temporal weighting, meta-stacking
+- ALL ≤ Sh=2.90 (хуже baseline 3.39)
+- **ВЫВОД: Sharpe plateau at ~3.39. ВСЕ изменения модели/сигнала не помогают.**
+
+### Фаза 6: Feature Expansion + Realistic Costs (R28–R33)
+
+#### R28 — FEATURE CURSE 🚫
+- FEAT_35 (baseline+12 derivatives): LGB Sh=-0.00, Ens Sh=0.06 → **КАТАСТРОФА**
+- FEAT_50 (+macro/TA): LGB Sh=-0.03 → КАТАСТРОФА
+- FEAT_65 (+momentum/vol): LGB Sh=-0.69 → **WORST EVER**
+- **Урок**: Больше фич = хуже. funding_rate_binance доминирует gain importance но не помогает OOS.
+
+#### R29 / R29b / R29c / R29d — Forward Selection
+- 62 кандидата тестированы по одному
+- Лучшие: global_ls_ratio (+0.76Δ), taker_buy_sell_ratio (+0.63Δ)
+- **НО R29d обнаружил data contamination** — FEAT25 не бьёт чистый baseline Sh=3.39
+
+#### R30 / R30b — Realistic Costs
+- Модель потеряла $14 за 2 дня live
+- **Открытие**: Costs = 40-47% drag!
+- Gross Sh=3.01, **Net Sh=1.29** (6L3S, 12h rebal without smoothing)
+- **R30b fixed**: double-leverage on costs bug
+- EMA smoothing + hysteresis → turnover 4-5 вместо 10-11 → значительно лучше net
+
+#### R31 — High-IC Features
+- IC analysis на TRAIN:
+  - ret_168h (IC=-0.044, STRONGEST)
+  - cum_funding_24h (IC=-0.051)
+  - dist_from_high_24h (IC=+0.020)
+- FEAT_26 = FEAT_23 + [ret_168h, cum_funding_24h, dist_from_high_24h]
+- Improved over 23f, but FEAT_29/32 = overfitting
+
+#### R32 — Kaggle Features 🏆
+- rel_volume_cs (ICIR=-0.106, **ORTHOGONAL** ко всем 26 фичам!)
+- ret_skew_168h (ICIR=-0.103)
+- FEAT_28 = FEAT_26 + [rel_volume_cs, ret_skew_168h]
+- **Results**: A_26f W3=1.75 → D_28f W3=2.88 (+1.13!) 🎯
+
+#### R33 — Creative Features (FINAL)
+- 45 creative features scanned, top: btc_corr_168h (ICIR=+0.172), btc_corr_24h (ICIR=+0.156)
+- **Walk-forward results** (6L3S_ema05_h3):
+
+| Experiment | W1 | W2 | W3 | ALL | Eq$ | DD% |
+|-----------|-----|------|------|------|-----|------|
+| **A_28f (baseline)** | -0.69 | -0.98 | **2.88** | 0.47 | $201 | -29.5% |
+| C_29f_24 (+btc_corr_24h) | -0.59 | **1.53** | 2.75 | 0.94 | $198 | -27.2% |
+| D_30f (+both btc_corr) | **0.57** | **1.26** | 2.35 | **1.00** | $176 | -43.0% |
+| B_29f_168 (+btc_corr_168h) | -0.13 | 1.05 | 2.21 | 0.64 | $164 | -32.3% |
+| E_30f_alt (+btc_corr+upvol) | -0.53 | 0.68 | 1.68 | 0.90 | $141 | -44.6% |
+
+**ВЕРДИКТ R33**: Новые фичи НЕ помогают W3. 28f всё ещё лучший.
+- btc_corr фичи драматически фиксят W2 (с -0.98 до +1.26)
+- Но снижают W3 peak (с 2.88 до 2.35)
+- Tradeoff: stability vs peak performance
+
+**Monthly IC для A_28f**:
+```
+2024-10: +0.0571  2024-11: +0.0422  2024-12: +0.0348
+2025-01: +0.0060  2025-05: +0.0320  2025-06: +0.0236
+2025-07: +0.0097  2025-08: +0.0161  2025-11: +0.0440
+2025-12: +0.0321  2026-01: +0.0411  2026-02: +0.0191
+2026-03: +0.0171
+Mean IC: 0.0288, IC>0: 13/13, ICIR: 1.99
+```
+
+### Фаза 7: Diagnostics + Feature Search + Execution (R34–R39)
+
+#### R34 — W2 Attribution ✅
+- **Ключевая находка**: `W2` ломается из-за long leg, а не из-за short leg.
+- `long_leg_sharpe=-1.71`, `short_leg_sharpe=+0.38`, `portfolio_sharpe=-1.01`.
+- Official cross-check подтвердил корректность trace-диагностики:
+    - `W1`: official `-0.69` vs trace `-0.65`
+    - `W2`: official `-0.98` vs trace `-1.01`
+    - `W3`: official `2.88` vs trace `2.88`
+- Conditional IC по режимам:
+    - `dist_from_high_24h` и `iv_rv_spread` стабильно лучшие почти во всех биннингах
+    - high-gain `W2` features (`cum_funding_24h`, `mom_z_24h`, `ret_24h`, `gk_vol_24h`) имеют отрицательный post-hoc test IC
+- Токсичные `W2` long names: `XRP`, `ADA`, `SAND`, `APT`
+- Лучшие `W2` shorts: `LDO`, `INJ`, `SNX`, `ARB`
+- Rank correlation `W2` vs `W3` почти одинаковая (`~0.56`), но bottom-book churn в `W2` заметно хуже (`0.664` vs `0.577`)
+- **Вывод**: проблема `W2` — не общий развал ранжирования, а плохая long-leg экспозиция и regime-mismatch у части market-sensitive features.
+
+#### R35 — New Features From Existing Data ★★★
+- Протестированы 4 группы новых фич:
+    - `R35a`: CS second-order
+    - `R35b`: interactions
+    - `R35c`: temporal structure
+    - `R35d`: market-level derivatives
+- **R35a (CS second-order) — лучший новый bundle после R33**:
+    - `ret_dispersion_12h`, `cs_rank_ma_5`, `oi_chg_12h_cs`, `taker_cvd_12h_cs`, `cum_funding_24h_cs`
+    - `W1=-0.45`, `W2=3.03`, `W3=1.91`, `ALL=0.64`
+- `R35b interactions`: `W2=2.55`, `W3=3.34`, но `ALL=-0.00`
+- `R35c temporal`: `W2=0.85`, `W3=1.90`, `ALL=0.62`
+- `R35d market`: `W1=-3.01`, `ALL=-0.13`
+- **Вывод**:
+    - `R35a` реально добавляет ортогональный сигнал и становится главным кандидатом на дальнейшую абляцию
+    - market-level-only bundle снова подтверждает, что общий режимный шум плохо заходит прямо в CS-модель
+
+#### R36 — Regime Gating
+- Сравнивались 3 эксперта:
+    - `expert_base = A_28f`
+    - `expert_stability = D_30f`
+    - `expert_stable_flow = A_28f + stable_flow4`
+- Лучший standalone по `ALL`: `expert_stability = D_30f`
+    - `W1=-0.47`, `W2=1.06`, `W3=2.84`, `ALL=0.92`
+- Лучший hard gate по `W2`: `gate_stable_base_vs_flow`
+    - `W2=3.72`, но `ALL=0.29`
+- `gate_tri_regime`: `W2=3.17`, `W3=2.24`, `ALL=0.15`
+- **Вывод**: regime gating реальный, но текущие hard-switch rules слишком хрупкие; по `ALL` они не бьют простой стабильный эксперт.
+
+#### R37 — Cost-Aware Execution
+- Тестированы no-trade bands, edge thresholds, liquidity floors (`liq60`, `liq70`) и комбинации.
+- Ключевой победитель: `liq70`
+    - `W2=1.47`, `W3=2.87`
+    - `cost_pct`: `W2=3.86%`, `W3=4.05%`
+    - turnover резко ниже baseline (`~1.5-1.7` vs `~4.2-4.4`)
+- Но `ALL` у `liq70` оказался `-0.04`, а baseline path внутри этого sweep всё ещё лучший по `ALL=0.74`
+- **Вывод**: liquidity filter = сильный execution lever для отдельных окон и costs, но сам по себе не гарантирует лучший `ALL`; его надо тестировать в комбинации с лучшим signal bundle.
+
+#### R38 — Target Engineering 🚫
+- Проверены:
+    - `P(ret > 0.5/1.0/1.5/2.0%)`
+    - `ret - btc_ret`
+    - temporal decay weighting (`90d`, `180d`)
+- Результаты:
+    - baseline `P(ret > 0)` всё ещё лучший по `ALL=0.71`
+    - threshold targets = катастрофа, особенно в `W2` (`-2.95` ... `-5.06`)
+    - `excess_vs_btc`: `ALL=-0.56`
+    - decay variants слегка помогают `W2`, но ухудшают `ALL`
+- **Вывод**: target engineering не ломает representation limit; текущий binary target остаётся лучшим.
+
+#### R39 — Dead Data Activation / Stablecoin Pilot
+- `R39.1` inspection:
+    - `stablecoin_supply.parquet` — лучший из dead-data источников: полный daily regime candidate
+    - `defi_tvl_daily.parquet` — частично покрытый breadth/regime source
+    - `onchain_daily.parquet` — usable only for subset / BTC-ETH-heavy regime info
+- `R39 stablecoin pilot`:
+    - `stable_flow4`: `W1=-0.67`, `W2=2.46`, `W3=1.78`, `ALL=0.17`
+    - `stable_regime6`: `W1=-2.95`, `W2=2.27`, `W3=0.14`, `ALL=-0.72`
+- По ходу `R39` найден и исправлен pipeline issue:
+    - market-level features схлопывались после cross-sectional ranking
+    - в `train_ensemble()` добавлен `cs_rank_exclude`, чтобы regime features не занулялись
+- Дополнительно разблокирован `D5`:
+    - `stablecoins.llama.fi` downloader успешно сохранил snapshots + global/chain history locally
+- **Вывод**:
+    - stablecoin flows содержат реальный regime signal
+    - но как direct feature add-on они вредят champion configuration по `W3/ALL`
+
+### Итог после R34-R39
+
+| Config | W1 | W2 | W3 | ALL |
+|--------|-----|------|------|------|
+| **A_28f baseline** | -0.69 | -0.98 | **2.88** | 0.47 |
+| **R35a (CS second-order)** | -0.45 | **3.03** | 1.91 | 0.64 |
+| **D_30f (stability expert)** | -0.47 | 1.06 | 2.84 | **0.92** |
+| **stable_flow4** | -0.67 | 2.46 | 1.78 | 0.17 |
+
+**Новый урок фазы R34-R39**:
+- `W2` можно чинить, но почти все fixes платятся ухудшением `W3` или `ALL`
+- лучший новый signal bundle = `R35a`
+- лучший stable overall expert = `D_30f`
+- лучший execution lever = `liq70`
+- target engineering и direct market-level feature add-ons не являются главным путём вперёд
+
+### R41–R46: финальный research sprint (апрель 2026)
+
+**R41 — Consolidation matrix**: Попарные комбинации A_28f / R35a / D_30f / liq70 не стакаются.
+Best = A_28f + D30 overlap features → ALL 0.74. R35a + D_30f → ALL 0.64.
+**Вывод**: перекрытие сильнее синергии.
+
+**R42 — Ablation R35a (🏆 НОВЫЙ ЧЕМПИОН)**:
+R35a = 5 features: `ret_dispersion_12h`, `cs_rank_ma_5`, `oi_chg_12h_cs`, `taker_cvd_12h_cs`, `cum_funding_24h_cs`.
+Тестировали все C(5,2)=10 пар → `dispersion + rankma` = **ALL 1.13** (W2=3.22, W3=2.50).
+Вторая пара: `dispersion + funding_cs` = ALL 0.98.
+Full R35a (все 5) = ALL 0.64 — 3 лишних фичи добавляли noise.
+**Урок**: minimal feature set >> saturated bundle.
+
+**R43 — Dynamic exposure**: 5L/4S и 4L/4S при слабом breadth.
+Best = 5L4S ALL 0.87. Но 6L3S baseline = 1.13. Уменьшение net long отдаёт alpha.
+**Вывод**: long bias IS the alpha.
+
+**R44 — Dynamic universe / quality filter**: Hard volume и trailing-IC фильтры.
+Volume top-20 = ALL 0.82. IC-weighted = 0.65. Baseline 35 coins = 1.13.
+**Вывод**: hard pruning контрпродуктивно, модель сама умеет downweight слабые.
+
+**R45 — Calibrated soft gate / expert blend**:
+`expert_stability` (D_30f) standalone = ALL 0.92.
+Soft blend 70/30 champion × stability = ALL 0.85. EMA blend = 0.78.
+**Вывод**: blending не побил лидера. Standalone пики не аддитивны.
+
+**R46 — Separate long/short models**:
+P(ret>median) для long, P(ret<p25) для short. Turnover 2.4 (vs 4.5), cost 12.2% (vs 19.2%).
+Но ALL = 0.54. Потеря alpha >> экономия на costs.
+**Вывод**: unified model лучше. Asymmetric learning не нужен.
+
+### Итог после R41-R46
+
+| Config | W1 | W2 | W3 | ALL |
+|--------|-----|------|------|------|
+| **A_28f + dispersion + rankma** | 0.01 | **3.22** | **2.50** | **1.13** |
+| **D_30f (expert_stability)** | -0.47 | 1.06 | 2.84 | 0.92 |
+| Dynamic 5L4S | -0.11 | 2.70 | 2.14 | 0.87 |
+| Volume-20 universe | -0.12 | 2.50 | 1.90 | 0.82 |
+| A_28f baseline | -0.69 | -0.98 | 2.88 | 0.47 |
+| Asymmetric L/S | -1.17 | 1.80 | 2.08 | 0.54 |
+
+**Ключевой урок R41-R46**: diminishing returns от model/feature engineering. Путь вперёд — НОВЫЕ ДАННЫЕ + execution improvement.
+
+### R47 — CoinGlass Feature Research (🏆 НОВЫЙ CHAMPION CANDIDATE)
+
+**Цель**: Протестировать CoinGlass derivatives data (ликвидации, taker buy/sell, L/S ratio) на incremental alpha.
+
+**Данные**: CoinGlass API, 5 endpoints × 35 symbols:
+- 1d interval: 259,412 rows total (5 endpoints), 2022-01-01 → 2026-04-05 (покрывает все 3 WF окна)
+- 12h interval: 25,200 rows/endpoint, 2025-04-11 → 2026-04-05
+
+**Протокол**: QA → IC scan (TRAIN only) → redundancy check → event study → per-feature WF ablation.
+
+**QA findings**:
+- Свечи CoinGlass ОТКРЫВАЮТСЯ в timestamp, покрывают [t, t+24h). Shift=1 день (lookahead-safe).
+- `cg_date = floor(ohlcv_timestamp, 'D') - 1 day` — берём вчерашний полный daily candle
+- MATIC + FTM исключены (нет funding/ls_ratio)
+- 4.4% нулей (норма), аномалия Oct 10 2025 $1.87B BTC liq — реальное событие
+
+**Построены фичи (11 штук)**:
+- Per-symbol (CS-ranked): `cg_liq_total`, `cg_liq_imbalance`, `cg_liq_zscore`, `cg_liq_accel`, `cg_taker_imb`, `cg_taker_imb_z`, `cg_ls_ratio`, `cg_ls_zscore`
+- Market-level (НЕ CS-ranked): `mkt_cg_liq_total`, `mkt_cg_liq_log`, `mkt_cg_liq_imb`
+- Исключена: `cg_liq_intensity` (r=0.89 с `rel_volume_cs` — артефакт формулы)
+
+**IC Scan (TRAIN, all 35 sym, 3 WF windows)**:
+
+| Flag | Feature | mean_IC | ICIR |
+|------|---------|---------|------|
+| 🔥 | `mkt_cg_liq_imb` | +0.086 | +0.479 |
+| 🔥 | `cg_liq_imbalance` | +0.063 | +0.509 |
+| 🔥 | `cg_taker_imb` | -0.032 | -0.324 |
+| 🔥 | `cg_taker_imb_z` | -0.031 | -0.292 |
+| ✅ | `cg_liq_zscore` | +0.019 | +0.151 |
+| ✅ | `cg_ls_zscore` | +0.018 | +0.207 |
+
+**Redundancy**: `mkt_cg_liq_imb` ~ `ret_48h` (r=-0.57), `cg_taker_imb` ~ `ret_48h` (r=+0.39, менее redundant).
+
+**Event study**: short_liq_dom → fwd_ret_12h=+0.0008, t=+4.16 (статистически значимо — short squeeze effect).
+
+**Walk-Forward Ablation**:
+
+| Config | W1 | W2 | W3 | ALL | Δ ALL |
+|--------|-----|------|------|------|-------|
+| **champion+cg_taker_imb** | **0.60** | 2.86 | 2.03 | **1.31** | **+0.18** |
+| champion_30f (baseline) | 0.01 | 3.22 | 2.50 | 1.13 | 0.00 |
+| champion+liq_log+liq_total | -0.60 | 2.33 | 1.76 | 1.03 | -0.10 |
+| champion+cg_ls_zscore | -0.91 | 4.03 | 2.17 | 0.54 | -0.59 |
+| champion+mkt_cg_liq_log | -1.50 | -0.56 | 1.77 | 0.07 | -1.06 |
+| champion+cg_liq_zscore | -1.49 | 2.79 | 2.33 | -0.04 | -1.17 |
+
+**R47 ключевые выводы**:
+1. `cg_taker_imb` — единственная CG фича, улучшившая ALL (1.13→1.31, +16%). Формула: `(buyVol-sellVol)/(buyVol+sellVol)`, CS-ranked, shift=1 day.
+2. **Парадокс**: высший IC (liq_imbalance IC=0.086) УБИВАЕТ модель в WF (ALL→0.07), а скромный taker_imb (IC=-0.032) — побеждает. Причина: redundancy с ret_48h + multicollinearity.
+3. W1 прыгнул 0.01→0.60 (самое проблемное окно). W2/W3 чуть ослабли.
+4. Market-level CG features вредят (в отличие от ret_dispersion_12h).
+5. CoinGlass подписка оправдана ($29/мес): `cg_taker_imb` даёт +0.18 Sharpe.
+
+**Файлы**: `_research_r47_qa.py` (QA), `_research_r47_coinglass.py` (IC+WF), `results_r47.log`, `results_r47_summary.csv`
+
+### R48 — Hybrid Costs + Feature Validation (🏆 НОВЫЙ CHAMPION ALL=1.66)
+
+**Цель**: Валидация champion_31f, тестирование производных от cg_taker_imb, residualized liquidations, и гибридная модель стоимости исполнения.
+
+**Скрипты**: `_research_r48_validation.py`, `_research_r48_features.py`, `_research_r48_cost.py`, `_research_r48_combo.py`
+
+#### R48.0 — Validation champion_31f
+- Timestamp check: CoinGlass shift=1d → lookahead-safe ✅
+- **Bootstrap**: P(ΔSharpe>0) = 69.6% — MARGINAL (ниже порога 80%, но не катастрофа)
+- Monthly stability: 10/18 win months (56%), top-2 months = 57% → ✅ распределено
+- Mean monthly IC = +0.022, 9/13 положительных месяцев
+- Clip sensitivity: raw=1.31, clip_98=1.31, winsorize=0.94, gaussian_rank=0.22 → raw лучший, умеренно устойчив
+- **Вывод**: champion_31f принят с оговоркой (bootstrap маргинальный)
+
+#### R48.1 — Taker derivatives (Phase 1)
+
+| Config | W1 | W2 | W3 | ALL | Δ ALL |
+|--------|-----|------|------|------|-------|
+| baseline champion_31f | +0.60 | +2.86 | +2.03 | **+1.31** | 0.00 |
+| +cg_taker_imb_ma3 | -0.50 | +3.37 | +3.13 | +0.94 | -0.37 ❌ |
+| +cg_taker_imb_delta | +1.09 | +1.04 | +2.76 | +1.23 | -0.08 ❌ |
+| +cg_taker_imb_cs_demean | -0.45 | +2.68 | +3.00 | +0.73 | -0.58 ❌ |
+
+**Вывод**: Никакие taker derivatives не улучшают ALL=1.31. Оригинальный cg_taker_imb оптимален.
+
+#### R48.2 — Residualized liquidations (Phase 2)
+
+Попытка убрать redundancy между cg_liq_imbalance и ret_48h через residualization:
+
+| Config | IC | ICIR | WF ALL | Δ ALL |
+|--------|-----|------|---------|-------|
+| cg_liq_imb_resid_bin | +0.060 | +0.48 | +0.71 | -0.60 ❌ |
+| cg_liq_imb_resid_roll | -0.002 | -0.02 | +0.61 | -0.70 ❌ |
+| mkt_cg_liq_imb_resid | +0.059 | +0.33 | +0.13 | -1.18 ❌ |
+
+**Вывод**: Residualization НЕ спасает liquidation features. Несмотря на хороший IC, все хуже baseline. cg_liq_imbalance фундаментально redundant с ret_48h.
+
+#### R48.3 — Hybrid Tiered Cost Model (Phase 3) 🏆
+
+Тестировалось три модели стоимости для champion_31f:
+
+| Cost Model | W1 | W2 | W3 | ALL | Cost% |
+|-----------|-----|------|------|------|-------|
+| Uniform 7bps | +0.60 | +2.86 | +2.03 | +1.31 | 19.2% |
+| **Hybrid Tiered** | **+0.98** | **+3.53** | **+2.52** | **+1.66** | **9.8%** |
+| Liq-Weighted | +0.17 | +0.18 | +1.95 | +0.53 | 27.3% |
+
+Hybrid тiers:
+- TIER1 (BTC/ETH/SOL/BNB/XRP): 92% maker fill @ -1bp + 8% taker @ 7bp → ~0.4bp effective
+- TIER2 (ликвидные altcoins): 75% maker @ 1bp + 25% taker @ 7bp → ~2.5bp effective
+- TIER3 (остальные): taker + slippage = 7bp
+
+**Вывод**: Hybrid costs = ПРОРЫВ. Стоимость 19.2%→9.8% (-9.4%), Sharpe 1.31→1.66 (+27%). Liq-weighted хуже (overfits small caps).
+
+#### R48.4 — Best Combo (Phase 4)
+
+Финальное сравнение с hybrid costs:
+
+| Config | W1 | W2 | W3 | ALL | Cost% |
+|--------|-----|------|------|------|-------|
+| **A: champion_31f + hybrid** | **+0.98** | **+3.53** | **+2.52** | **+1.66** | **9.8%** |
+| E: champion_30f + hybrid (ref) | +0.40 | +3.89 | +2.99 | +1.51 | 9.7% |
+
+**🏆 NEW CHAMPION: champion_31f + hybrid tiered costs → ALL=1.66**
+- cg_taker_imb остаётся essential: 30f=1.51, 31f=1.66 (+0.15 при том же cost)
+- Hybrid costs = основной драйвер (1.31→1.66, -48% cost drag)
+
+**Итоговая таблица R48**:
+
+| Config | W1 | W2 | W3 | ALL | Cost% |
+|--------|-----|------|------|------|-------|
+| **R48 Champion**: 31f hybrid | +0.98 | +3.53 | +2.52 | **1.66** | **9.8%** |
+| Prev champion: 31f uniform | +0.60 | +2.86 | +2.03 | 1.31 | 19.2% |
+| 30f hybrid (no CG ref) | +0.40 | +3.89 | +2.99 | 1.51 | 9.7% |
+| 30f uniform | +0.01 | +3.22 | +2.50 | 1.13 | 19.2% |
+
+**Ключевые R48 уроки**:
+1. Hybrid maker/taker cost model = крупнейший execution improvement в истории проекта
+2. Taker derivatives (ma3/delta/demean) не помогают — оригинал оптимален
+3. Residualization не спасает liq_imbalance — redundancy structure фундаментальная
+4. cg_taker_imb по-прежнему valuable: +0.15 Sharpe на hybrid costs
+5. Bootstrap маргинален (69.6%), но strategy реальна (monthly stability подтверждена)
+
+---
+
+### R55 — CoinGlass Basis/FR/OI IC Scan (✅ pandas 2.3.3, 2026-04-06)
+
+**Цель**: IC scan новых CoinGlass фич (`cg_basis_z_60d`, `cg_fr_close`, `cg_fr_disagreement`, `cg_basis_close`, `cg_oi_chg_1d`) на 35-монетном universe.
+
+**IC результаты** (cross-val на train split, R56 baseline IC):
+
+| Feature | Coverage | IC W1 | IC W2 | IC W3 | IC ALL | Заметки |
+|---------|----------|--------|--------|--------|--------|---------|
+| `cg_basis_z_60d` | 27/35 (77%) | +0.052 | +0.054 | +0.056 | **+0.054** | winner, но неполное покрытие |
+| `cg_basis_close` | 27/35 (77%) | — | — | — | +0.045 | коварна с basis_z |
+| `cg_fr_close` | 33/35 (94%) | — | — | — | -0.064 | r=0.86 с cum_funding (redundant!) |
+| `cg_fr_disagreement` | 33/35 (94%) | — | — | — | -0.047 | novel, но отрицательный IC |
+| `cg_oi_chg_1d` | 33/35 (94%) | — | — | — | -0.056 | отрицательный IC |
+
+**Ключевые уроки R55**:
+1. `cg_basis_z_60d` — единственный winner по IC (+0.054 ALL), но покрытие 27/35 — риск
+2. `cg_fr_close` коллинеарен с `cum_funding_24h` (r=0.86) — redundant, не добавляет информацию
+3. Отрицательный IC ≠ бесполезная фича (модель может выучить обратный знак), но слабый сигнал
+
+---
+
+### R56 — CG Feature Substitution WF Ablation (✅ pandas 2.3.3, 2026-04-06)
+
+**Цель**: Заменить champion фичи на candidate CG фичи (R55) в walk-forward симуляции. Все на 35-coin universe vs baseline_35=+1.66.
+
+**Feature importance Phase 0** (LGB gain, champion 31f):
+
+| Фича | Gain | Примечание |
+|------|------|----------|
+| `cum_funding_24h` | 18831 | **#1**, незаменимая |
+| `pct_coins_up_12h` | 13509 | #2 |
+| `mom_z_24h` | 9542 | #3 |
+| `dow_cos` | 0 | мёртвая |
+| `dow_sin` | 0 | мёртвая |
+| `hour_cos` | 0 | мёртвая |
+
+**Coverage penalty**: baseline_27 (только монеты с basis данными) = ALL=+0.09 vs baseline_35=+1.66 → **Δ=-1.57**. 8 монет без basis датчика несут огромную alpha.
+
+**Результаты замены фич** (все сравнения vs baseline_35=+1.66):
+
+| Exp | Замена | ALL | W1 | W2 | W3 | ΔSharpe | Решение |
+|-----|--------|-----|----|----|-----|---------|---------|
+| baseline | 35-coin champion 31f | +1.66 | +0.98 | +3.53 | +2.52 | — | **чемпион** |
+| 2.1 | `dow_cos` → `basis_z` | +0.91 | -0.35 | +2.30 | +2.03 | -0.75 | ❌ |
+| 2.2 | `cum_funding` → `basis_z` | +0.97 | -0.29 | +2.30 | +1.94 | -0.69 | ❌ |
+| 3.1 | `cum_funding` → `fr_close` | +1.36 | +0.35 | +2.67 | +0.46 | -0.30 | ❌ |
+| 3.2 | `cum_funding` → `fr_disagree` | +0.75 | -0.45 | +2.16 | +1.45 | -0.91 | ❌ |
+| 3.3 | `oi_zscore` → `oi_chg_1d` | +0.32 | -1.13 | +2.93 | +2.60 | -1.34 | ❌ |
+
+**Ключевые R56 уроки**:
+1. **Ни одна CG/R55 фича НЕ улучшает champion при замене.** Чемпион 31f hybrid ALL=+1.66 остаётся.
+2. Basis фичи (27/35 coverage) сильно штрафуются: 8 монет без basis дают Δ=-1.57 alpha.
+3. `cum_funding_24h` #1 по важности — незаменима. Любая замена сильно ухудшает.
+4. Добавление 32-й фичи (вместо замены) — **не тестировалось**, открытый вопрос для R57.
+
+---
+
+### R56b — Dead Feature Swap (✅ pandas 2.3.3, 2026-04-06)
+
+**Цель**: Заменить мёртвые фичи (gain=0: `dow_cos`, `hour_cos`, `dow_sin`) на CG кандидатов — consultant recommendation "replace dead, not top-1".
+
+| Exp | Замена | ALL | W1 | W2 | W3 | ΔSharpe | Решение |
+|-----|--------|-----|----|----|-----|---------|---------|
+| B0 | baseline 31f | +1.66 | +0.98 | +3.53 | +2.52 | — | **чемпион** |
+| B1 | `dow_cos` → `fr_disagree` | +0.94 | -0.47 | +1.51 | +2.89 | -0.72 | ❌ |
+| B2 | `hour_cos` → `fr_disagree` | +0.78 | -0.98 | +1.86 | +3.10 | -0.88 | ❌ |
+| B3 | `dow_cos` → `oi_chg_1d` | +0.76 | -0.22 | +3.66 | +1.72 | -0.90 | ❌ |
+
+**Ключевые R56b уроки**:
+1. Даже замена мёртвых фич (gain=0) на CG кандидатов даёт -0.72 … -0.90 Sharpe.
+2. `cg_fr_disagreement` разрушает W1 и W2 вне зависимости от заменяемой фичи.
+3. `cg_oi_chg_1d` показывает хорошо в W2 (+3.66 > baseline +3.53), но ломает W1/W3.
+4. **Итог R55+R56+R56b**: Ни одна CG фича не проходит WF-тест на замену. Champion 31f hybrid ALL=+1.66 остаётся финальным чемпионом.
+
+---
+
+## 8. История утечек данных (Data Leakage)
+
+### 6 крупных инцидентов:
+
+| # | Описание | Как нашли | Влияние | Фикс |
+|---|----------|-----------|---------|------|
+| 1 | **v1 time features**: hour_sin/dow_cos доминировали модель | IC analysis → time dominated | IC inflated, Sharpe=-1.0 в production | Removed time features from model input |
+| 2 | **R18 IC scan на test data**: Feature selection по test IC | Audit methodology | Selection bias → artificially strong features | R19: IC scan ТОЛЬКО на TRAIN |
+| 3 | **R21 rebalance overlap**: 6h rebal с 12h target → часы 6-12 дважды | Manual code review | Sharpe inflated by √2 | rebal_hours ≥ horizon |
+| 4 | **Gen2 OOS leakage**: sim start Dec 9 but train_end=Feb 1 | Timeline review | Test data in training | Honest OOS window (Feb 9→Mar 7) |
+| 5 | **R30 double cost**: Costs multiplied в simulate() И eval() | Debugging live losses | Costs understated 2x | R30b corrected |
+| 6 | **Val-test overlap (pre-v6)**: Validation overlapped test | Walk-forward audit | Inflated early stopping | train_end moved 2mo before test_start + purge gap |
+
+### Правила предотвращения утечек:
+- IC scan ТОЛЬКО на train data
+- 8 days purge gap между train и test (168h features + 12h target ≈ 7d, округлено)
+- rebal_hours ≥ horizon (НИКОГДА 6h rebal с 12h target)
+- Expanding window: train_end строго < test_start - purge
+- Validation set: ends BEFORE test_start - purge
+
+---
+
+## 9. Execution Layer эксперименты (Overnight v10–v15)
+
+### v14 (CatBoost variations)
+
+| Experiment | Train Sharpe | Sim Return | Sim HAC |
+|-----------|-------------|-----------|---------|
+| cb_noderiv_hpo | 1.77 | +121.2% | 4.90 |
+| cb_noderiv_hd05 | 1.70 | +111.6% | 4.61 |
+| cb_noderiv_hd15 | **1.93** | +127.2% | 5.03 |
+| cb_all_hpo | 1.62 | +128.4% | 5.29 |
+| **cb_market_noderiv_hpo** | **1.83** | **+143.8%** | **5.33** |
+
+**CHAMPION**: cb_market_noderiv_hpo. Per-coin news = noise, market-level news = signal.
+
+### v15 (46 simulations, execution flags)
+
+| Flag | Return | HAC | Verdict |
+|------|--------|-----|---------|
+| vol-target 0.30-0.60 | -54 to +6pp | хуже | **ВРЕДИТ** |
+| hysteresis 3-10 | identical | identical | **НУЛЕВОЙ ЭФФЕКТ** (при 12h rebal) |
+| smooth-signal 0.2-0.5 | -15 to -71pp | хуже | **ВРЕДИТ** |
+| **vol-size** | **+3.7pp** | **+0.15** | **ЕДИНСТВЕННЫЙ ПОБЕДИТЕЛЬ** |
+| regime-shorts 0.3-0.5 | -87 to -114pp | catastrophe | **КАТАСТРОФА** |
+| meta-risk | +41pp | -0.04 | Больше return, хуже HAC |
+
+**Ключевые сюрпризы v15:**
+- Hysteresis = нулевой эффект при 12h ребалансировке
+- Signal smoothing ВРЕДИТ — предсказания модели уже точные, сглаживание размывает
+- Vol targeting ВРЕДИТ — модель уже учитывает vol через фичи
+- Short alpha РЕАЛЬНЫЙ и сильный — урезание шортов разрушает performance
+- **Только --vol-size (inverse-vol position sizing) помог**
+
+### Benchmark Results (14d)
+
+| Config | Return | Sharpe HAC |
+|--------|--------|-----------|
+| v6 no deriv | +3.0% | 3.67 |
+| v7 no deriv | +2.4% | 3.14 |
+| Ens no deriv | +2.3% | 2.65 |
+| **Ens+meta no deriv** | **+3.7%** | **4.69** |
+
+**Deriv gate ВРЕДИТ** (avg scale 0.84x): v6 HAC 3.67→1.74
+
+---
+
+## 10. AI Consultation Documents
+
+11 файлов-консультаций, хронология:
+
+| Файл | Фокус | Ключевой вывод |
+|------|-------|----------------|
+| AI_CONSULTATION_PROMPT.md | Full system review (188 features) | Architecture overview |
+| v2 | 6-month instability | Sept-Dec 2025 = модель теряет деньги, профит только в последние 2 месяца |
+| v3 | Meta-model stacking | LGB-MINIMAL best meta: DDStop Sh=2.35, но simple mean ≈ equal |
+| v4 | What's next? Full exp history | Champion=CatBoost solo +131.5%, derivatives HURT |
+| v5 | v14-v15 results | --vol-size единственный победитель, short alpha real |
+| v6 | Walk-forward + deployment | Val-test overlap bug fixed. CatBoost no_news best |
+| v7 | Feature engineering | **System is representation-limited, not model-limited** |
+| v8 | Rolling vs Expanding window | WinC notably weaker. 6-24mo testing. |
+| DATA | New data sources | On-chain, orderbook depth, stablecoin flows = gaps |
+| IMPROVEMENT | How to improve | LambdaRank FAIL, Residual target useless, Meta-labeling failed |
+| REGRESSION | Performance regression | Retrained models: +21.7% → LIQUIDATION. DDStop fix + overlap fix revealed true lower alpha. |
+
+---
+
+## 11. Установленные факты и выводы
+
+### Что работает:
+1. **LGB+XGB binary ensemble** — лучшая модель среди всех протестированных
+2. **Cross-sectional rank normalization** — essential, убирает market beta
+3. **FEAT_28 (28 фич)** — оптимальный feature set, добавление фич ухудшает
+4. **6L/3S + ema_alpha=0.5 + hysteresis=3** — лучший portfolio config
+5. **12h rebalance** — optimal (6h = leakage bug, 24h = теряет сигнал)
+6. **Inverse-vol sizing (--vol-size)** — единственный execution flag который помог
+7. **5 seeds ensemble** — стабильнее одного seed
+8. **Expanding window** — лучше rolling для этих данных
+9. **Short alpha РЕАЛЬНЫЙ** — нельзя урезать шорты
+10. **R35a CS second-order features** — лучший новый feature bundle после R33, особенно для ремонта `W2`
+11. **Liquidity filter (`liq70`)** — сильный execution lever: costs и turnover резко вниз, `W2/W3` вверх
+12. **`D_30f` stability expert** — лучший текущий компромисс по `ALL`
+13. **`cg_taker_imb`** — CoinGlass taker buy/sell imbalance, shift-1 day, CS-ranked. Fixes W1 dramatically.
+14. **Hybrid tiered cost model (R48)** — TIER1~0.4bp / TIER2~2.5bp / TIER3~7bp. Costs 19.2%→9.8%, ALL 1.31→1.66
+
+### Что НЕ работает:
+1. **Больше фич = хуже** (feature curse, R28 catastrophe)
+2. **Signal smoothing EMA** ВРЕДИТ — модель уже точная
+3. **Vol targeting** ВРЕДИТ — модель учитывает vol через фичи
+4. **Regime-shorts** — КАТАСТРОФА
+5. **Macro фичи** (VIX, DXY, SPX) — noise для CS crypto
+6. **Per-coin news** ВРЕДИТ LGB (помогает только CatBoost)
+7. **Per-coin derivatives** ВРЕДЯТ всем моделям (market-level = marginal)
+8. **Multi-horizon blending** — не помогает
+9. **LambdaRank** — ТОТАЛЬНЫЙ ПРОВАЛ (IC 0.111→0.006)
+10. **Residual target** — useless (r=0.965 с обычным target)
+11. **Meta-labeling** — failed (690 trades too few)
+12. **Старые данные (2017-2020)** — яд для crypto models
+13. **Calendar features** — hurt
+14. **Target engineering** (`R38`) — threshold/excess/decay не бьют baseline binary target
+15. **Market-level macro / stablecoin features как direct CS add-on** — иногда чинят `W2`, но чаще вредят `W3/ALL`
+16. **Hard regime switching** — помогает `W2`, но пока не побеждает лучший standalone expert по `ALL`
+17. **cg_taker_imb_ma3 / delta / cs_demean (R48.1)** — все производные от taker_imb хуже оригинала
+18. **cg_liq_imb residualization (R48.2)** — residual bin/roll/mkt все хуже baseline; redundancy фундаментальная
+19. **Liq-weighted portfolio (R48.3 / R49c)** — ALL=0.53 при cost=27.3%, хуже uniform. R49c диагноз: NOT a bug — CS alpha генуинно в T2/T3 (IC=+0.028/+0.022), T1 IC≈0 (-0.004). Доп. причина: volume = coin units, BTC downweighted vs DOGE.
+
+### Ключевые метрики:
+- **Signal plateau**: Sh≈3.39 (gross, research sim) — model changes не помогают
+- **Cost drag**: 40-47% — net Sharpe ~1.3 без smoothing, ~2.88 с ema+hysteresis
+- **Model correlation**: r=0.93-0.97 между LGB/XGB/CB/CatBoost
+- **IC**: Mean 0.029, ICIR 1.99, IC>0 в 13/13 месяцев
+- **System is representation-limited, not model-limited**
+
+### Гиперпараметры лучшей модели:
+
+**LGB Classification**:
+```python
+params_lgb = {
+    "objective": "binary",
+    "metric": "auc",
+    "learning_rate": 0.03,
+    "num_leaves": 63,
+    "min_child_samples": 100,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "lambda_l2": 1.0,
+    "n_estimators": 600,
+    "early_stopping_rounds": 40,
+}
+```
+
+**XGB Classification**:
+```python
+params_xgb = {
+    "objective": "binary:logistic",
+    "eval_metric": "auc",
+    "learning_rate": 0.03,
+    "max_depth": 6,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "n_estimators": 600,
+    "early_stopping_rounds": 40,
+}
+```
+
+**Ensemble**: `signal = 0.5 * rank(lgb_prob) + 0.5 * rank(xgb_prob)`
+
+---
+
+## 12. Текущее состояние и нерешённые проблемы
+
+### Текущее состояние после R48:
+
+| Config | W1 | W2 | W3 | ALL | Cost% | Статус |
+|--------|-----|------|------|------|-------|--------|
+| **31f + hybrid costs** | **+0.98** | **+3.53** | **+2.52** | **+1.66** | **9.8%** | **🏆 CHAMPION (R48)** |
+| 31f + uniform 7bps | +0.60 | +2.86 | +2.03 | +1.31 | 19.2% | prev champion (R47) |
+| 30f + hybrid costs (no CG) | +0.40 | +3.89 | +2.99 | +1.51 | 9.7% | reference |
+| A_28f + dispersion + rankma | 0.01 | 3.22 | 2.50 | 1.13 | — | prev (R42) |
+| D_30f (expert_stability) | -0.47 | 1.06 | 2.84 | 0.92 | — | stability baseline |
+
+**Champion (R48)**: `A_28f + ret_dispersion_12h + cs_rank_ma_5 + cg_taker_imb` (31 features) + **hybrid tiered costs**
+- `cg_taker_imb` = (buyVol - sellVol)/(buyVol + sellVol), CoinGlass taker data, shift-1 day, CS-ranked
+- `ret_dispersion_12h` — market-level feature, MUST use `cs_rank_exclude`
+- `cs_rank_ma_5` — smoothed 5-period rank, stabilizer
+- **Hybrid cost model**: TIER1 (BTC/ETH/SOL/BNB/XRP ~0.4bp), TIER2 (~2.5bp), TIER3 (7bp)
+- ALL Sharpe = 1.66, cost drag = 9.8% (down from 19.2%!), W1=0.98 / W2=3.53 / W3=2.52
+- Bootstrap P(ΔSharpe>0) = 69.6% (marginal but accepted)
+
+### Полная матрица R41–R46 экспериментов:
+
+| Эксперимент | Гипотеза | ALL Sharpe | Вердикт |
+|-------------|----------|------------|---------|
+| **R41** Consolidation matrix | Комбинации R35/D30/liq70 дадут синергию | 0.74 best | ❌ Не стакаются |
+| **R42** Ablation R35a features | Минимальный subset из 5 CS фич | **1.13** | ✅ **ЧЕМПИОН**: dispersion+rankma |
+| **R43** Dynamic exposure (5L4S/4L4S) | Уменьшить net long при слабом бредте | 0.87 best | ❌ Отдают alpha |
+| **R44** Dynamic universe / quality filter | Volume/IC фильтры | 0.82 best | ❌ Hard pruning слишком грубый |
+| **R45** Calibrated soft gate / expert blend | soft blend R42 × stability × stablecoin | 0.92 (standalone) | ❌ Blend не побил standalone |
+| **R46** Separate long/short models | P(ret>median) long + P(ret<p25) short | 0.54 | ❌ Alpha loss >> cost saving |
+| **R47** CoinGlass features | Liq/taker/LS ratio from CoinGlass API | **1.31** | ✅ +cg_taker_imb (+0.18 Sharpe) |
+| **R48** Hybrid costs + validation | Validate 31f, taker derivatives, residualized liq, hybrid costs | **1.66** | ✅ **🏆 CHAMPION**: hybrid tiered costs (cost 19.2%→9.8%) |
+
+### R42 детали (ablation R35a):
+
+R35a bundle = 5 фич: ret_dispersion_12h, cs_rank_ma_5, oi_chg_12h_cs, taker_cvd_12h_cs, cum_funding_24h_cs
+
+| Config | W1 | W2 | W3 | ALL |
+|--------|-----|------|------|------|
+| **A_28f + dispersion + rankma** | 0.01 | **3.22** | **2.50** | **1.13** |
+| A_28f + dispersion + funding_cs | 0.21 | 3.09 | 2.89 | 0.98 |
+| A_28f + rankma + taker_cs + funding_cs | 0.10 | 1.34 | 2.92 | 0.95 |
+| Full R35a (all 5) | -0.45 | 3.03 | 1.91 | 0.64 |
+| A_28f baseline | 0.05 | 0.21 | 2.35 | 0.74 |
+
+### R46 детали (asymmetric long/short):
+
+| Config | W1 | W2 | W3 | ALL | Cost% | Turnover |
+|--------|-----|------|------|------|-------|----------|
+| **Unified baseline** | 0.01 | **3.22** | **2.50** | **1.13** | 19.2% | 4.5 |
+| Asymmetric L/S | -1.17 | 1.80 | 2.08 | 0.54 | 12.2% | 2.4 |
+
+### Данные — новые источники (D1–D7):
+
+| Источник | Статус | Результат |
+|----------|--------|-----------|
+| **D1** CoinGlass (liq/taker/LS) | ✅ **TESTED (R47)** | `cg_taker_imb` → ALL=1.31 (+0.18). Liq features high IC но вредят WF |
+| **D5** DefiLlama stablecoins | ✅ Downloaded | 360 assets, 3K+ history. Использован в R39 |
+| **D6** Orderbook depth (Binance) | ⏳ Daemon копит | Инфра готова, нужно 2-3 недели |
+| **D7** Social/Trends scan | ✅ Scanned | Reddit subs IC≈0.05, gtrends IC≈0.04. Покрытие 17/35 |
+| On-chain (CoinMetrics) | ✅ Scanned | TxCnt_chg7d ICIR=0.145, только 9 монет |
+| **Santiment** | 🆕 Free tier зарегались | Social volume/sentiment per coin, 1000+ assets |
+
+### Провайдеры данных — решения по покупке (апрель 2026):
+
+**КУПИЛИ / ПОКУПАЕМ:**
+1. **CoinGlass Hobbyist** — $29/мес
+   - 80+ endpoints, 30 req/min
+   - Liquidations, L/S ratio, taker buy/sell, OI, funding, CVD, orderbook — PER COIN
+   - History: 12h interval = 360 days, daily = all-time
+   - Endpoint для ликвидаций: `GET /api/futures/liquidation/history`
+
+2. **Santiment Free** — $0
+   - 1,000 API calls/мес, 1 год истории (без последних 30 дней)
+   - Social volume, sentiment, dev activity per coin. 1000+ криптоактивов
+
+**ПРОВЕРИЛИ И ОТЛОЖИЛИ:**
+- **CoinAPI Flat Files** — pay-as-you-go: $10/1000 GET requests, $1-3/GB transfer, $250/1000 OHLCV requests. Дорого для нашего масштаба, нет derivatives-specific data (no liquidations/L-S ratio).
+- **Hyperliquid S3** — `s3://hyperliquid-archive/market_data/` L2 book snapshots + `s3://hl-mainnet-node-data/node_fills_by_block` trade fills. БЕСПЛАТНО (requester-pays S3). Только Hyperliquid DEX, не Binance/OKX, и обновляется ~1 раз в месяц. Полезно как дополнительный DEX orderbook source.
+- **Kaggle dataset** (ollibolli/btc-historical-leverage-liquidations-order-data) — 723 MB, BTC only, 3 месяца от Hyperliquid. Слишком мало и только BTC.
+- **CryptoDataDownload** — Free: OHLCV CSV. API $49.99/мес: 1100+ spot assets, 330+ futures, funding/liquidations/OI. Но для derivatives пытаются покрыть то же что CoinGlass за дороже.
+- **CoinDesk Data** (data.coindesk.com) — enterprise-grade, 300+ бирж, tick-level. Нет публичных цен → "Book a call". Точно > $100/мес.
+- **CryptoQuant** — $29/мес Advanced: 100 req/day, 7 дней API history = бесполезно. Professional $99/мес: 1 год. CoinGlass покрывает то же за $29.
+- **LunarCrush** — $5/день ($150/мес) за social data. Santiment даёт то же бесплатно.
+- **Glassnode** — on-chain, $49-999/мес. On-chain мы уже тестировали: ICIR < 0.15, максимум 9 монет.
+
+### Что доказано работающим (финальный список):
+
+1. **12h binary classification** — оптимальный target
+2. **LGB+XGB ensemble** — оптимальная модель
+3. **EMA + hysteresis** — снижает cost drag с 57% → 35%
+4. **`ret_dispersion_12h`** — ключевой W2 repair lever (market-level, cs_rank_exclude!)
+5. **`cs_rank_ma_5`** — стабилизатор, без него dispersion одна не работает
+6. **Regime filter** — BTC trend_strength scale
+7. **`cg_taker_imb`** — CoinGlass taker buy/sell imbalance, shift-1 day. Fixes W1 (0.01→0.60), ALL 1.13→1.31
+8. **Hybrid tiered cost model (R48)** — TIER1~0.4bp / TIER2~2.5bp / TIER3~7bp. ALL 1.31→1.66, cost drag 19.2%→9.8%
+
+### Что доказано БЕСПОЛЕЗНЫМ (финальный список):
+
+- ❌ Target engineering (R38) — threshold, excess-vs-BTC, temporal decay
+- ❌ Stablecoin/macro features напрямую в CS модель (R39, R28)
+- ❌ Hard regime switching (R36)
+- ❌ Feature sets >30 (noise dominates)
+- ❌ Multi-horizon / meta-stacking (R27)
+- ❌ Dynamic exposure rules 5L4S/4L4S (R43)
+- ❌ Hard quality/liquidity pruning (R44)
+- ❌ Separate long/short models (R46)
+- ❌ Soft gate expert blending (R45)
+- ❌ On-chain exchange flows (ICIR < 0.03)
+- ❌ DeFi TVL features (ICIR < 0.10)
+- ❌ Market-level CG liquidation features (mkt_cg_liq_log/total → killed ALL, R47)
+- ❌ CG liq_imbalance напрямую в модель (IC=0.086 но redundant с ret_48h, WF destroys, R47)
+- ❌ CG liq_intensity (r=0.89 с rel_volume_cs — артефакт формулы, R47)
+- ❌ cg_taker_imb_ma3/delta/cs_demean (R48.1) — все производные хуже оригинального cg_taker_imb
+- ❌ cg_liq_imb residualization (R48.2) — bin/roll/mkt все хуже; IC≈0.06 не спасает от WF failure
+- ❌ Liq-weighted portfolio (R48.3) — ALL=0.53, cost=27.3%, значительно хуже hybrid
+
+### Главная проблема:
+
+**Cost gap sim→live.** Sim ALL=1.66 при hybrid costs (9.8% drag). С hybrid tiered execution (maker fills для top-5 пар) sim→live gap сокращается. Нужен:
+- (a) Реализовать hybrid cost execution на live OKX — TIER1 maker orders (BTC/ETH/SOL/BNB/XRP)
+- (b) Больше capital ($86 → sizing problem для 9 позиций)
+- (c) D6 orderbook depth — daemon копит, нужно ещё 2-3 недели
+
+### Нерешённые проблемы:
+
+1. **Hybrid cost model на live**: R48.3 доказал 9.8% cost drag в sim. Нужна реализация maker fills для TIER1 на OKX live.
+2. **Bootstrap маргинален** (69.6%): cg_taker_imb не proof-positive статистически, но monthly IC стабильна и W1 repair убедительный.
+3. **Liquidation IC paradox**: IC=0.086 но WF уничтожается redundancy. Residualization не помогла (R48.2). Liquidations = not usable.
+4. **Capital**: $86 → невозможно нормально sizing 9 позиций.
+5. **VPS остановлен**: live trading приостановлена. D6 daemon не на VPS (SSH ключ rejected).
+
+### R48 — ЗАВЕРШЁН ✅
+
+**R48.0 — Validation**: ✅ Bootstrap 69.6% (маргинальный), monthly IC 9/13 positive, clip_98=1.31 ✅
+**R48.1 — Taker derivatives**: ✅ Все хуже: ma3=-0.37, delta=-0.08, demean=-0.58. Оригинал оптимален.
+**R48.2 — Residualized liq**: ✅ Все хуже: bin=-0.60, roll=-0.70, mkt=-1.18. IC≠WF signal.
+**R48.3 — Hybrid costs**: ✅ ПРОРЫВ: ALL 1.31→1.66, cost 19.2%→9.8%. Liq-weighted = хуже.
+**R48.4 — Best combo**: ✅ 31f hybrid = лучший. 30f reference 1.51. cg_taker_imb +0.15 на hybrid.
+
+### AI Consultation после R48 (ключевые выводы)
+
+- Hybrid cost model 9.8% = гипотеза. Если maker fill rate 40-60% вместо 92%, +0.35 Sharpe исчезнет → нужен live пилот
+- DD -52% при 5× leverage = почти гарантированный stop. Нужен crash protocol (при 1× DD уже -13.6% = ок)
+- liq-weighted (ALL=0.53) — диагностировано как GENUINE: CS alpha в T2/T3, не в T1
+- bootstrap 69.6% — достаточно для research, для live нужен живой A/B тест
+
+### R49c — Liq-Weighted Diagnostic (ЗАВЕРШЁН)
+
+Диагноз: NOT a bug. Genuine signal distribution.
+
+| Проверка | Результат |
+|----------|----------|
+| Volume alignment | ✅ 100% timestamps aligned |
+| T1 weight vs T2/T3 | T1=0.878, T2=1.037 — **T1 DOWN-weighted** (coin vol ≠ USD vol) |
+| corr(IC, log_vol) | -0.314 (p=0.07) — CS alpha в T2/T3, не в T1 |
+| T1 IC avg | -0.004 (почти ноль), T2 IC=+0.028, T3 IC=+0.022 |
+| T1 short returns | +0.0013 (wrong direction) — T1 shorts теряют P&L |
+
+**Вывод**: Liq-weighting genuinely hurts. CS alpha живёт в mid/small caps. Добавлено в список `proven useless`. Есть также частичный баг: volume в coin units, не USD — BTC downweighted vs DOGE. Но исправление бага не поможет: T1 IC ≈ 0.
+
+### ⚠️ КРИТИЧЕСКИЙ БАГ: pandas 3.0 → РЕШЕНО (2026-04-06)
+
+**Проблема**: pandas 3.0 удалил `include_groups=True` из `groupby.apply`. Grouping column (`symbol`) автоматически дропается. Это ТИХО ломает:
+- `cs_rank_cols()` — ranking без symbol column
+- `add_r35_features()` → `per_symbol_features()` — теряет symbol
+- Все `groupby("symbol")` transforms в feature pipeline
+
+**Симптомы**: ICs меняются (W1: 0.0697→0.0365), Sharpe падает 1.66→1.02. Без ошибок, без warnings.
+
+**Решение**: `.venv` откачен на pandas 2.3.3. НЕ обновлять pandas до 3.x.
+
+**Правило**: Перед любым `pip install --upgrade` → проверить `python -c "import pandas; assert int(pandas.__version__.split('.')[0]) < 3"`
+
+**Затронутые запуски** (запускались с pandas 3.0.1 → результаты невалидны, перезапущены):
+- R49c, R50 — диагностика, выводы стабильны, перезапуск не критичен
+- R55 — ✅ перезапущен 2026-04-06, результаты валидны (см. раздел R55)
+- R56 — ✅ перезапущен 2026-04-06, результаты валидны (см. раздел R56)
+- R56b — ✅ перезапущен 2026-04-06, результаты валидны (см. раздел R56b)
+
+### R49 — Maker-First Execution (IMPLEMENTATION READY)
+
+**run_trading.py** обновлён:
+- Добавлены константы `_TIER1_SYMS`, `_TIER3_SYMS`, `MAKER_TTL_SECONDS=90`, `MAKER_MAX_RETRIES=3`
+- Новая функция `_maker_first_limit()`: post-only limit → 3 попытки с нарастающей агрессией → market fallback
+- Новая функция `_log_execution()`: пишет per-trade metrics в `trading_logs/execution_log.csv`
+- TIER1 (BTC/ETH/SOL/BNB/XRP) → `_maker_first_limit()` во всех 4 точках (close/resize/open/retry)
+- TIER2/TIER3 → без изменений (`_limit_with_fallback`)
+
+**Следующий шаг**: Пилот 7-14 дней на OKX demo/микролотах → измерить реальный maker fill rate.
+
+KPI пилота (из `trading_logs/execution_log.csv`):
+- maker fill rate по notional
+- avg effective_bps по TIER1
+- pct unfilled → market fallback
+
+### R50 — Risk Protocol (COMPLETED)
+
+**Результаты** (champion_31f + hybrid costs, 1× leverage):
+
+| Protocol | ALL Sharpe | Max DD | DD change |
+|---------|-----------|--------|----------|
+| Baseline (hybrid) | +1.02 | -13.6% | — |
+| Crash (rvol>85%, ×30% gross) | best ALL | -9.4% | **+4.2pp** |
+| DD breaker (threshold -12%) | не активируется при 1× | — | — |
+
+**Ключевые выводы R50**:
+1. При 1× leverage MaxDD = -13.6% уже в пределах нормы. Проблема DD -52% = проблема 5× leverage.
+2. Crash protocol (BTC rvol > p85, gross ×30%, полный портфель) **улучшает** Sharpe и снижает DD.
+3. DD breaker при -12% threshold = 0% активаций на тестовом наборе → сработает как safety net при live 5× leverage.
+4. Имплементация: `_research_r50_risk_protocol.py`. Для деплоя на live — добавить crash detector в `run_trading.py`.
+
+**Лучшие параметры R50**:
+- `CRASH_RVOL_THRESHOLD = 0.85` (p85 30d rolling)
+- `CRASH_GROSS_REDUCTION = 0.30` (reduce to 30%)
+- `CRASH_TIER1_ONLY = False` (не ограничивать монеты, только размер)
+- `DD_BREAKER_THRESHOLD = -0.12` (-12% от пика)
+
+### Следующие шаги (R49.2 / D6):
+
+**R49.2 — OKX Demo Pilot** (СЛЕДУЮЩИЙ ШАГ):
+- [ ] Запустить `run_trading.py --mode paper` с R49.1 лимит-логикой
+- [ ] 7-14 дней сбор `trading_logs/execution_log.csv`
+- [ ] Анализ: real maker fill rate vs sim 92%
+
+**R49.3 — Calibrate Sim** (after pilot):
+- [ ] Заменить 92/8 maker/taker реальными числами из пилота
+- [ ] Перегнать WF с calibrated costs → новый "честный" ALL Sharpe
+
+**D6 — Orderbook Depth** (ждём данных):
+- [x] Daemon запущен на VPS ✅ (cron `35 * * * *`)
+- [ ] Накопить → IC scan (~20 апреля)
+
+**Параллельно:**
+- [ ] Добавить crash detector в `run_trading.py` с параметрами R50 (CRASH_RVOL_THRESHOLD=0.85)
+- [ ] Santiment API — 1000 calls/мес free, scan social ICIR
+
+### Walk-Forward Windows
+
+```python
+WINDOWS = [
+    ('W1', train_end='2024-07-01', purge='2024-07-15', test='2024-07-15 to 2024-12-31'),
+    ('W2', train_end='2025-01-01', purge='2025-01-15', test='2025-01-15 to 2025-06-30'),
+    ('W3', train_end='2025-07-01', purge='2025-07-15', test='2025-07-15 to 2026-03-17'),
+]
+```
+
+### Ключевые файлы проекта
+
+```
+run_trading.py              — Production trading code (3136 lines)
+_ic_scanner.py              — IC analysis tool
+_research_r22_models.py     — FEATURES_23, SEEDS, base model definitions
+_research_r30b_fixed.py     — simulate_with_costs, train_ensemble
+_research_r31_new_features.py  — R31 study (FEAT_26)
+_research_r32_kaggle_features.py — R32 study (FEAT_28)
+_research_r33_creative_features.py — R33 study (btc_corr)
+_research_r47_qa.py         — R47 CoinGlass QA (timestamps, coverage, anomalies)
+_research_r47_coinglass.py  — R47 CoinGlass features + IC + WF ablation
+_research_r48_validation.py — R48.0 bootstrap + monthly stability + clip sensitivity
+_research_r48_features.py   — R48.1+2 taker derivatives + residualized liq ablation
+_research_r48_cost.py       — R48.3 hybrid tiered costs vs uniform vs liq-weighted
+_research_r48_combo.py      — R48.4 best combo (31f hybrid = new champion)
+model_registry.py           — CLI for tracking model generations
+model_registry.json         — All 7 model generations
+RESULTS.md                  — Complete research history (~4720 lines)
+PROGRESS.md                 — Progress tracking (~607 lines)
+CONTEXT_FULL.md             — Project summary
+PROJECT_NOTES.md            — VPS, API keys, operational runbook
+AI_CONSULTATION_*.md        — 11 consultation documents for AI review
+```
+
+### Feature Pipeline Chain
+
+```
+load_ohlcv() + load_derivatives()     [_ic_scanner.py]
+  → build_features_minimal()           [_ic_scanner.py]
+  → build_r19_features()               [_research_r22_models.py]
+  → add_new_features()                 [_research_r22_models.py] (FNG, macro, TA)
+  → add_extra_features_clean()         [_research_r30b_fixed.py]
+  → add_kaggle_features()              [_research_r32_kaggle_features.py]
+  → add_r33_features()                 [_research_r33_creative_features.py]
+  → add_cg_features()                  [_research_r47_coinglass.py] (CoinGlass taker/liq/LS, shift-1d)
+  → cs_rank_cols()                     [перед моделью]
+```
+
+---
+
+*Конец документа. Используй как полный контекст для любой AI-модели.*

@@ -1,0 +1,67 @@
+================================================================================
+R46 — SEPARATE LONG/SHORT MODELS
+================================================================================
+Feature set: r42_candidate
+Windows: ['W1', 'W2', 'W3']
+Seeds: [0, 7, 13, 42, 99]
+{'n_long': 6, 'n_short': 3, 'rebal_hours': 12, 'trend_cutoff': 0.9, 'dyn_threshold': 0.7, 'ema_alpha': 0.5, 'hysteresis': 3}
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 127 cols
+
+[2] Training unified baseline...
+  Training: unified_r42_candidate, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0490
+    W3/s0: train=1,628,167, test=89,343, IC=0.0372
+
+[3] Training asymmetric experts...
+  Training long_r42_candidate: 30f, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0318
+    W2/s0: train=1,484,524, test=85,569, IC=0.0241
+    W3/s0: train=1,628,167, test=89,343, IC=0.0466
+  Training short_r42_candidate: 30f, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=-0.0489
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0117
+    W3/s0: train=1,628,167, test=89,343, IC=-0.0400
+
+[4] Evaluating unified vs asymmetric...
+
+[5] Comparison
+  W2:
+    config  sharpe  cost_pct  avg_turnover
+   unified    3.22      7.11           4.7
+asymmetric    1.80      3.78           2.0
+  W3:
+    config  sharpe  cost_pct  avg_turnover
+   unified    2.50      5.51           3.9
+asymmetric    2.08      3.95           2.5
+  ALL:
+    config  sharpe  cost_pct  avg_turnover
+   unified    1.13     19.22           4.5
+asymmetric    0.54     12.15           2.4
+
+  Top long-skew features:
+           feature  importance_share_long_r42_candidate  importance_share_short_r42_candidate  importance_gap
+   cum_funding_24h                             0.064049                              0.023620        0.040430
+  pct_coins_up_12h                             0.075099                              0.040521        0.034578
+         mom_z_24h                             0.049673                              0.017973        0.031700
+     rel_volume_cs                             0.057560                              0.026540        0.031020
+     ret_skew_168h                             0.059862                              0.029797        0.030065
+     ls_divergence                             0.050439                              0.021340        0.029099
+ret_dispersion_12h                             0.029580                              0.012974        0.016606
+         oi_zscore                             0.026347                              0.012251        0.014095
+
+[6] Saved artifacts
+  Summary CSV: results_r46_asymmetric_summary.csv
+  Importance CSV: results_r46_feature_importance.csv

@@ -1,0 +1,256 @@
+================================================================================
+R42 — R35A ABLATION
+================================================================================
+Canonical execution config:
+{'n_long': 6, 'n_short': 3, 'rebal_hours': 12, 'trend_cutoff': 0.9, 'dyn_threshold': 0.7, 'ema_alpha': 0.5, 'hysteresis': 3}
+R35a features: ['ret_dispersion_12h', 'cs_rank_ma_5', 'oi_chg_12h_cs', 'taker_cvd_12h_cs', 'cum_funding_24h_cs']
+
+[1] Loading research frame...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Data: 1,826,014 rows, 123 cols
+
+[2] Training ablation matrix sequentially...
+
+  Training A_28f (28f)...
+  Training: A_28f, 28f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0323
+    W2/s0: train=1,484,524, test=85,569, IC=0.0108
+    W3/s0: train=1,628,167, test=89,343, IC=0.0515
+    -> W2=0.21, W3=2.35, ALL=0.74, cost=18.40%, turn=4.2
+
+  Training A_28f+dispersion (29f)...
+  Training: A_28f+dispersion, 29f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0595
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0478
+    W3/s0: train=1,628,167, test=89,343, IC=0.0433
+    -> W2=2.45, W3=2.44, ALL=-0.09, cost=18.95%, turn=4.4
+
+  Training A_28f+rankma (29f)...
+  Training: A_28f+rankma, 29f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0362
+    W2/s0: train=1,484,524, test=85,569, IC=0.0154
+    W3/s0: train=1,628,167, test=89,343, IC=0.0460
+    -> W2=-0.12, W3=1.97, ALL=0.52, cost=18.63%, turn=4.3
+
+  Training A_28f+oi_cs (29f)...
+  Training: A_28f+oi_cs, 29f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0322
+    W2/s0: train=1,484,524, test=85,569, IC=0.0162
+    W3/s0: train=1,628,167, test=89,343, IC=0.0478
+    -> W2=0.93, W3=2.11, ALL=0.65, cost=18.57%, turn=4.3
+
+  Training A_28f+taker_cs (29f)...
+  Training: A_28f+taker_cs, 29f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0322
+    W2/s0: train=1,484,524, test=85,569, IC=0.0085
+    W3/s0: train=1,628,167, test=89,343, IC=0.0558
+    -> W2=0.22, W3=2.61, ALL=0.58, cost=18.79%, turn=4.3
+
+  Training A_28f+funding_cs (29f)...
+  Training: A_28f+funding_cs, 29f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0327
+    W2/s0: train=1,484,524, test=85,569, IC=0.0097
+    W3/s0: train=1,628,167, test=89,343, IC=0.0475
+    -> W2=0.05, W3=2.76, ALL=0.62, cost=18.43%, turn=4.2
+
+  Training A_28f+dispersion+rankma (30f)...
+  Training: A_28f+dispersion+rankma, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0490
+    W3/s0: train=1,628,167, test=89,343, IC=0.0372
+    -> W2=3.22, W3=2.50, ALL=1.13, cost=19.22%, turn=4.5
+
+  Training A_28f+dispersion+oi_cs (30f)...
+  Training: A_28f+dispersion+oi_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0475
+    W3/s0: train=1,628,167, test=89,343, IC=0.0380
+    -> W2=3.20, W3=2.69, ALL=0.41, cost=18.67%, turn=4.3
+
+  Training A_28f+dispersion+taker_cs (30f)...
+  Training: A_28f+dispersion+taker_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0475
+    W3/s0: train=1,628,167, test=89,343, IC=0.0386
+    -> W2=3.37, W3=2.89, ALL=0.47, cost=18.84%, turn=4.4
+
+  Training A_28f+dispersion+funding_cs (30f)...
+  Training: A_28f+dispersion+funding_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0477
+    W3/s0: train=1,628,167, test=89,343, IC=0.0381
+    -> W2=3.09, W3=2.89, ALL=0.98, cost=19.26%, turn=4.5
+
+  Training A_28f+rankma+oi_cs (30f)...
+  Training: A_28f+rankma+oi_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0430
+    W2/s0: train=1,484,524, test=85,569, IC=0.0096
+    W3/s0: train=1,628,167, test=89,343, IC=0.0534
+    -> W2=0.77, W3=1.82, ALL=0.50, cost=18.62%, turn=4.3
+
+  Training A_28f+rankma+taker_cs (30f)...
+  Training: A_28f+rankma+taker_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0428
+    W2/s0: train=1,484,524, test=85,569, IC=0.0093
+    W3/s0: train=1,628,167, test=89,343, IC=0.0538
+    -> W2=0.54, W3=1.09, ALL=1.03, cost=18.40%, turn=4.2
+
+  Training A_28f+rankma+funding_cs (30f)...
+  Training: A_28f+rankma+funding_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0430
+    W2/s0: train=1,484,524, test=85,569, IC=0.0073
+    W3/s0: train=1,628,167, test=89,343, IC=0.0547
+    -> W2=0.46, W3=2.30, ALL=0.96, cost=18.34%, turn=4.2
+
+  Training A_28f+oi_cs+taker_cs (30f)...
+  Training: A_28f+oi_cs+taker_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0424
+    W2/s0: train=1,484,524, test=85,569, IC=0.0126
+    W3/s0: train=1,628,167, test=89,343, IC=0.0509
+    -> W2=0.35, W3=2.46, ALL=0.48, cost=18.54%, turn=4.3
+
+  Training A_28f+oi_cs+funding_cs (30f)...
+  Training: A_28f+oi_cs+funding_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0432
+    W2/s0: train=1,484,524, test=85,569, IC=0.0127
+    W3/s0: train=1,628,167, test=89,343, IC=0.0513
+    -> W2=0.17, W3=2.89, ALL=0.91, cost=18.63%, turn=4.3
+
+  Training A_28f+taker_cs+funding_cs (30f)...
+  Training: A_28f+taker_cs+funding_cs, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0412
+    W2/s0: train=1,484,524, test=85,569, IC=0.0142
+    W3/s0: train=1,628,167, test=89,343, IC=0.0569
+    -> W2=-0.15, W3=2.05, ALL=0.40, cost=18.67%, turn=4.3
+
+  Training A_28f+dispersion+rankma+oi_cs (31f)...
+  Training: A_28f+dispersion+rankma+oi_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0649
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0454
+    W3/s0: train=1,628,167, test=89,343, IC=0.0382
+    -> W2=2.06, W3=2.89, ALL=0.35, cost=18.81%, turn=4.3
+
+  Training A_28f+dispersion+rankma+taker_cs (31f)...
+  Training: A_28f+dispersion+rankma+taker_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0653
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0505
+    W3/s0: train=1,628,167, test=89,343, IC=0.0396
+    -> W2=3.74, W3=3.03, ALL=0.91, cost=18.88%, turn=4.4
+
+  Training A_28f+dispersion+rankma+funding_cs (31f)...
+  Training: A_28f+dispersion+rankma+funding_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0650
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0470
+    W3/s0: train=1,628,167, test=89,343, IC=0.0396
+    -> W2=3.39, W3=1.43, ALL=0.73, cost=19.57%, turn=4.6
+
+  Training A_28f+dispersion+oi_cs+taker_cs (31f)...
+  Training: A_28f+dispersion+oi_cs+taker_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0685
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0533
+    W3/s0: train=1,628,167, test=89,343, IC=0.0382
+    -> W2=3.27, W3=3.37, ALL=0.63, cost=19.07%, turn=4.4
+
+  Training A_28f+dispersion+oi_cs+funding_cs (31f)...
+  Training: A_28f+dispersion+oi_cs+funding_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0717
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0474
+    W3/s0: train=1,628,167, test=89,343, IC=0.0382
+    -> W2=2.91, W3=2.94, ALL=0.52, cost=19.33%, turn=4.5
+
+  Training A_28f+dispersion+taker_cs+funding_cs (31f)...
+  Training: A_28f+dispersion+taker_cs+funding_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0656
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0499
+    W3/s0: train=1,628,167, test=89,343, IC=0.0396
+    -> W2=3.57, W3=3.00, ALL=0.55, cost=19.43%, turn=4.5
+
+  Training A_28f+rankma+oi_cs+taker_cs (31f)...
+  Training: A_28f+rankma+oi_cs+taker_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0338
+    W2/s0: train=1,484,524, test=85,569, IC=0.0149
+    W3/s0: train=1,628,167, test=89,343, IC=0.0457
+    -> W2=-0.35, W3=1.93, ALL=0.63, cost=18.11%, turn=4.1
+
+  Training A_28f+rankma+oi_cs+funding_cs (31f)...
+  Training: A_28f+rankma+oi_cs+funding_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0382
+    W2/s0: train=1,484,524, test=85,569, IC=0.0114
+    W3/s0: train=1,628,167, test=89,343, IC=0.0459
+    -> W2=1.87, W3=1.95, ALL=0.67, cost=18.43%, turn=4.2
+
+  Training A_28f+rankma+taker_cs+funding_cs (31f)...
+  Training: A_28f+rankma+taker_cs+funding_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0381
+    W2/s0: train=1,484,524, test=85,569, IC=0.0094
+    W3/s0: train=1,628,167, test=89,343, IC=0.0458
+    -> W2=1.34, W3=2.92, ALL=0.95, cost=18.56%, turn=4.3
+
+  Training A_28f+oi_cs+taker_cs+funding_cs (31f)...
+  Training: A_28f+oi_cs+taker_cs+funding_cs, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0381
+    W2/s0: train=1,484,524, test=85,569, IC=0.0077
+    W3/s0: train=1,628,167, test=89,343, IC=0.0465
+    -> W2=-0.05, W3=2.80, ALL=0.47, cost=18.49%, turn=4.3
+
+  Training A_28f+dispersion+rankma+oi_cs+taker_cs+funding_cs (33f)...
+  Training: A_28f+dispersion+rankma+oi_cs+taker_cs+funding_cs, 33f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0645
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0375
+    W3/s0: train=1,628,167, test=89,343, IC=0.0327
+    -> W2=3.03, W3=1.91, ALL=0.64, cost=18.56%, turn=4.3
+
+[3] Best buckets
+  Best singles:
+          config  W2_sh  W3_sh  ALL_sh  ALL_cost  ALL_turn
+A_28f+funding_cs   0.05   2.76    0.62     18.43       4.2
+  A_28f+taker_cs   0.22   2.61    0.58     18.79       4.3
+     A_28f+oi_cs   0.93   2.11    0.65     18.57       4.3
+    A_28f+rankma  -0.12   1.97    0.52     18.63       4.3
+A_28f+dispersion   2.45   2.44   -0.09     18.95       4.4
+  Best pairs:
+                     config  W2_sh  W3_sh  ALL_sh  ALL_cost  ALL_turn
+    A_28f+dispersion+rankma   3.22   2.50    1.13     19.22       4.5
+A_28f+dispersion+funding_cs   3.09   2.89    0.98     19.26       4.5
+     A_28f+oi_cs+funding_cs   0.17   2.89    0.91     18.63       4.3
+  A_28f+dispersion+taker_cs   3.37   2.89    0.47     18.84       4.4
+     A_28f+dispersion+oi_cs   3.20   2.69    0.41     18.67       4.3
+  Best triples:
+                              config  W2_sh  W3_sh  ALL_sh  ALL_cost  ALL_turn
+    A_28f+rankma+taker_cs+funding_cs   1.34   2.92    0.95     18.56       4.3
+    A_28f+dispersion+rankma+taker_cs   3.74   3.03    0.91     18.88       4.4
+     A_28f+dispersion+oi_cs+taker_cs   3.27   3.37    0.63     19.07       4.4
+A_28f+dispersion+taker_cs+funding_cs   3.57   3.00    0.55     19.43       4.5
+   A_28f+dispersion+oi_cs+funding_cs   2.91   2.94    0.52     19.33       4.5
+  Target passers:
+                          config  W2_sh  W3_sh  ALL_sh  ALL_cost  ALL_turn
+         A_28f+dispersion+rankma   3.22   2.50    1.13     19.22       4.5
+     A_28f+dispersion+funding_cs   3.09   2.89    0.98     19.26       4.5
+A_28f+rankma+taker_cs+funding_cs   1.34   2.92    0.95     18.56       4.3
+A_28f+dispersion+rankma+taker_cs   3.74   3.03    0.91     18.88       4.4
+          A_28f+oi_cs+funding_cs   0.17   2.89    0.91     18.63       4.3
+  Strict passers:
+                          config  W2_sh  W3_sh  ALL_sh  ALL_cost  ALL_turn
+         A_28f+dispersion+rankma   3.22   2.50    1.13     19.22       4.5
+     A_28f+dispersion+funding_cs   3.09   2.89    0.98     19.26       4.5
+A_28f+rankma+taker_cs+funding_cs   1.34   2.92    0.95     18.56       4.3
+A_28f+dispersion+rankma+taker_cs   3.74   3.03    0.91     18.88       4.4
+  Dispersion-led combos:
+                              config  W2_sh  W3_sh  ALL_sh  ALL_cost  ALL_turn
+             A_28f+dispersion+rankma   3.22   2.50    1.13     19.22       4.5
+         A_28f+dispersion+funding_cs   3.09   2.89    0.98     19.26       4.5
+    A_28f+dispersion+rankma+taker_cs   3.74   3.03    0.91     18.88       4.4
+     A_28f+dispersion+oi_cs+taker_cs   3.27   3.37    0.63     19.07       4.4
+A_28f+dispersion+taker_cs+funding_cs   3.57   3.00    0.55     19.43       4.5
+
+[4] Saved artifacts
+  Summary CSV: results_r42_summary.csv

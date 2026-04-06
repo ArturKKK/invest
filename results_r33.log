@@ -1,0 +1,251 @@
+================================================================================
+  R33 — CREATIVE FEATURES (interactions, BTC correlation, asymmetric vol)
+================================================================================
+
+[1] Loading data...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Base: 1,826,014 rows, 94 cols
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Final: 1,826,014 rows, 105 cols
+
+[1b] Feature availability:
+  FEAT_28: 28/28 ✓
+  FEAT_29_168: 29/29 ✓
+  FEAT_29_24: 29/29 ✓
+  FEAT_30: 30/30 ✓
+  FEAT_30_ALT: 30/30 ✓
+
+============================================================
+[2] TRAINING MODELS
+============================================================
+
+[EXP-A] Baseline: 28f (R32 best)
+  Training: A_28f, 28f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0320
+    W2/s0: train=1,484,524, test=85,569, IC=0.0085
+    W3/s0: train=1,628,167, test=89,343, IC=0.0523
+
+[EXP-B] +btc_corr_168h: 29f
+  Training: B_29f_168, 29f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0451
+    W2/s0: train=1,484,524, test=85,569, IC=0.0103
+    W3/s0: train=1,628,167, test=89,343, IC=0.0522
+
+[EXP-C] +btc_corr_24h: 29f
+  Training: C_29f_24, 29f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0324
+    W2/s0: train=1,484,524, test=85,569, IC=0.0094
+    W3/s0: train=1,628,167, test=89,343, IC=0.0517
+
+[EXP-D] +both btc_corr: 30f
+  Training: D_30f, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0427
+    W2/s0: train=1,484,524, test=85,569, IC=0.0164
+    W3/s0: train=1,628,167, test=89,343, IC=0.0500
+
+[EXP-E] +btc_corr_168h +upvol_24h: 30f
+  Training: E_30f_alt, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0464
+    W2/s0: train=1,484,524, test=85,569, IC=0.0159
+    W3/s0: train=1,628,167, test=89,343, IC=0.0497
+
+
+================================================================================
+  RESULTS: R33 Creative Features
+================================================================================
+
+────────────────────────────────────────────────────────────
+  A_28f
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-0.69 (gross= 0.05)  Eq=$    52  DD=-55.6%  WM=2/4  Cost=6.4%  Turn=4.6
+  W2: Sh=-0.98 (gross=-0.05)  Eq=$    57  DD=-71.3%  WM=2/4  Cost=6.5%  Turn=4.2
+  W3: Sh= 2.88 (gross= 3.82)  Eq=$   201  DD=-29.5%  WM=5/5  Cost=5.7%  Turn=4.0
+  ALL: Sh= 0.47 (gross= 1.15)  Eq=$    93  DD=-58.2%  Cost=18.6%  Turn=4.3
+
+  [6L3S_12h]
+  W1: Sh= 0.62 (gross= 2.45)  Eq=$    97  DD=-42.1%  WM=3/4  Cost=13.7%  Turn=11.0
+  W2: Sh= 0.32 (gross= 2.53)  Eq=$    92  DD=-56.1%  WM=2/4  Cost=14.3%  Turn=10.5
+  W3: Sh= 0.66 (gross= 2.67)  Eq=$   103  DD=-42.5%  WM=3/5  Cost=12.3%  Turn=9.9
+  ALL: Sh= 0.65 (gross= 2.24)  Eq=$   123  DD=-42.1%  Cost=40.6%  Turn=10.6
+
+  [3L2S_ema05]
+  W1: Sh=-0.93 (gross= 0.05)  Eq=$    36  DD=-78.6%  WM=1/4  Cost=10.1%  Turn=4.4
+  W2: Sh=-0.71 (gross= 0.51)  Eq=$    52  DD=-78.5%  WM=2/4  Cost=10.7%  Turn=4.2
+  W3: Sh= 1.46 (gross= 2.47)  Eq=$   131  DD=-45.2%  WM=4/5  Cost=8.7%  Turn=3.7
+  ALL: Sh= 0.32 (gross= 1.16)  Eq=$    48  DD=-88.2%  Cost=30.4%  Turn=4.3
+
+────────────────────────────────────────────────────────────
+  B_29f_168
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-0.13 (gross= 0.61)  Eq=$    68  DD=-47.9%  WM=3/4  Cost=6.2%  Turn=4.4
+  W2: Sh= 1.05 (gross= 1.88)  Eq=$   116  DD=-49.0%  WM=3/4  Cost=5.5%  Turn=3.4
+  W3: Sh= 2.21 (gross= 3.07)  Eq=$   164  DD=-32.3%  WM=5/5  Cost=5.1%  Turn=3.5
+  ALL: Sh= 0.64 (gross= 1.28)  Eq=$   118  DD=-48.4%  Cost=17.3%  Turn=3.9
+
+  [6L3S_12h]
+  W1: Sh= 0.22 (gross= 1.92)  Eq=$    82  DD=-42.2%  WM=2/4  Cost=13.3%  Turn=10.7
+  W2: Sh=-0.02 (gross= 1.86)  Eq=$    80  DD=-58.8%  WM=2/4  Cost=13.2%  Turn=9.7
+  W3: Sh= 0.42 (gross= 2.55)  Eq=$    98  DD=-43.7%  WM=3/5  Cost=12.0%  Turn=9.6
+  ALL: Sh= 0.95 (gross= 2.38)  Eq=$   180  DD=-42.2%  Cost=38.7%  Turn=10.0
+
+  [3L2S_ema05]
+  W1: Sh=-0.39 (gross= 0.54)  Eq=$    42  DD=-81.3%  WM=3/4  Cost=10.4%  Turn=4.5
+  W2: Sh= 0.57 (gross= 1.64)  Eq=$    90  DD=-73.8%  WM=3/4  Cost=9.4%  Turn=3.7
+  W3: Sh= 0.80 (gross= 1.79)  Eq=$   100  DD=-49.4%  WM=3/5  Cost=8.3%  Turn=3.5
+  ALL: Sh= 0.71 (gross= 1.49)  Eq=$    94  DD=-81.3%  Cost=28.7%  Turn=4.0
+
+────────────────────────────────────────────────────────────
+  C_29f_24
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-0.59 (gross= 0.19)  Eq=$    58  DD=-56.8%  WM=2/4  Cost=6.3%  Turn=4.5
+  W2: Sh= 1.53 (gross= 2.57)  Eq=$   137  DD=-43.7%  WM=3/4  Cost=6.6%  Turn=4.3
+  W3: Sh= 2.75 (gross= 3.64)  Eq=$   198  DD=-27.2%  WM=5/5  Cost=5.5%  Turn=3.9
+  ALL: Sh= 0.94 (gross= 1.62)  Eq=$   178  DD=-62.9%  Cost=18.1%  Turn=4.1
+
+  [6L3S_12h]
+  W1: Sh= 0.27 (gross= 2.06)  Eq=$    84  DD=-37.7%  WM=2/4  Cost=13.6%  Turn=10.9
+  W2: Sh=-0.36 (gross= 1.88)  Eq=$    74  DD=-60.4%  WM=2/4  Cost=14.3%  Turn=10.6
+  W3: Sh= 1.65 (gross= 3.99)  Eq=$   136  DD=-40.3%  WM=4/5  Cost=12.0%  Turn=9.7
+  ALL: Sh= 1.05 (gross= 2.60)  Eq=$   204  DD=-37.7%  Cost=40.1%  Turn=10.4
+
+  [3L2S_ema05]
+  W1: Sh=-0.65 (gross= 0.26)  Eq=$    37  DD=-79.7%  WM=2/4  Cost=10.3%  Turn=4.4
+  W2: Sh= 0.50 (gross= 1.72)  Eq=$    88  DD=-72.2%  WM=3/4  Cost=10.3%  Turn=4.1
+  W3: Sh= 0.97 (gross= 1.96)  Eq=$   106  DD=-48.9%  WM=4/5  Cost=8.6%  Turn=3.7
+  ALL: Sh= 0.56 (gross= 1.38)  Eq=$    73  DD=-89.0%  Cost=29.8%  Turn=4.2
+
+────────────────────────────────────────────────────────────
+  D_30f
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh= 0.57 (gross= 1.29)  Eq=$    90  DD=-54.6%  WM=3/4  Cost=6.2%  Turn=4.4
+  W2: Sh= 1.26 (gross= 2.08)  Eq=$   125  DD=-51.1%  WM=3/4  Cost=5.6%  Turn=3.5
+  W3: Sh= 2.35 (gross= 3.20)  Eq=$   176  DD=-43.0%  WM=4/5  Cost=5.4%  Turn=3.8
+  ALL: Sh= 1.00 (gross= 1.62)  Eq=$   190  DD=-58.6%  Cost=17.3%  Turn=3.9
+
+  [6L3S_12h]
+  W1: Sh= 1.09 (gross= 2.86)  Eq=$   115  DD=-41.4%  WM=3/4  Cost=13.4%  Turn=10.8
+  W2: Sh= 0.65 (gross= 2.68)  Eq=$   102  DD=-51.6%  WM=2/4  Cost=13.8%  Turn=10.2
+  W3: Sh=-1.18 (gross= 0.66)  Eq=$    57  DD=-52.4%  WM=2/5  Cost=11.8%  Turn=9.5
+  ALL: Sh= 1.22 (gross= 2.72)  Eq=$   258  DD=-46.5%  Cost=39.4%  Turn=10.3
+
+  [3L2S_ema05]
+  W1: Sh=-0.17 (gross= 0.72)  Eq=$    47  DD=-81.2%  WM=2/4  Cost=10.1%  Turn=4.4
+  W2: Sh= 0.90 (gross= 2.03)  Eq=$   103  DD=-67.2%  WM=3/4  Cost=10.1%  Turn=4.0
+  W3: Sh= 1.98 (gross= 2.98)  Eq=$   164  DD=-45.3%  WM=3/5  Cost=8.5%  Turn=3.6
+  ALL: Sh= 0.63 (gross= 1.41)  Eq=$    79  DD=-82.9%  Cost=28.8%  Turn=4.0
+
+────────────────────────────────────────────────────────────
+  E_30f_alt
+────────────────────────────────────────────────────────────
+
+  [6L3S_ema05_h3]
+  W1: Sh=-0.53 (gross= 0.21)  Eq=$    59  DD=-56.9%  WM=2/4  Cost=6.0%  Turn=4.3
+  W2: Sh= 0.68 (gross= 1.57)  Eq=$   103  DD=-53.3%  WM=3/4  Cost=5.9%  Turn=3.7
+  W3: Sh= 1.68 (gross= 2.54)  Eq=$   141  DD=-44.6%  WM=3/5  Cost=5.3%  Turn=3.7
+  ALL: Sh= 0.90 (gross= 1.58)  Eq=$   170  DD=-57.8%  Cost=17.3%  Turn=3.9
+
+  [6L3S_12h]
+  W1: Sh=-0.64 (gross= 1.11)  Eq=$    60  DD=-53.9%  WM=1/4  Cost=13.2%  Turn=10.6
+  W2: Sh= 0.59 (gross= 2.60)  Eq=$    99  DD=-52.1%  WM=2/4  Cost=13.9%  Turn=10.2
+  W3: Sh=-0.55 (gross= 1.30)  Eq=$    70  DD=-51.9%  WM=3/5  Cost=11.8%  Turn=9.4
+  ALL: Sh= 0.32 (gross= 1.78)  Eq=$    77  DD=-53.9%  Cost=39.3%  Turn=10.2
+
+  [3L2S_ema05]
+  W1: Sh=-0.08 (gross= 0.82)  Eq=$    55  DD=-66.3%  WM=3/4  Cost=9.7%  Turn=4.2
+  W2: Sh= 0.65 (gross= 1.77)  Eq=$    92  DD=-72.8%  WM=3/4  Cost=10.1%  Turn=4.0
+  W3: Sh= 0.92 (gross= 1.89)  Eq=$   104  DD=-54.6%  WM=3/5  Cost=8.4%  Turn=3.6
+  ALL: Sh= 0.96 (gross= 1.77)  Eq=$   165  DD=-66.3%  Cost=28.9%  Turn=4.0
+
+
+================================================================================
+  SUMMARY (sorted by W3 net Sharpe)
+================================================================================
+
+Experiment     Config             W1net W2net W3net W3grs ALLnt    Eq$    DD%  Turn
+───────────────────────────────────────────────────────────────────────────────────────────────
+A_28f          6L3S_ema05_h3      -0.69 -0.98  2.88  3.82  0.47 $  201 -29.5%  4.3 ★
+C_29f_24       6L3S_ema05_h3      -0.59  1.53  2.75  3.64  0.94 $  198 -27.2%  4.1 ★
+D_30f          6L3S_ema05_h3       0.57  1.26  2.35  3.20  1.00 $  176 -43.0%  3.9 ◆
+B_29f_168      6L3S_ema05_h3      -0.13  1.05  2.21  3.07  0.64 $  164 -32.3%  3.9 ◆
+D_30f          3L2S_ema05         -0.17  0.90  1.98  2.98  0.63 $  164 -45.3%  4.0 ◆
+E_30f_alt      6L3S_ema05_h3      -0.53  0.68  1.68  2.54  0.90 $  141 -44.6%  3.9 ◆
+C_29f_24       6L3S_12h            0.27 -0.36  1.65  3.99  1.05 $  136 -40.3% 10.4 ◆
+A_28f          3L2S_ema05         -0.93 -0.71  1.46  2.47  0.32 $  131 -45.2%  4.3
+C_29f_24       3L2S_ema05         -0.65  0.50  0.97  1.96  0.56 $  106 -48.9%  4.2
+E_30f_alt      3L2S_ema05         -0.08  0.65  0.92  1.89  0.96 $  104 -54.6%  4.0
+B_29f_168      3L2S_ema05         -0.39  0.57  0.80  1.79  0.71 $  100 -49.4%  4.0
+A_28f          6L3S_12h            0.62  0.32  0.66  2.67  0.65 $  103 -42.5% 10.6
+B_29f_168      6L3S_12h            0.22 -0.02  0.42  2.55  0.95 $   98 -43.7% 10.0
+E_30f_alt      6L3S_12h           -0.64  0.59 -0.55  1.30  0.32 $   70 -51.9% 10.2
+D_30f          6L3S_12h            1.09  0.65 -1.18  0.66  1.22 $   57 -52.4% 10.3
+
+
+================================================================================
+  HEAD-TO-HEAD: A (28f baseline) vs B/C/D/E
+================================================================================
+
+  [6L3S_ema05_h3] Baseline A_28f: W3=2.88
+    B_29f_168      W3=2.21  Δ=-0.67  ❌ WORSE
+    C_29f_24       W3=2.75  Δ=-0.13  ❌ WORSE
+    D_30f          W3=2.35  Δ=-0.53  ❌ WORSE
+    E_30f_alt      W3=1.68  Δ=-1.20  ❌ WORSE
+
+  [6L3S_12h] Baseline A_28f: W3=0.66
+    B_29f_168      W3=0.42  Δ=-0.24  ❌ WORSE
+    C_29f_24       W3=1.65  Δ=+0.99  ✅ BETTER
+    D_30f          W3=-1.18  Δ=-1.84  ❌ WORSE
+    E_30f_alt      W3=-0.55  Δ=-1.21  ❌ WORSE
+
+  [3L2S_ema05] Baseline A_28f: W3=1.46
+    B_29f_168      W3=0.80  Δ=-0.66  ❌ WORSE
+    C_29f_24       W3=0.97  Δ=-0.49  ❌ WORSE
+    D_30f          W3=1.98  Δ=+0.52  ✅ BETTER
+    E_30f_alt      W3=0.92  Δ=-0.54  ❌ WORSE
+
+
+================================================================================
+  MONTHLY IC — A_28f
+================================================================================
+  2024-10    IC=+0.0571
+  2024-11    IC=+0.0422
+  2024-12    IC=+0.0348
+  2025-01    IC=+0.0060
+  2025-05    IC=+0.0320
+  2025-06    IC=+0.0236
+  2025-07    IC=+0.0097
+  2025-08    IC=+0.0161
+  2025-11    IC=+0.0440
+  2025-12    IC=+0.0321
+  2026-01    IC=+0.0411
+  2026-02    IC=+0.0191
+  2026-03    IC=+0.0171
+
+  Mean IC: 0.0288, IC>0: 13/13, ICIR: 1.99
+
+
+✅ R33 complete in 26.2 min
+
+================================================================================
+  VERDICT
+================================================================================
+  Best overall: A_28f × 6L3S_ema05_h3
+  W3 Sharpe: net=2.88, gross=3.82
+  R32 baseline (A_28f): W3 net=2.88
+  Delta: +0.00
+  ❌ NEW FEATURES DON'T HELP. 28f is still best.

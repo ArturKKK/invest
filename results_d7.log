@@ -1,0 +1,62 @@
+================================================================================
+D7.2 — SOCIAL / SEARCH DATA INSPECTION + IC SCAN
+================================================================================
+Conservative merge: all daily data shifted by +1 day before hourly forward-fill
+
+[1] Base overlap universe...
+  Overlap symbols (17): ['ADA/USDT', 'APT/USDT', 'ATOM/USDT', 'AVAX/USDT', 'BNB/USDT', 'BTC/USDT', 'DOGE/USDT', 'DOT/USDT', 'ETH/USDT', 'FIL/USDT', 'LINK/USDT', 'LTC/USDT', 'NEAR/USDT', 'OP/USDT', 'SOL/USDT', 'UNI/USDT', 'XRP/USDT']
+  Base rows: 963,782
+
+[2] Coverage snapshot...
+  gtrends                  coverage= 54.4%
+  gtrends_chg4w            coverage= 52.3%
+  gtrends_z                coverage= 17.6%
+  gtrends_7d_delta         coverage= 50.7%
+  gtrends_30d_delta        coverage= 33.5%
+  gtrends_z_30d            coverage= 49.4%
+  reddit_subscribers       coverage= 57.1%
+  reddit_active_users      coverage= 53.1%
+  twitter_followers        coverage= 57.0%
+  social_reddit_activity   coverage= 57.1%
+  social_dev_activity      coverage= 57.1%
+  twitter_followers_chg7d  coverage= 56.7%
+  reddit_users_chg7d       coverage= 52.8%
+  social_dev_chg30d        coverage= 55.8%
+  social_activity_z_30d    coverage= 56.7%
+
+[3] Train-only IC scan...
+
+[4] Top features by window
+  W1:
+               feature  mean_ts_ic  pooled_ic  coverage  symbols
+               gtrends    0.038448   0.003952  0.527183       10
+    reddit_subscribers    0.041723   0.005279  0.409394       17
+social_reddit_activity    0.034607   0.003471  0.409394       17
+   social_dev_activity    0.028953   0.016034  0.409394       17
+   reddit_active_users    0.028890   0.001687  0.409394       17
+         gtrends_chg4w    0.016651   0.037999  0.498262       10
+     twitter_followers    0.015452   0.005064  0.408298       17
+ social_activity_z_30d   -0.015596   0.000241  0.404153       17
+  W2:
+               feature  mean_ts_ic  pooled_ic  coverage  symbols
+    reddit_subscribers    0.049187   0.011820  0.474832       17
+social_reddit_activity    0.040085   0.007741  0.474832       17
+               gtrends    0.035194   0.006481  0.533948       10
+   reddit_active_users    0.038296   0.006732  0.474832       17
+   social_dev_activity    0.025712   0.013850  0.474832       17
+     twitter_followers    0.020992   0.006156  0.473858       17
+         gtrends_chg4w    0.015299   0.038743  0.508231       10
+ social_activity_z_30d   -0.011051  -0.000182  0.470173       17
+  W3:
+                feature  mean_ts_ic  pooled_ic  coverage  symbols
+     reddit_subscribers    0.048726   0.009400  0.519831       17
+ social_reddit_activity    0.039932   0.005382  0.519831       17
+    reddit_active_users    0.037883   0.007214  0.519831       17
+                gtrends    0.033522   0.006111  0.538599       10
+    social_dev_activity    0.026090   0.015084  0.519831       17
+      twitter_followers    0.024999   0.009099  0.518940       17
+          gtrends_chg4w    0.016230   0.033727  0.515086       10
+twitter_followers_chg7d    0.012317   0.011164  0.515403       17
+
+[5] Saved artifacts
+  IC CSV: results_d7_social_search_ic.csv

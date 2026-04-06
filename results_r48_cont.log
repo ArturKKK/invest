@@ -1,0 +1,33 @@
+================================================================================
+R48 CONTINUATION — Phase 2 (remain) + Phase 3 + Phase 4
+================================================================================
+[DATA] Loading CoinGlass + research frame ...
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Base frame: 1,826,014 rows × 123 cols
+  CG features merged: 9 per-sym + 3 mkt
+
+================================================================================
+  PHASE 2 CONT — mkt_cg_liq_imb_resid WF test
+================================================================================
+    cg_liq_imb_resid_bin: 67.6% non-null
+    Computing rolling regression residual (slow) ...
+    cg_liq_imb_resid_roll: 67.5% non-null
+    mkt_cg_liq_imb_resid: 67.6% non-null
+
+  [baseline] champion_31f ...
+  Training: p2c_baseline, 31f, L2=1.0, expanding, 5 seeds × 3 windows

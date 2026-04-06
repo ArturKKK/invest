@@ -1,0 +1,29 @@
+======================================================================
+  DEFI LLAMA STABLECOINS DOWNLOADER
+======================================================================
+
+[1] Fetching asset snapshot...
+  Assets: 360 rows -> llama_stablecoins_assets.parquet
+
+[2] Fetching chain snapshot...
+  Chains: 175 rows -> llama_stablecoin_chains.parquet
+
+[3] Fetching global history...
+  Global history: 3,049 rows -> llama_stablecoin_chart_all.parquet
+
+[4] Fetching per-chain history...
+  Progress: 25/175 chains
+  Progress: 50/175 chains
+  Progress: 75/175 chains
+  Progress: 100/175 chains
+  Progress: 125/175 chains
+  Progress: 150/175 chains
+  Progress: 175/175 chains
+  Chain history: 158,318 rows -> llama_stablecoin_chart_by_chain.parquet
+
+[5] Summary
+  Asset snapshot rows: 360
+  Chain snapshot rows: 175
+  Global history rows: 3,049
+  Chain history rows: 158,318
+  Chain fetch failures: 0

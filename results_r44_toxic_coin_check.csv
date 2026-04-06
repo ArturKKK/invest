@@ -1,0 +1,13 @@
+window,symbol,blocked_by_quality
+W1,XRP/USDT,False
+W1,ADA/USDT,False
+W1,SAND/USDT,True
+W1,APT/USDT,False
+W2,XRP/USDT,False
+W2,ADA/USDT,True
+W2,SAND/USDT,False
+W2,APT/USDT,False
+W3,XRP/USDT,True
+W3,ADA/USDT,False
+W3,SAND/USDT,True
+W3,APT/USDT,True

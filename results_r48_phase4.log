@@ -1,0 +1,66 @@
+================================================================================
+R48 Phase 4 — BEST COMBO
+================================================================================
+
+[0] Loading phase results ...
+  ⚠️  No Phase 1+2 winners file — using cg_taker_imb only
+  Phase 3 hybrid costs: YES (Sharpe improved: 1.66)
+  Cost model: HYBRID
+
+[1] Loading CoinGlass daily data ...
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+
+[2] Loading research frame ...
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Base frame: 1,826,014 rows × 123 cols
+
+[3] Merging CG features ...
+
+[4] Running combo walk-forward tests ...
+
+  [A] champion_31f ...
+  Training: A_31f, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+    W1=+0.98  W2=+3.53  W3=+2.52  ALL=+1.66  cost=9.8%  
+
+  [E] champion_30f (no CG, reference) ...
+  Training: E_30f_ref, 30f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0608
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0490
+    W3/s0: train=1,628,167, test=89,343, IC=0.0372
+    W1=+0.40  W2=+3.89  W3=+2.99  ALL=+1.51  cost=9.7%  Δ-0.15
+
+======================================================================
+  R48 FINAL SUMMARY
+======================================================================
+
+  Cost model: HYBRID
+
+  Config                             W1     W2     W3    ALL   Cost%   Δ_ALL
+  ────────────────────────────── ────── ────── ────── ────── ─────── ───────
+  A_31f                          +0.98 +3.53 +2.52 +1.66    9.8%    +nan
+  E_30f_ref                      +0.40 +3.89 +2.99 +1.51    9.7%   -0.15
+
+  → Saved results_r48_phase4_summary.csv
+
+  🏆 NEW CHAMPION: A_31f → ALL=1.66 (was 1.31)
+
+================================================================================
+R48 Phase 4 — COMPLETE
+================================================================================
