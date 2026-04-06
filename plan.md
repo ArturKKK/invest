@@ -19,8 +19,18 @@
   - [x] **dynamic_K**: K_long = clip(2..8) по `strength = mean(top_K_score) - median(score)`; K_short аналогично. Пороги: strength > 0.3 → +1, > 0.6 → +2 к базовому K
   - [x] **edge_cost_filter**: открывать позицию только если `|p - 0.5| * notional > estimated_cost_bps`. Для этого нужны raw probs (до z-norm)
   - [x] **prob_weighting**: `w_long_i ∝ (p_i - 0.5)`, `w_short_i ∝ (0.5 - p_i)`, нормализовать отдельно L/S book
-- [-] Для каждого варианта прогнать WF (ORIGINAL_WINDOWS, 5 seeds) с hybrid costs ← **RUNNING ON MLC**
-- [ ] Собрать таблицу: mode | Sharpe | MaxDD | WinRate | Turnover | Win_W1 | Win_W2 | Win_W3
+- [-] Для каждого варианта прогнать WF (ORIGINAL_WINDOWS, 5 seeds) с hybrid costs ← **DONE (23 min)**
+- [x] Собрать таблицу: mode | Sharpe | MaxDD | WinRate | Turnover | Win_W1 | Win_W2 | Win_W3
+
+**R60 RESULTS:**
+```
+grid_4L2S   Sharpe=2.98  Ret=+77.4%  DD=-14.1%  WR=60%  W1=2.37 W2=3.68 W3=3.28 ← WINNER
+baseline    Sharpe=1.78  Ret=+33.9%  DD=-15.0%  WR=58% ← BASELINE  
+edc_filter  Sharpe=1.60
+prob_weight Sharpe=1.58
+dynamic_K   Sharpe=1.51
+```
+**Winner: grid_4L2S (4 long, 2 short). Sharpe +1.20 vs baseline!**
 
 **Ключевые модификации в simulate:**
 - `_research_r48_cost.py:simulate_with_hybrid_costs` строка ~170: заменить `long_ret = longs["fwd_ret"].mean()` на взвешенный
@@ -48,8 +58,17 @@
   - [x] **uncertainty_filter**: торговать только если `p_std < threshold` (пороги: 0.02, 0.03, 0.05)
   - [x] **uncertainty_scaling**: `weight_i *= (1 - clip(p_std_i / max_std, 0, 0.7))` — снижаем вес неуверенных
   - [x] **agreement_K**: dynamic K где K уменьшается если mean(p_std_topK) высок
-- [-] WF на ORIGINAL_WINDOWS, hybrid costs ← **RUNNING ON MLC**
-- [ ] Таблица: mode | threshold | Sharpe | MaxDD | WinRate | AvgPositions
+- [-] WF на ORIGINAL_WINDOWS, hybrid costs ← **DONE (23 min)**
+- [x] Таблица: mode | threshold | Sharpe | MaxDD | WinRate | AvgPositions
+
+**R63 RESULTS:**
+```
+filter_std003  Sharpe=1.83  Ret=+35.1%  DD=-15.7%  thr=0.03 ← BEST (+0.05)
+baseline       Sharpe=1.78  Ret=+33.9%  DD=-15.0% ← BASELINE
+scaling        Sharpe=1.73  DD=-13.0%  (lower DD)
+filter_std002  Sharpe=-0.09 (catastrophic - over-filtered)
+```
+**Winner: filter_std003. Marginal improvement +0.05 only.**
 
 **Ключевое:** не нужно переобучать модели — просто сохранить 10 отдельных предсказаний и использовать std как фильтр
 
@@ -68,9 +87,19 @@
   - [x] `sign_persistence_10 = rolling_mean(sign(ret_12h) == sign(ret_12h.shift(1)), 10)`
   - [x] `reversal_count_10 = rolling_sum(sign(ret_12h) != sign(ret_12h.shift(1)), 10)`
 - [x] Всего ~12 новых фичей. Добавить в feature list (31 → ~43)
-- [-] Обучить LGB+XGB на расширенном наборе, WF ← **QUEUED ON MLC (after R60/R63)**
-- [ ] Сравнить с baseline (31 feat champion)
-- [ ] Если улучшение — ablation: какие temporal фичи дают прирост
+- [-] Обучить LGB+XGB на расширенном наборе, WF ← **DONE (26 min)**
+- [x] Сравнить с baseline (31 feat champion)
+- [x] Если улучшение — ablation: какие temporal фичи дают прирост
+
+**R61 RESULTS:**
+```
++cg_temporal  31+4=35f  Sharpe=1.89  DD=-11.8%  (Δ+0.11) ← BEST - cg lags help!
+baseline_31f  31f       Sharpe=1.78  DD=-15.0% ← BASELINE
++oi_temporal  34f       Sharpe=1.39  (Δ-0.39) hurts
+all_43f       43f       Sharpe=1.01  (Δ-0.77) overfit
++ret_temporal 36f       Sharpe=0.48  (Δ-1.30) catastrophic
+```
+**Winner: +cg_temporal (cg_taker_imb lags/rolling). Small improvement +0.11. ret_12h lags HURT.**
 
 **Важно:**
 - cg_taker_imb — дневные данные, лаги в днях
@@ -92,7 +121,7 @@
   - Architecture: GRU(hidden=16) → Dense(1, sigmoid)
   - OOF для train, full-train pred для test
 - [x] Добавить p_lin и/или p_seq как новые фичи (31 → 32-33)
-- [-] Обучить LGB+XGB с новыми фичами, WF ← **QUEUED ON MLC (after R61)**
+- [-] Обучить LGB+XGB с новыми фичами, WF ← **RUNNING ON MLC**
 - [ ] Сравнить: baseline vs +p_lin vs +p_seq vs +both
 
 **Предупреждения:**
@@ -106,7 +135,7 @@
 
 ## Verification Checklist
 
-- [-] Каждый эксперимент сохраняет результаты в `results_r6X_*.log` ← **IN PROGRESS**
+- [x] Каждый эксперимент сохраняет результаты в `results_r6X_*.csv` — сохранено R60/R63/R61
 - [ ] Таблица сравнения: все варианты в одной таблице
 - [ ] Per-window breakdown (W1 исторически слабее)
 - [ ] Monthly returns для визуальной проверки
