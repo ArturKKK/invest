@@ -19,6 +19,7 @@
 10. [AI Consultation Documents](#10-ai-consultation-documents)
 11. [Установленные факты и выводы](#11-установленные-факты-и-выводы)
 12. [Текущее состояние и нерешённые проблемы](#12-текущее-состояние-и-нерешённые-проблемы)
+13. [ML Core — удалённые вычисления](#13-ml-core--удалённые-вычисления)
 
 ---
 
@@ -1435,6 +1436,126 @@ load_ohlcv() + load_derivatives()     [_ic_scanner.py]
   → add_cg_features()                  [_research_r47_coinglass.py] (CoinGlass taker/liq/LS, shift-1d)
   → cs_rank_cols()                     [перед моделью]
 ```
+
+---
+
+## 13. ML Core — удалённые вычисления
+
+Тяжёлые эксперименты (обучение, WF-симуляции) запускаем на ML Core вместо локального ноутбука.
+
+### Инфраструктура
+
+- **Платформа**: ML Core (mlc), проект `macos-build-infra`
+- **Ноутбук**: `invest` (регион `ix-m5-sm12`, флейвор `8cpu-64ram`, образ `notebook-python-3.11`)
+- **CLI**: `/usr/local/bin/mlc` (уже установлен, настроен: `project=macos-build-infra`, `detach=true`, `auto_relogin=true`)
+- **Выхода в интернет НЕТ** — нельзя pip install из PyPI, git clone, fetch данных с бирж
+
+### Файловая система на ноутбуке
+
+| Путь | Размер | Назначение |
+|------|--------|------------|
+| `/workdir/` | 8 GiB | Рабочая директория, код проекта. **Мало места!** |
+| `/data/` | Внешний S3 | Большие данные (датасеты, модели, архивы). Монтируется из S3 bucket `macos-build-infra-astabakov` (кластер `s3msk`) в `/data/datasets/` |
+| `/data/.venv/` | В /data/ | Виртуальное окружение Python (~5 GiB). Симлинк `/workdir/invest/.venv → /data/.venv` |
+
+**Правило**: большие файлы (data/, .venv, results/, модели) хранить в `/data/`, в `/workdir/` — только код и конфиги. Симлинки для удобства.
+
+### Управление ноутбуком
+
+```bash
+# Статус
+mlc notebook get invest
+
+# Запуск / остановка
+mlc notebook start invest
+mlc notebook stop invest
+
+# Список всех ноутбуков
+mlc notebook ls
+```
+
+### Подключение к ноутбуку (терминал)
+
+```bash
+# SSH через VS Code (Remote-SSH → Connect to Host → invest.macos-build-infra.mlc)
+# или через CLI:
+mlc qwarium connect invest --open-in-vs-code
+```
+
+### Типичный workflow на ноутбуке
+
+```bash
+# 1. Запустить ноутбук (если остановлен)
+mlc notebook start invest
+
+# 2. Подключиться (VS Code Remote-SSH)
+# Host: invest.macos-build-infra.mlc
+
+# 3. На ноутбуке: подготовить данные
+cd /workdir/invest
+git pull                              # обновить код
+tar xzf /data/datasets/data.tar.gz -C /data/datasets/   # распаковать данные в /data
+ln -sf /data/datasets/data /workdir/invest/data          # симлинк data
+ln -sf /data/.venv /workdir/invest/.venv                 # симлинк venv (~5GB, хранится в /data)
+source .venv/bin/activate                                # активировать окружение
+
+# 4. Запустить эксперимент
+python _research_r60_portfolio_opt.py 2>&1 | tee results_r60.log
+
+# 6. Забрать результаты
+# Скопировать в /data/ для сохранности, т.к. /workdir/ может пересоздаться
+cp results_r60.log /data/datasets/
+
+# 7. Остановить ноутбук (экономим ресурсы)
+mlc notebook stop invest
+```
+
+### Запуск команд на ноутбуке удалённо (без SSH)
+
+```bash
+# Узнать имя текущего job ноутбука
+mlc notebook get invest    # → current job: invest-XXXXXX
+
+# Выполнить команду
+mlc job exec invest-XXXXXX -- bash -c "cd /workdir/invest && source .venv/bin/activate && python script.py"
+
+# Интерактивный shell
+mlc job exec invest-XXXXXX -- bash
+```
+
+### Запуск job'ов (альтернатива ноутбуку)
+
+Для автономных скриптов можно отправлять job:
+
+```bash
+# Запуск job
+mlc job submit notebook-python-3.11 python _research_r60_portfolio_opt.py \
+  --flavor 8cpu-64ram \
+  --region ix-m5-sm12 \
+  --name r60-portfolio-opt \
+  -i "type=s3,src=macos-build-infra-astabakov/data.tar.gz,dst=/data/datasets/" \
+  -w /workdir
+
+# Логи
+mlc job logs r60-portfolio-opt
+
+# Список job'ов
+mlc job ls
+
+# Отмена
+mlc job cancel r60-portfolio-opt
+```
+
+### Важные ограничения
+
+1. **Нет интернета** — все зависимости должны быть в Docker-образе или pip cache
+2. **pandas ≤2.x ОБЯЗАТЕЛЬНО** — pandas 3.0 ломает groupby.apply (Sharpe 1.66→1.02). Текущий: 2.3.3
+3. **/workdir = 8 GiB** — не хранить данные и venv здесь, только код
+4. **Venv в /data/.venv** (~5 GiB) — слишком большой для /workdir, симлинк: `ln -sf /data/.venv /workdir/invest/.venv`
+5. **Данные в S3** — bucket `macos-build-infra-astabakov`, кластер `s3msk`. Архив `data.tar.gz` распаковывать в `/data/datasets/`, симлинк: `ln -sf /data/datasets/data /workdir/invest/data`
+6. **git pull** — обязательно перед каждым запуском
+7. **Результаты копировать в /data/** — иначе потеряются при остановке
+8. **Работаем только в /workdir/ и /data/** — в другие папки не лазить
 
 ---
 

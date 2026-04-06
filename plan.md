@@ -1,0 +1,129 @@
+# Plan: R60-R63 Model Improvement Experiments
+
+## TL;DR
+Серия из 4 экспериментов для улучшения gen8 champion (Sharpe 1.66 → цель 2.0+).
+Приоритет: dynamic K + weighting (R60) → uncertainty gating (R63) → temporal features (R61) → alt model stacking (R62).
+Все эксперименты используют шаблон R58 (WF + hybrid costs), метрика: net Sharpe, maxDD, win rate по окнам.
+
+---
+
+## Phase 1: R60 — Dynamic K + Edge>Cost + Weighting
+
+**Файл:** `_research_r60_portfolio_opt.py` (новый, на базе R58)
+
+- [ ] Скопировать `_research_r58_continuous_wf.py` → `_research_r60_portfolio_opt.py`
+- [ ] Модифицировать `simulate_with_hybrid_costs` — добавить `sizing_mode` параметр
+- [ ] Реализовать 5 вариантов портфельной конструкции:
+  - [ ] **baseline**: 6L/3S equal-weight (текущий)
+  - [ ] **grid_K**: 4L/2S, 6L/3S, 8L/4S, 3L/3S (чувствительность к K)
+  - [ ] **dynamic_K**: K_long = clip(2..8) по `strength = mean(top_K_score) - median(score)`; K_short аналогично. Пороги: strength > 0.3 → +1, > 0.6 → +2 к базовому K
+  - [ ] **edge_cost_filter**: открывать позицию только если `|p - 0.5| * notional > estimated_cost_bps`. Для этого нужны raw probs (до z-norm)
+  - [ ] **prob_weighting**: `w_long_i ∝ (p_i - 0.5)`, `w_short_i ∝ (0.5 - p_i)`, нормализовать отдельно L/S book
+- [ ] Для каждого варианта прогнать WF (ORIGINAL_WINDOWS, 5 seeds) с hybrid costs
+- [ ] Собрать таблицу: mode | Sharpe | MaxDD | WinRate | Turnover | Win_W1 | Win_W2 | Win_W3
+
+**Ключевые модификации в simulate:**
+- `_research_r48_cost.py:simulate_with_hybrid_costs` строка ~170: заменить `long_ret = longs["fwd_ret"].mean()` на взвешенный
+- Добавить raw_probs в merged для prob_weighting и edge_cost
+- Dynamic K: вычислять strength каждый timestamp из pred колонки
+
+**Файлы (read-only):**
+- `_research_r48_cost.py` — НЕ трогать, скопировать simulate в R60
+- `_release_champion.py` — train_ensemble(), eval_with_costs()
+- `_research_r58_continuous_wf.py` — шаблон
+
+**Зависимости:** нет
+
+---
+
+## Phase 2: R63 — Uncertainty Gating (Seed Disagreement)
+
+**Файл:** `_research_r63_uncertainty.py` (новый)
+
+- [ ] Модифицировать train_ensemble — возвращать per-seed predictions (не усреднённые)
+  - Сейчас: `lgb_probs = mean(seed_preds)` → одно число
+  - Нужно: сохранить lgb_seed_0_prob, ... + xgb_seed_*
+  - Вычислить: `p_mean = mean(all_10_seeds)`, `p_std = std(all_10_seeds)`
+- [ ] Реализовать 3 варианта gating:
+  - [ ] **uncertainty_filter**: торговать только если `p_std < threshold` (пороги: 0.02, 0.03, 0.05)
+  - [ ] **uncertainty_scaling**: `weight_i *= (1 - clip(p_std_i / max_std, 0, 0.7))` — снижаем вес неуверенных
+  - [ ] **agreement_K**: dynamic K где K уменьшается если mean(p_std_topK) высок
+- [ ] WF на ORIGINAL_WINDOWS, hybrid costs
+- [ ] Таблица: mode | threshold | Sharpe | MaxDD | WinRate | AvgPositions
+
+**Ключевое:** не нужно переобучать модели — просто сохранить 10 отдельных предсказаний и использовать std как фильтр
+
+**Зависимости:** нет (параллельно с R60)
+
+---
+
+## Phase 3: R61 — Temporal Features (Lags + Rolling)
+
+**Файл:** `_research_r61_temporal.py` (новый)
+
+- [ ] Добавить temporal features:
+  - [ ] `ret_12h`: lag2 (=ret_36h), lag4 (=ret_60h), rolling_std_5
+  - [ ] `cg_taker_imb`: lag1, lag2, rolling_mean_5, rolling_std_5
+  - [ ] `oi_chg_12h`: lag1, lag2, rolling_mean_5
+  - [ ] `sign_persistence_10 = rolling_mean(sign(ret_12h) == sign(ret_12h.shift(1)), 10)`
+  - [ ] `reversal_count_10 = rolling_sum(sign(ret_12h) != sign(ret_12h.shift(1)), 10)`
+- [ ] Всего ~12 новых фичей. Добавить в feature list (31 → ~43)
+- [ ] Обучить LGB+XGB на расширенном наборе, WF
+- [ ] Сравнить с baseline (31 feat champion)
+- [ ] Если улучшение — ablation: какие temporal фичи дают прирост
+
+**Важно:**
+- cg_taker_imb — дневные данные, лаги в днях
+- Новые temporal фичи добавить в cs_rank_exclude (не ранкировать лаги cross-sectionally)
+- НЕ использовать cum_funding_24h (missing на VPS)
+
+**Зависимости:** нет (параллельно с R60/R63)
+
+---
+
+## Phase 4: R62 — Alternative Model as Feature (Stacking)
+
+**Файл:** `_research_r62_stacking.py` (новый)
+
+- [ ] **p_lin (Ridge/LogReg)**: обучить LogReg на 8 лучших фичах. OOF-предсказания (5-fold temporal CV).
+  - Фичи: ret_12h, ret_24h, mom_z_24h, oi_chg_12h, taker_cvd_12h, atr_14, pct_coins_up_12h, cg_taker_imb
+- [ ] **p_seq (GRU micro)**:
+  - Input: последние 8 баров × 5 фичей (ret_12h, rvol_12h, cg_taker_imb, oi_chg_12h, pct_coins_up_12h)
+  - Architecture: GRU(hidden=16) → Dense(1, sigmoid)
+  - OOF для train, full-train pred для test
+- [ ] Добавить p_lin и/или p_seq как новые фичи (31 → 32-33)
+- [ ] Обучить LGB+XGB с новыми фичами, WF
+- [ ] Сравнить: baseline vs +p_lin vs +p_seq vs +both
+
+**Предупреждения:**
+- OOF обязателен — иначе утечка
+- GRU требует torch
+- Temporal CV внутри train: split по времени, не random
+
+**Зависимости:** лучше после R61
+
+---
+
+## Verification Checklist
+
+- [ ] Каждый эксперимент сохраняет результаты в `results_r6X_*.log`
+- [ ] Таблица сравнения: все варианты в одной таблице
+- [ ] Per-window breakdown (W1 исторически слабее)
+- [ ] Monthly returns для визуальной проверки
+- [ ] Sanity checks:
+  - Sharpe > 1.0 для любого варианта (иначе баг)
+  - MaxDD < 60% (иначе catastrophic overfit)
+  - Win rate 55-65%
+- [ ] Финальная верификация: лучший R60 + лучший R63 → combined run
+
+## Decisions (не менять)
+- ORIGINAL_WINDOWS (с gap-ами) для сравнимости с baseline Sharpe 1.66
+- N_ROUNDS=600, EARLY_STOP=40
+- 5 seeds [0, 7, 13, 42, 99]
+- Hybrid tiered costs обязательно
+- Шаблон: R58 (`_research_r58_continuous_wf.py`)
+
+## Execution Order
+R60 и R63 параллельно (независимы). R61 параллельно. R62 последним.
+Если последовательно: R60 → R63 → R61 → R62
+Ожидаемое время: R60 ~40min, R63 ~30min, R61 ~40min, R62 ~60min (GRU)
