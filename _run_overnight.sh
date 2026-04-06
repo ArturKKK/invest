@@ -48,7 +48,22 @@ wait $PID_R63 && echo ">>> R63 DONE" || echo ">>> R63 FAILED"
 echo ""
 echo ">>> Starting R61 at $(date)"
 python _research_r61_temporal.py > "$LOG_DIR/run_r61.log" 2>&1
-echo ">>> R61 DONE at $(date)"
+R61_STATUS=$?
+if [ $R61_STATUS -eq 0 ]; then
+    echo ">>> R61 DONE at $(date)"
+else
+    echo ">>> R61 FAILED (exit $R61_STATUS) at $(date)"
+fi
+
+echo ""
+echo ">>> Starting R62 at $(date)"
+python _research_r62_stacking.py > "$LOG_DIR/run_r62.log" 2>&1
+R62_STATUS=$?
+if [ $R62_STATUS -eq 0 ]; then
+    echo ">>> R62 DONE at $(date)"
+else
+    echo ">>> R62 FAILED (exit $R62_STATUS) at $(date)"
+fi
 
 echo ""
 echo "====================================================="
@@ -65,3 +80,6 @@ tail -20 "$LOG_DIR/run_r63.log"
 echo ""
 echo "=== R61 summary ==="
 tail -20 "$LOG_DIR/run_r61.log"
+echo ""
+echo "=== R62 summary ==="
+tail -20 "$LOG_DIR/run_r62.log"
