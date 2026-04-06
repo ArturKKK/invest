@@ -45,6 +45,7 @@ PROD_DIRS = [
     "results_catboost_prod",
     "results_xgboost_prod",
     "results_mlp_prod",
+    "results_cls_prod",
 ]
 
 # Extensions per model type
@@ -54,6 +55,7 @@ MODEL_EXTENSIONS = {
     "results_catboost_prod": ".cbm",
     "results_xgboost_prod": ".json",
     "results_mlp_prod": ".pt",
+    "results_cls_prod": [".txt", ".json"],  # LGB .txt + XGB .json
 }
 
 
@@ -96,10 +98,22 @@ def scan_prod_dir(dirpath: Path) -> dict:
 
     # Model files
     ext = MODEL_EXTENSIONS.get(dirpath.name, ".*")
-    model_files = sorted(dirpath.glob(f"*{ext}")) if ext != ".*" else []
-    # For xgboost, skip feature_names.json (also .json)
-    if ext == ".json":
-        model_files = [f for f in model_files if "model_seed" in f.name]
+    if isinstance(ext, list):
+        # Multiple extensions (e.g. results_cls_prod: LGB .txt + XGB .json)
+        model_files = []
+        for e in ext:
+            model_files.extend(dirpath.glob(f"*{e}"))
+        # Filter out non-model json files
+        model_files = [f for f in model_files if f.name not in
+                       ("feature_names.json", "production_meta.json", "meta.json")]
+        model_files = sorted(model_files)
+    elif ext != ".*":
+        model_files = sorted(dirpath.glob(f"*{ext}"))
+        # For xgboost, skip feature_names.json and meta files (also .json)
+        if ext == ".json":
+            model_files = [f for f in model_files if "model_seed" in f.name or "xgb_cls_seed" in f.name]
+    else:
+        model_files = []
     info["n_models"] = len(model_files)
     info["model_files"] = [f.name for f in model_files]
 

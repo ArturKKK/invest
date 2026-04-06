@@ -1,0 +1,171 @@
+======================================================================
+  🏆 CHAMPION MODEL RELEASE — 31f + Hybrid Tiered Costs
+  📊 ALL Sharpe 1.66 | 6L/3S | 12h rebal
+======================================================================
+======================================================================
+  LOADING DATA
+======================================================================
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  Model frame: 1,826,014 rows, 35 symbols
+  Date range: 2017-08-17 → 2026-03-07
+  Champion features: 31 (all present ✅)
+
+======================================================================
+  DATA LEAKAGE CHECKS
+======================================================================
+  W1: train_end=2024-06-01, test_start=2024-10-15, gap=136d  ✅
+  W2: train_end=2025-01-01, test_start=2025-05-15, gap=134d  ✅
+  W3: train_end=2025-07-01, test_start=2025-11-15, gap=137d  ✅
+  pandas 2.3.3 ✅
+  ALL CHECKS PASSED ✅
+
+======================================================================
+  WALK-FORWARD SIMULATION
+======================================================================
+  cs_rank_exclude: ['ret_dispersion_12h']
+  Config: {'n_long': 6, 'n_short': 3, 'rebal_hours': 12, 'trend_cutoff': 0.9, 'dyn_threshold': 0.7, 'ema_alpha': 0.5, 'hysteresis': 3}
+  Training: champion_31f, 31f, L2=1.0, expanding, 5 seeds × 3 windows
+    W1/s0: train=1,307,473, test=87,732, IC=0.0697
+    W2/s0: train=1,484,524, test=85,569, IC=-0.0436
+    W3/s0: train=1,628,167, test=89,343, IC=0.0408
+
+  Predictions: 262,236 rows, 7,882 timestamps, windows: ['W1', 'W2', 'W3']
+  W1: Sh= 0.98  Eq=$   109  DD=-51.4%  WM=3/4  Cost=3.5%  Turn=4.7
+  W2: Sh= 3.53  Eq=$   231  DD=-22.6%  WM=4/4  Cost=3.5%  Turn=4.7
+  W3: Sh= 2.52  Eq=$   183  DD=-34.1%  WM=5/5  Cost=2.8%  Turn=4.1
+  ALL: Sh= 1.66  Eq=$   462  DD=-51.4%  Cost=9.8%  Turn=4.4
+
+======================================================================
+  DETAILED PERFORMANCE ANALYSIS
+======================================================================
+
+  📊 Basic Statistics (leverage=5x, capital=$100)
+  ───────────────────────────────────────────────────────
+  Sharpe (net):   1.66
+  Sharpe (gross): 2.03
+  Total return:   +361.6%
+  Final equity:   $462 (from $100)
+  Max drawdown:   -51.4%
+  Test period:    2024-10-21 → 2026-03-06 (1.4y)
+  Observations:   450 (every 12h)
+
+  🎯 Win Rate
+  ───────────────────────────────────────────────────────
+  Per rebalance (12h):   58.9% net, 60.0% gross
+  Long leg (hit rate):   51.1%
+  Short leg (hit rate):  54.4%
+
+  📅 Monthly Returns (leveraged 5x)
+  ───────────────────────────────────────────────────────
+  Month         Return%   Gross%   Result
+  ────────────────────────────────────────
+  2024-10        +17.4%   +19.2%      ✅
+  2024-11        +34.6%   +38.9%      ✅
+  2024-12        +11.0%   +16.8%      ✅
+  2025-01        -23.4%   -17.8%      ❌
+  2025-02         +0.0%    +0.0%      ❌
+  2025-03         +0.0%    +0.0%      ❌
+  2025-04         +0.0%    +0.0%      ❌
+  2025-05        +21.2%   +24.0%      ✅
+  2025-06        +37.2%   +43.0%      ✅
+  2025-07        -28.3%   -23.4%      ❌
+  2025-08        +60.6%   +64.7%      ✅
+  2025-09         +0.0%    +0.0%      ❌
+  2025-10         +0.0%    +0.0%      ❌
+  2025-11         +7.4%    +8.5%      ✅
+  2025-12        +47.5%   +53.0%      ✅
+  2026-01        +14.5%   +17.1%      ✅
+  2026-02        +29.5%   +33.1%      ✅
+  2026-03         -9.5%    -8.4%      ❌
+
+  Win months: 10/18 (56%)
+  Avg month:  +12.2%
+  Best month: +60.6%
+  Worst month:-28.3%
+
+  📅 Quarterly Returns (leveraged 5x)
+  ───────────────────────────────────────────────────────
+  2024Q4         +63.1%  ✅
+  2025Q1         -23.4%  ❌
+  2025Q2         +58.4%  ✅
+  2025Q3         +32.3%  ✅
+  2025Q4         +54.9%  ✅
+  2026Q1         +34.5%  ✅
+
+  Win quarters: 5/6 (83%)
+
+  📅 Semi-Annual Returns (leveraged 5x)
+  ───────────────────────────────────────────────────────
+  2024H2         +17.4%  ✅
+  2025H1         +22.3%  ✅
+  2025H2         +90.7%  ✅
+  2026H1         +89.4%  ✅
+
+  📅 Annual Returns (leveraged 5x)
+  ───────────────────────────────────────────────────────
+  2024           +63.1%  ✅
+  2025          +122.1%  ✅
+  2026           +34.5%  ✅
+
+  📊 Per-Window Breakdown
+  ───────────────────────────────────────────────────────
+  Window   Period                     Months   Sharpe   Return%  WinRate
+  ──────────────────────────────────────────────────────────────────────
+  W1       2024-10-21→2025-01-31      3.3m   +0.98      +9.0%    57.5%
+  W2       2025-05-15→2025-08-29      3.5m   +3.53    +131.0%    57.9%
+  W3       2025-11-25→2026-03-07      3.4m   +2.52     +83.0%    60.0%
+
+  📉 Drawdown Analysis
+  ───────────────────────────────────────────────────────
+  Worst DD:  -51.4%
+  Period:    2024-11-28 → 2024-12-14 (15d)
+  Recovery:  184d
+
+  Avg drawdown: -17.6%
+  Time underwater: 78.4%
+
+  📋 Summary: Sharpe=1.66, Return=+361.6%, MaxDD=-51.4%, WinRate=58.9%, WinMonths=10/18
+
+======================================================================
+  TRAINING PRODUCTION MODELS
+======================================================================
+  Features:    31 (['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h']...)
+  cs_rank_exclude: ['ret_dispersion_12h']
+  Train rows:  876,362
+  Val rows:    97,392
+  Train end:   2025-11-03
+  Val range:   2025-11-03 → 2026-03-07
+  Data through:2026-03-07
+  seed=0: LGB trees=  2 AUC=0.5169  XGB trees=  0 AUC=0.4907  Ens AUC=0.4922
+  seed=7: LGB trees=  1 AUC=0.5155  XGB trees=  1 AUC=0.4930  Ens AUC=0.4938
+  seed=13: LGB trees= 34 AUC=0.4951  XGB trees=  4 AUC=0.4904  Ens AUC=0.4925
+  seed=42: LGB trees= 26 AUC=0.4946  XGB trees=  2 AUC=0.4922  Ens AUC=0.4932
+  seed=99: LGB trees=  1 AUC=0.5153  XGB trees= 30 AUC=0.4910  Ens AUC=0.4916
+
+  ✅ Saved 5 LGB + 5 XGB models → results_cls_prod/
+  ✅ feature_names.json (31 features)
+  ✅ production_meta.json + meta.json
+
+  🔍 Sanity Check: IC on last 90 days
+  LGB IC:      -0.0166
+  XGB IC:      -0.0267
+  Ensemble IC: -0.0218 ⚠️ LOW
+
+======================================================================
+  ✅ RELEASE COMPLETE
+======================================================================

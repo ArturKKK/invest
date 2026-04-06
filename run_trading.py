@@ -148,6 +148,8 @@ UNRANKED_COLS = {
     'yield_curve_10y2y_chg_1d', 'yield_curve_10y2y_chg_5d', 'yield_curve_10y2y_chg_20d',
     # Macro cross-interactions
     'risk_on_off_ratio', 'real_rate_chg_5d',
+    # CLS champion 31f — market-level features (DO NOT CS-rank)
+    'ret_dispersion_12h',  # CS std of ret_12h (same for all symbols at each timestamp)
 }
 
 # Default risk config (overridden by optimal_config.json)
@@ -577,6 +579,56 @@ def add_cls_features(df, root):
         if plain not in df.columns and cal in df.columns:
             df[plain] = df[cal]
             n_added += 1
+
+    # 5. rel_volume_cs: log(volume) - cs_mean(log(volume)) — cross-sectional relative volume
+    if 'rel_volume_cs' not in df.columns and 'volume' in df.columns:
+        df['_log_vol'] = np.log(df['volume'].clip(lower=1))
+        df['rel_volume_cs'] = df['_log_vol'] - df.groupby('timestamp')['_log_vol'].transform('mean')
+        df.drop(columns=['_log_vol'], inplace=True)
+        n_added += 1
+
+    # 6. ret_dispersion_12h: cross-sectional std of ret_12h (market-level, NOT CS-ranked)
+    if 'ret_dispersion_12h' not in df.columns and 'ret_12h' in df.columns:
+        df['ret_dispersion_12h'] = df.groupby('timestamp')['ret_12h'].transform('std')
+        n_added += 1
+
+    # 7. cs_rank_ma_5: rolling mean of CS-ranked ret_12h (cross-sectional momentum persistence)
+    if 'cs_rank_ma_5' not in df.columns and 'ret_12h' in df.columns:
+        _cs_rank = df.groupby('timestamp')['ret_12h'].rank(pct=True) - 0.5
+        df['cs_rank_ma_5'] = _cs_rank.groupby(df['symbol']).transform(
+            lambda x: x.rolling(5, min_periods=3).mean()
+        )
+        n_added += 1
+
+    # 8. cg_taker_imb: CoinGlass taker buy/sell imbalance (daily, shift-1 for lookahead safety)
+    if 'cg_taker_imb' not in df.columns:
+        cg_taker_path = os.path.join(root, 'data', 'raw', 'coinglass', 'taker.parquet')
+        if os.path.exists(cg_taker_path):
+            try:
+                taker = pd.read_parquet(cg_taker_path)
+                taker['timestamp'] = pd.to_datetime(taker['timestamp'], utc=True)
+                taker['cg_date'] = taker['timestamp'].dt.normalize()
+                taker = taker.drop_duplicates(subset=['symbol', 'cg_date'], keep='last')
+                eps = 1e-10
+                taker_sum = taker['taker_buy_usd'] + taker['taker_sell_usd']
+                taker['cg_taker_imb'] = (taker['taker_buy_usd'] - taker['taker_sell_usd']) / (taker_sum + eps)
+                # Shift-1: use cg_date = floor(timestamp, 'D') - 1 day
+                df['_cg_date'] = df['timestamp'].dt.normalize() - pd.Timedelta(days=1)
+                df = df.merge(
+                    taker[['symbol', 'cg_date', 'cg_taker_imb']].rename(columns={'cg_date': '_cg_date'}),
+                    on=['symbol', '_cg_date'],
+                    how='left',
+                )
+                df.drop(columns=['_cg_date'], inplace=True)
+                n_added += 1
+                n_valid = df['cg_taker_imb'].notna().sum()
+                print(f"   📊 cg_taker_imb: {n_valid:,}/{len(df):,} valid ({100*n_valid/len(df):.0f}%)")
+            except Exception as e:
+                print(f"   ⚠️  cg_taker_imb failed: {e}")
+                df['cg_taker_imb'] = 0.0
+        else:
+            print(f"   ⚠️  CG taker data not found: {cg_taker_path}")
+            df['cg_taker_imb'] = 0.0
 
     print(f"   ✅ CLS features: {n_added} added")
     return df

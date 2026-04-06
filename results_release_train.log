@@ -1,0 +1,69 @@
+======================================================================
+  🏆 CHAMPION MODEL RELEASE — 31f + Hybrid Tiered Costs
+  📊 ALL Sharpe 1.66 | 6L/3S | 12h rebal
+======================================================================
+======================================================================
+  LOADING DATA
+======================================================================
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  Model frame: 1,826,014 rows, 35 symbols
+  Date range: 2017-08-17 → 2026-03-07
+  Champion features: 31 (all present ✅)
+
+======================================================================
+  DATA LEAKAGE CHECKS
+======================================================================
+  W1: train_end=2024-06-01, test_start=2024-10-15, gap=136d  ✅
+  W2: train_end=2025-01-01, test_start=2025-05-15, gap=134d  ✅
+  W3: train_end=2025-07-01, test_start=2025-11-15, gap=137d  ✅
+  pandas 2.3.3 ✅
+  ALL CHECKS PASSED ✅
+
+======================================================================
+  TRAINING PRODUCTION MODELS
+======================================================================
+  Features:    31 (['ret_12h', 'ret_24h', 'ret_48h', 'residual_12h', 'residual_24h']...)
+  cs_rank_exclude: ['ret_dispersion_12h']
+  ES calibration: 868,842 train, 94,192 val
+  Final train:     973,754 rows (ALL data)
+  Val range:   2025-11-07 → 2026-03-07
+  Data through:2026-03-07
+
+  Pass 1: Calibrating optimal rounds...
+  LGB calibrated: [50, 50, 50, 51, 50] → using 200
+  XGB calibrated: [50, 50, 50, 50, 50] → using 200
+
+  Pass 2: Training final models on ALL data...
+  seed=0: LGB 200r AUC=0.5919  XGB 200r AUC=0.5642  Ens AUC=0.5813
+  seed=7: LGB 200r AUC=0.5906  XGB 200r AUC=0.5670  Ens AUC=0.5817
+  seed=13: LGB 200r AUC=0.5928  XGB 200r AUC=0.5671  Ens AUC=0.5831
+  seed=42: LGB 200r AUC=0.5884  XGB 200r AUC=0.5663  Ens AUC=0.5803
+  seed=99: LGB 200r AUC=0.5894  XGB 200r AUC=0.5683  Ens AUC=0.5815
+
+  ✅ Saved 5 LGB + 5 XGB models → results_cls_prod/
+  ✅ feature_names.json (31 features)
+  ✅ production_meta.json + meta.json
+
+  🔍 Sanity Check: IC on last 90 days
+  LGB IC:      0.1586
+  XGB IC:      0.1066
+  Ensemble IC: 0.1350 ✅
+
+======================================================================
+  ✅ RELEASE COMPLETE
+======================================================================
