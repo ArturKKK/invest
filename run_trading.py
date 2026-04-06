@@ -3273,7 +3273,53 @@ def main():
                   f"(realized: ${realized_pnl:+.2f}, UPnL Δ: ${upnl_delta:+.2f}, "
                   f"win rate: {n_wins}/{len(cycle_pnls)})")
 
-        # 7. Log
+        # 7. Log signals to CSV (for post-hoc analysis: fill quality, signal decay, etc.)
+        try:
+            sig_csv = os.path.join(log_dir, 'signal_history.csv')
+            write_hdr = not os.path.exists(sig_csv)
+            with open(sig_csv, 'a') as sf:
+                if write_hdr:
+                    sf.write('timestamp,symbol,score,confidence,deriv_scale,position_side,position_usd\n')
+                pos_map = {p['symbol']: p for p in (positions or [])}
+                for _, row in signals.iterrows():
+                    sym = row['symbol']
+                    pos = pos_map.get(sym, {})
+                    sf.write(f"{now.isoformat()},{sym},{row['score']:.6f},"
+                             f"{row.get('confidence', 0.5):.4f},{row.get('deriv_scale', 1.0):.4f},"
+                             f"{pos.get('side', '')},{pos.get('usd', 0):.2f}\n")
+        except Exception as e:
+            print(f"   ⚠️  Signal CSV log error: {e}")
+
+        # 7b. Log feature health snapshot (detect zero/NaN features early)
+        try:
+            feat_csv = os.path.join(log_dir, 'feature_health.csv')
+            write_hdr = not os.path.exists(feat_csv)
+            latest_snap = df.groupby('symbol').last()
+            feat_names_file = os.path.join(root, 'results_cls_prod', 'feature_names.json')
+            if os.path.exists(feat_names_file):
+                with open(feat_names_file) as ff:
+                    check_feats = json.load(ff)
+            else:
+                check_feats = []
+            with open(feat_csv, 'a') as ff:
+                if write_hdr:
+                    ff.write('timestamp,n_symbols,n_features,n_zero_cols,n_nan_cols,zero_cols,nan_cols\n')
+                n_sym = latest_snap.shape[0]
+                zero_cols = [c for c in check_feats if c in latest_snap.columns
+                             and (latest_snap[c] == 0).all()]
+                nan_cols = [c for c in check_feats if c in latest_snap.columns
+                            and latest_snap[c].isna().all()]
+                ff.write(f"{now.isoformat()},{n_sym},{len(check_feats)},"
+                         f"{len(zero_cols)},{len(nan_cols)},"
+                         f"\"{';'.join(zero_cols)}\",\"{';'.join(nan_cols)}\"\n")
+                if zero_cols:
+                    print(f"   ⚠️  ZERO features ({len(zero_cols)}): {zero_cols}")
+                if nan_cols:
+                    print(f"   ⚠️  NaN features ({len(nan_cols)}): {nan_cols}")
+        except Exception as e:
+            print(f"   ⚠️  Feature health log error: {e}")
+
+        # 7c. JSON log
         log = {
             'timestamp': now.isoformat(),
             'mode': args.mode,
