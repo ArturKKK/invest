@@ -210,8 +210,7 @@ def compute_p_lin_oof(df: pd.DataFrame, feats: List[str],
     """
     avail = [f for f in feats if f in df.columns]
     df_sorted = df.sort_values("timestamp")
-    timestamps = df_sorted["timestamp"].unique()
-    timestamps.sort()
+    timestamps = np.array(sorted(df_sorted["timestamp"].unique()))
     fold_size = len(timestamps) // n_folds
     p_lin = pd.Series(np.nan, index=df.index, dtype=float)
 
@@ -247,7 +246,7 @@ def compute_p_seq_oof(df: pd.DataFrame, feats: List[str], seq_len: int = 8,
     """OOF predictions from GRU micro-model via temporal CV."""
     avail = [f for f in feats if f in df.columns]
     df_sorted = df.sort_values("timestamp").copy()
-    timestamps = sorted(df_sorted["timestamp"].unique())
+    timestamps = np.array(sorted(df_sorted["timestamp"].unique()))
     fold_size = len(timestamps) // n_folds
     p_seq = pd.Series(np.nan, index=df.index, dtype=float)
 
