@@ -288,10 +288,13 @@ def train_ensemble_ranking(df, feats, windows, seeds, objective="rank"):
             all_preds.append(rec)
 
             if seed == seeds[0]:
-                n_groups_train = tr.groupby("timestamp").ngroups
-                n_groups_test = te.groupby("timestamp").ngroups
-                log(f"  {w['name']}/s{seed}: train={len(tr):,} ({n_groups_train} groups) "
-                    f"test={len(te):,} ({n_groups_test} groups)")
+                if "timestamp" in tr.columns:
+                    n_groups_train = tr.groupby("timestamp").ngroups
+                    n_groups_test = te.groupby("timestamp").ngroups
+                    log(f"  {w['name']}/s{seed}: train={len(tr):,} ({n_groups_train} groups) "
+                        f"test={len(te):,} ({n_groups_test} groups)")
+                else:
+                    log(f"  {w['name']}/s{seed}: train={len(tr):,} test={len(te):,}")
 
     if not all_preds:
         return None
