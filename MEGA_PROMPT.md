@@ -1078,13 +1078,13 @@ Total net return 4L/2S: **+77.4%** (vs +33.9% для 6L3S). MaxDD: -14.1%.
 
 | Threshold | Gross Sharpe | Net Sharpe | Ret% | MaxDD | WR% | AvgPos | Periods |
 |-----------|-------------|-----------|------|-------|-----|--------|---------|
-| baseline_4L2S | 2.047 | 1.507 | 50.3% | -27.8% | 59.1% | 4.2 | 450 |
-| t=0.01 | 1.979 | 1.619 | 86.2% | -33.0% | 57.8% | 2.7 | 450 |
-| t=0.02 | 1.410 | 1.052 | 38.9% | -38.7% | 54.4% | 2.1 | 443 |
+| baseline_4L2S | 3.443 | 2.984 | 77.4% | -14.1% | 60.4% | 4.2 | 450 |
+| t=0.01 | 2.257 | 1.619 | 86.2% | -33.0% | 57.8% | 2.7 | 450 |
+| t=0.02 | 1.410 | 1.073 | 38.9% | -38.7% | 54.4% | 2.1 | 443 |
 | t=0.03 | 0.735 | 0.446 | -10.0% | -60.6% | 54.8% | 1.7 | 301 |
 | ≥0.04 | negative | — | — | — | — | — | <136 |
 
-**Вывод**: Reject option НЕ помогает. Фильтрация по raw_prob threshold разрушает диверсификацию (AvgPos падает до 1.7-2.7) и ухудшает Sharpe. При t≥0.03 слишком мало позиций → катастрофический DD. Фиксированный 4L/2S лучше.
+**Вывод**: Reject option НЕ помогает. Baseline 4L/2S подтверждён = R65 (Gross 3.443, Net 2.984). Фильтрация по raw_prob threshold разрушает диверсификацию (AvgPos падает до 1.7-2.7) и ухудшает Sharpe. При t≥0.03 слишком мало позиций → катастрофический DD. Фиксированный 4L/2S лучше.
 
 ### R68 — Continuous Walk-Forward (✅ 2026-04-07)
 
@@ -1131,12 +1131,12 @@ LightGBM lambdarank + XGBRanker вместо binary classification. Группи
 
 | Config | Gross Sh | Net Sh | NDCG@4 | NDCG@2 | Ret% | DD% |
 |--------|----------|--------|--------|--------|------|-----|
-| binary_4L2S | 2.467 | 2.014 | 0.5651 | 0.5563 | 46.8% | -14.3% |
-| binary_6L3S | 2.302 | 1.752 | 0.5651 | 0.5563 | 32.6% | -11.5% |
+| binary_4L2S | 3.443 | 2.984 | 0.5670 | 0.5563 | 77.4% | -14.1% |
+| binary_6L3S | 2.317 | 1.779 | 0.5670 | 0.5563 | 33.9% | -15.0% |
 | rank_4L2S | 1.546 | 0.796 | 0.5253 | 0.5167 | 10.6% | -14.5% |
 | rank_6L3S | 0.874 | 0.042 | 0.5253 | 0.5167 | -0.7% | -17.6% |
 
-**Вывод**: LambdaRank хуже binary по ВСЕМ метрикам. NDCG@4 ниже (0.525 vs 0.565), Sharpe rank_4L2S=0.80 vs binary_4L2S=2.01. Binary classification уже хорошо оптимизирует ranking quality через probability calibration — переход на ranking loss не даёт улучшения. Тема закрыта.
+**Вывод**: LambdaRank хуже binary по ВСЕМ метрикам. Binary baseline подтверждён = R65 (Gross 3.443, Net 2.984). NDCG@4 ниже (0.525 vs 0.567), Sharpe rank_4L2S=0.80 vs binary_4L2S=2.98. Binary classification уже хорошо оптимизирует ranking quality через probability calibration — переход на ranking loss не даёт улучшения. Тема закрыта.
 
 **Итог R60-R70**: Из 25+ вариантов — единственное надёжное улучшение: **4L/2S** (по gross alpha, не по costs). В continuous WF: Net Sharpe **3.777**, ret **+179%**. Reject option, uncertainty gating, и LambdaRank разрушают performance. Система на локальном оптимуме — дальнейшее улучшение через feature/model engineering имеет <5% шанс.
 

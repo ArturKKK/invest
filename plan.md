@@ -13,7 +13,7 @@
 | R63 | Uncertainty filter std<0.03 | 1.83 | Шум |
 | R61 | +cg_temporal 35f | 1.89 | Hurt в комбо |
 | R62 | Meta-stacking LogReg+GRU | -0.38..1.48 | Провал |
-| R67 | Reject option (prob threshold) | 1.507 best | Провал — снижает positions |
+| R67 | Reject option (prob threshold) | 1.619 best (base=2.984) | Провал — снижает positions |
 | R69 | Percentile uncertainty gating | 0.608 best | Катастрофа — фильтрует alpha-генераторы |
 
 | R70 | LambdaRank (NDCG@K) | 0.796 | Провал — binary лучше |
@@ -34,8 +34,8 @@ LightGBM lambdarank + XGBRanker вместо binary classification.
 
 | Config | Gross Sh | Net Sh | NDCG@4 | Ret% |
 |--------|----------|--------|--------|------|
-| binary_4L2S | 2.467 | 2.014 | 0.5651 | 46.8% |
-| rank_4L2S | 1.546 | 0.796 | 0.5253 | 10.6% |
+| binary_4L2S | 3.443 | 2.984 | 0.567 | 77.4% |
+| rank_4L2S | 1.546 | 0.796 | 0.525 | 10.6% |
 
 LambdaRank хуже binary по ВСЕМ метрикам. Закрыто.
 
