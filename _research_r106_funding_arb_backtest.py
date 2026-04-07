@@ -112,7 +112,9 @@ class Position:
 
 def simulate(funding_df: pd.DataFrame, price_df: pd.DataFrame,
              entry_thr: float, exit_thr: float, max_hold: int,
-             max_pos: int) -> dict:
+             max_pos: int,
+             fr_lookup: dict = None, price_lookup: dict = None,
+             all_ts: list = None, symbols: list = None) -> dict:
     """
     Event-driven simulation of funding arb strategy.
 
@@ -122,19 +124,22 @@ def simulate(funding_df: pd.DataFrame, price_df: pd.DataFrame,
     3. Check new entries: FR > entry_thr, if slots available
     4. Track hedge P&L (spot + perp price moves)
     """
-    # Build lookup: (timestamp, symbol) -> fr
-    fr_lookup = {}
-    for _, row in funding_df.iterrows():
-        fr_lookup[(row.timestamp, row.symbol)] = row.fr
-
-    # Build price lookup: (timestamp, symbol) -> close, ret_8h
-    price_lookup = {}
-    for _, row in price_df.iterrows():
-        price_lookup[(row.timestamp, row.symbol)] = (row.close, row.ret_8h if pd.notna(row.ret_8h) else 0.0)
-
-    # Get all unique timestamps (sorted)
-    all_ts = sorted(funding_df.timestamp.unique())
-    symbols = sorted(funding_df.symbol.unique())
+    # Build lookups if not pre-computed
+    if fr_lookup is None:
+        fr_lookup = dict(zip(
+            zip(funding_df.timestamp, funding_df.symbol),
+            funding_df.fr
+        ))
+    if price_lookup is None:
+        ret_vals = price_df.ret_8h.fillna(0.0)
+        price_lookup = dict(zip(
+            zip(price_df.timestamp, price_df.symbol),
+            zip(price_df.close, ret_vals)
+        ))
+    if all_ts is None:
+        all_ts = sorted(funding_df.timestamp.unique())
+    if symbols is None:
+        symbols = sorted(funding_df.symbol.unique())
 
     positions: list[Position] = []
     equity = CAPITAL
@@ -289,7 +294,7 @@ def main():
     log("=" * 70)
 
     # Load data
-    log("\n[1/4] Loading data...")
+    log("\n[1/5] Loading data...")
     funding = load_funding()
     symbols = sorted(funding.symbol.unique())
     prices = load_prices(symbols)
@@ -304,8 +309,23 @@ def main():
     funding = funding[funding.timestamp.isin(common_ts)]
     prices = prices[prices.timestamp.isin(common_ts)]
 
+    # Pre-compute lookups once (avoid per-iteration iterrows)
+    log("\n[2/5] Pre-computing lookups...")
+    fr_lookup = dict(zip(
+        zip(funding.timestamp, funding.symbol),
+        funding.fr
+    ))
+    ret_vals = prices.ret_8h.fillna(0.0)
+    price_lookup = dict(zip(
+        zip(prices.timestamp, prices.symbol),
+        zip(prices.close, ret_vals)
+    ))
+    all_ts = sorted(funding.timestamp.unique())
+    all_symbols = sorted(funding.symbol.unique())
+    log(f"  FR lookup: {len(fr_lookup):,} entries, Price lookup: {len(price_lookup):,} entries")
+
     # Grid search
-    log("\n[2/4] Grid search...")
+    log("\n[3/5] Grid search...")
     total_combos = (len(ENTRY_THRESHOLDS) * len(EXIT_THRESHOLDS) *
                     len(MAX_HOLD_PERIODS) * len(MAX_POSITIONS_LIST))
     log(f"  Total combinations: {total_combos}")
@@ -322,7 +342,9 @@ def main():
                     if count % 20 == 0:
                         log(f"  [{count}/{total_combos}] entry={entry_thr*100:.3f}% "
                             f"exit={exit_thr*100:.4f}% hold={max_hold} pos={max_pos}")
-                    res = simulate(funding, prices, entry_thr, exit_thr, max_hold, max_pos)
+                    res = simulate(funding, prices, entry_thr, exit_thr, max_hold, max_pos,
+                                   fr_lookup=fr_lookup, price_lookup=price_lookup,
+                                   all_ts=all_ts, symbols=all_symbols)
                     if res.get("valid"):
                         results.append(res)
 
@@ -331,7 +353,7 @@ def main():
         return
 
     # Results
-    log(f"\n[3/4] Analyzing {len(results)} valid configs...")
+    log(f"\n[4/5] Analyzing {len(results)} valid configs...")
     grid_df = pd.DataFrame(results)
     grid_df = grid_df.sort_values("sharpe", ascending=False).reset_index(drop=True)
     grid_df.to_csv(RESULTS_DIR / "r106_grid.csv", index=False)
@@ -358,11 +380,12 @@ def main():
         f"Hedge=${best['total_hedge_pnl_usd']:.4f}")
 
     # Re-run best config to get equity curve
-    log("\n[4/4] Generating equity curve for best config...")
-    # Quick re-run to capture equity
+    log("\n[5/5] Generating equity curve for best config...")
     eq_result = simulate(funding, prices,
                          best["entry_threshold"], best["exit_threshold"],
-                         int(best["max_hold_periods"]), int(best["max_positions"]))
+                         int(best["max_hold_periods"]), int(best["max_positions"]),
+                         fr_lookup=fr_lookup, price_lookup=price_lookup,
+                         all_ts=all_ts, symbols=all_symbols)
 
     # Save best
     with open(RESULTS_DIR / "r106_best.json", "w") as f:
