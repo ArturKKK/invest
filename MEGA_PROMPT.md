@@ -980,6 +980,157 @@ Hybrid тiers:
 3. `cg_oi_chg_1d` показывает хорошо в W2 (+3.66 > baseline +3.53), но ломает W1/W3.
 4. **Итог R55+R56+R56b**: Ни одна CG фича не проходит WF-тест на замену. Champion 31f hybrid ALL=+1.66 остаётся финальным чемпионом.
 
+### R60 — Portfolio Construction Optimization (✅ 2026-04-06)
+
+5 режимов портфельной конструкции поверх gen8 champion 31f. ORIGINAL_WINDOWS, hybrid tiered costs, 5 seeds.
+
+| Mode | Sharpe | Ret% | MaxDD | WR% | Комментарий |
+|------|--------|------|-------|-----|-------------|
+| **grid_4L2S** | **2.98** | +77.4% | -14.1% | 60% | **WINNER** — 4L/2S |
+| baseline 6L3S | 1.78 | +33.9% | -15.0% | 58% | Текущий прод |
+| edge_cost_filter | 1.60 | — | — | — | Провал |
+| prob_weighting | 1.58 | — | — | — | Провал |
+| dynamic_K | 1.51 | — | — | — | Провал |
+
+**Вывод**: Уменьшение K с 6L/3S до 4L/2S — единственное осмысленное улучшение портфельной конструкции. Позиции 5-6 в лонге добавляют шум.
+
+### R61 — Temporal Features (✅ 2026-04-06)
+
+12 temporal features (lags + rolling) в 5 ablation-вариантах.
+
+| Вариант | Features | Sharpe | Δ | Комментарий |
+|---------|----------|--------|---|-------------|
+| **+cg_temporal** | 31+4=35f | **1.89** | +0.11 | cg_taker_imb lags помогают |
+| baseline_31f | 31f | 1.78 | — | |
+| +oi_temporal | 34f | 1.39 | -0.39 | Hurt |
+| all_43f | 43f | 1.01 | -0.77 | Overfit |
+| +ret_temporal | 36f | 0.48 | -1.30 | Catastrophic |
+
+**Вывод**: ret_12h лаги категорически вредны. cg_taker_imb lags дают маргинальный +0.11, но в combined run (R64) ухудшают.
+
+### R62 — Meta-Stacking LogReg+GRU (✅ 2026-04-06)
+
+OOF predictions от LogReg (p_lin) и GRU micro-model (p_seq) как доп. фичи.
+
+| Вариант | Sharpe | Δ |
+|---------|--------|---|
+| baseline_31f | 1.78 | — |
+| +p_seq (GRU) | 1.48 | -0.29 |
+| +p_lin+p_seq | 0.50 | -1.28 |
+| +p_lin (LogReg) | -0.38 | -2.16 |
+
+**Вывод**: Meta-stacking не работает. OOF от более слабых моделей = шум для LGB/XGB. Тема закрыта.
+
+### R63 — Uncertainty Gating / Seed Disagreement (✅ 2026-04-06)
+
+p_std по 10 моделям (5 seeds × LGB+XGB) как фильтр неуверенных позиций.
+
+| Вариант | Sharpe | Δ | Комментарий |
+|---------|--------|---|-------------|
+| filter_std003 | 1.83 | +0.05 | Marginal, порог 0.03 |
+| baseline | 1.78 | — | |
+| scaling | 1.73 | -0.05 | |
+| filter_std002 | -0.09 | -1.87 | Catastrophic over-filter |
+
+**Вывод**: Ensemble diversity слишком низкая (LGB≈XGB), p_std < 0.03 почти никогда не срабатывает. Фиксированный порог бесполезен.
+
+### R64 — Combined Verification (✅ 2026-04-06)
+
+Совместный запуск лучших из R60+R63+R61.
+
+| Config | Sharpe | Комментарий |
+|--------|--------|-------------|
+| **grid_4L2S** | **1.84** | +0.07 vs baseline — WINNER |
+| grid4L2S+filter | 1.84 | Filter не добавляет |
+| baseline_6L3S | 1.77 | |
+| filter_std003 | 1.77 | 0 эффект |
+| grid4L2S+cg_temp | 1.20 | cg_temporal hurt в комбо |
+
+### R65 — Gross vs Net Sharpe: 4L/2S vs 6L/3S (✅ 2026-04-07)
+
+Ключевой вопрос: улучшение 4L/2S — от лучшего alpha или от меньших costs?
+
+| Config | Gross Sharpe | Net Sharpe | Δ(cost) | AvgCost | AvgPos |
+|--------|-------------|-----------|---------|---------|--------|
+| **4L/2S** | **3.443** | **2.984** | 0.459 | 2.1bp | 6.0 |
+| 6L/3S | 2.317 | 1.779 | 0.538 | 2.1bp | 9.0 |
+| 3L/3S | 2.088 | 1.567 | 0.521 | 2.2bp | 6.0 |
+| 8L/4S | 1.961 | 1.323 | 0.638 | 2.1bp | 12.0 |
+
+**Gross Sharpe delta 4L/2S vs 6L/3S: +1.126** — improvement от **BETTER ALPHA**, не от costs. Costs почти одинаковые (2.1 vs 2.1 bps). Модель хорошо ранжирует top-4, позиции 5-6 добавляют шум/анти-альфу.
+
+Квартальная стабильность 4L/2S (net):
+
+| Quarter | Net Sharpe | Net Ret% |
+|---------|-----------|---------|
+| 2024Q4 | 5.26 | +34.5% |
+| 2025Q1 | -5.19 | -11.1% |
+| 2025Q2 | 6.30 | +15.5% |
+| 2025Q3 | 1.53 | +6.9% |
+| 2025Q4 | 4.87 | +10.3% |
+| 2026Q1 | 2.09 | +9.1% |
+
+Total net return 4L/2S: **+77.4%** (vs +33.9% для 6L3S). MaxDD: -14.1%.
+
+### R67 — Reject Option / Score-Gap Threshold (✅ 2026-04-07)
+
+Вместо фиксированного K=4L/2S — переменный K через порог на raw_prob: long если p > 0.5+t, short если p < 0.5-t. Max cap = 4L/2S.
+
+| Threshold | Gross Sharpe | Net Sharpe | Ret% | MaxDD | WR% | AvgPos | Periods |
+|-----------|-------------|-----------|------|-------|-----|--------|---------|
+| baseline_4L2S | 2.047 | 1.507 | 50.3% | -27.8% | 59.1% | 4.2 | 450 |
+| t=0.01 | 1.979 | 1.619 | 86.2% | -33.0% | 57.8% | 2.7 | 450 |
+| t=0.02 | 1.410 | 1.052 | 38.9% | -38.7% | 54.4% | 2.1 | 443 |
+| t=0.03 | 0.735 | 0.446 | -10.0% | -60.6% | 54.8% | 1.7 | 301 |
+| ≥0.04 | negative | — | — | — | — | — | <136 |
+
+**Вывод**: Reject option НЕ помогает. Фильтрация по raw_prob threshold разрушает диверсификацию (AvgPos падает до 1.7-2.7) и ухудшает Sharpe. При t≥0.03 слишком мало позиций → катастрофический DD. Фиксированный 4L/2S лучше.
+
+### R68 — Continuous Walk-Forward (✅ 2026-04-07)
+
+Торговля в gap-периодах последней моделью (как в реале), без "0% месяцев".
+
+| Config | Gross Sharpe | Net Sharpe | Ret% | MaxDD | Periods |
+|--------|-------------|-----------|------|-------|---------|
+| **4L/2S continuous** | **4.297** | **3.777** | **179.3%** | -13.9% | 688 |
+| 4L/2S original | 3.443 | 2.984 | 77.4% | -14.1% | 450 |
+| 6L/3S continuous | 3.102 | 2.509 | 81.9% | -15.0% | 688 |
+| 6L/3S original | 2.317 | 1.779 | 33.9% | -15.0% | 450 |
+
+**Вывод**: В continuous WF 4L/2S Net Sharpe = **3.777** (vs 2.984 на gapped windows). Improvement 4L/2S vs 6L/3S стабильно: +1.268 в continuous (3.777 vs 2.509), +1.205 в original (2.984 vs 1.779). Gap-периоды были профитабельны. Q1/2025 в continuous: Sharpe=+2.65 (vs -5.19 на gapped!) — последняя модель работала в gap.
+
+Квартальная 4L/2S continuous:
+
+| Quarter | Net Sharpe | Net Ret% |
+|---------|-----------|---------|
+| 2024Q4 | 5.26 | +34.5% |
+| 2025Q1 | 2.65 | +14.7% |
+| 2025Q2 | 5.48 | +21.2% |
+| 2025Q3 | 0.30 | +2.6% |
+| 2025Q4 | 7.13 | +33.5% |
+| 2026Q1 | 2.09 | +9.1% |
+
+### R69 — Percentile Uncertainty Gating (✅ 2026-04-07)
+
+Adaptive filtering: на каждом timestamp убираем монеты с p_std выше определённого квантиля. Идея: relative threshold вместо абсолютного 0.03.
+
+| Percentile | Gross Sharpe | Net Sharpe | Ret% | MaxDD | WR% | Filtered% |
+|-----------|-------------|-----------|------|-------|-----|-----------|
+| baseline_4L2S | 3.443 | 2.984 | 77.4% | -14.1% | 60.4% | 0% |
+| pct=0.9 | 1.263 | 0.608 | 8.5% | -18.8% | 53.8% | 12% |
+| pct=0.8 | 0.356 | -0.364 | -8.5% | -19.0% | 51.8% | 21% |
+| pct=0.7 | -0.223 | -0.976 | -18.4% | -26.3% | 53.8% | 30% |
+| pct=0.6 | -2.459 | -3.287 | -46.0% | -46.2% | 49.8% | 40% |
+| pct=0.5 | -0.554 | -1.550 | -23.9% | -27.4% | 49.1% | 49% |
+
+**Вывод**: Percentile gating КАТАСТРОФИЧЕСКИ ухудшает. Даже при pct=0.9 (фильтруем только 12% самых неуверенных) → Sharpe падает с 2.98 до 0.61. Причина: фильтрация убирает монеты ИМЕННО из top/bottom, которые и генерируют alpha. Тема uncertainty gating закрыта окончательно.
+
+### R70 — LambdaRank Objective (🔄 running)
+
+LightGBM lambdarank + XGBRanker вместо binary classification. Группировка по timestamp, NDCG@4/@2 для оптимизации top-K ranking quality.
+
+**Итог R60-R69**: Из 20+ вариантов — единственное надёжное улучшение: **4L/2S** (по gross alpha, не по costs). В continuous WF: Net Sharpe **3.777**, ret **+179%**. Reject option и uncertainty gating разрушают performance. Ranking objective (R70) — последняя идея в текущем цикле.
+
 ---
 
 ## 8. История утечек данных (Data Leakage)
