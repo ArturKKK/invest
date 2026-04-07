@@ -1,0 +1,163 @@
+======================================================================
+  R58 — CONTINUOUS WALK-FORWARD (no gap months)
+  Champion: 31f + hybrid tiered costs
+======================================================================
+======================================================================
+  LOADING DATA
+======================================================================
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  Model frame: 1,826,014 rows, 35 symbols
+  Date range: 2017-08-17 → 2026-03-07
+  Champion features: 31 ✅
+
+======================================================================
+  CONTINUOUS WALK-FORWARD (gap months traded by prior model)
+======================================================================
+  W1/s0: train=1,307,473, test=169,308, IC=0.0531, test_dates=2024-10-15→2025-05-14
+  W2/s0: train=1,484,524, test=144,969, IC=-0.0413, test_dates=2025-05-15→2025-11-14
+  W3/s0: train=1,628,167, test=89,343, IC=0.0408, test_dates=2025-11-15→2026-03-07
+
+  Predictions: 403,212 rows, 12,154 timestamps
+  Date range: 2024-10-15 → 2026-03-07
+  Windows: {'W1': 169296, 'W2': 144969, 'W3': 88947}
+
+======================================================================
+  CONTINUOUS WF (no gaps)
+======================================================================
+  Sharpe (net):    3.06
+  Total return:    +107.0%
+  Final equity:    $207 (from $100)
+  Max drawdown:    -12.5%
+  Test period:     2024-10-21 → 2026-03-06
+  Win rate (12h):  58.5%
+
+  📅 Monthly Returns
+  Month           Return%
+  ─────────────────────────
+  2024-10          +3.5%  ✅
+  2024-11          +6.9%  ✅
+  2024-12          +2.1%  ✅
+  2025-01          -3.5%  ❌
+  2025-02          +7.6%  ✅
+  2025-03         +11.2%  ✅
+  2025-04          -2.2%  ❌
+  2025-05          +5.9%  ✅
+  2025-06          +7.5%  ✅
+  2025-07          -7.2%  ❌
+  2025-08         +12.2%  ✅
+  2025-09          -2.7%  ❌
+  2025-10          +6.8%  ✅
+  2025-11         +10.5%  ✅
+  2025-12          +9.0%  ✅
+  2026-01          +1.2%  ✅
+  2026-02          +5.6%  ✅
+  2026-03          -2.0%  ❌
+
+  Win months: 13/18 (72%)
+  Avg month:  +4.0%
+  Best month: +12.2%
+  Worst month:-7.2%
+
+  📅 Quarterly Returns
+  2024Q4          +12.4%  ✅
+  2025Q1          +15.8%  ✅
+  2025Q2          +11.0%  ✅
+  2025Q3           +2.5%  ✅
+  2025Q4          +29.2%  ✅
+  2026Q1           +5.0%  ✅
+  Win quarters: 6/6 (100%)
+
+  📊 Per-Window Breakdown
+  Window   Period                         Sharpe    Return%  WinRate
+  ──────────────────────────────────────────────────────────────────────
+  W1       2024-10-15→2025-05-14   7.0m   +2.42     +29.3%    57.9%
+  W2       2025-05-15→2025-11-14   6.1m   +3.58     +33.5%    58.2%
+  W3       2025-11-15→2026-03-07   3.7m   +3.29     +17.6%    59.7%
+
+  Worst DD: -12.5%  (2025-07-07 → 2025-07-19, 12d)
+
+======================================================================
+  ORIGINAL WALK-FORWARD (with gaps, for comparison)
+======================================================================
+  W1/s0: train=1,307,473, test=87,732, IC=0.0697, test_dates=2024-10-15→2025-01-31
+  W2/s0: train=1,484,524, test=85,569, IC=-0.0436, test_dates=2025-05-15→2025-08-31
+  W3/s0: train=1,628,167, test=89,343, IC=0.0408, test_dates=2025-11-15→2026-03-07
+
+======================================================================
+  ORIGINAL WF (with gaps)
+======================================================================
+  Sharpe (net):    2.48
+  Total return:    +51.3%
+  Final equity:    $151 (from $100)
+  Max drawdown:    -12.5%
+  Test period:     2024-10-21 → 2026-03-06
+  Win rate (12h):  59.0%
+
+  📅 Monthly Returns
+  Month           Return%
+  ─────────────────────────
+  2024-10          +3.5%  ✅
+  2024-11          +6.9%  ✅
+  2024-12          +2.1%  ✅
+  2025-01          -4.7%  ❌
+  2025-05          +4.3%  ✅
+  2025-06          +7.5%  ✅
+  2025-07          -7.2%  ❌
+  2025-08         +12.2%  ✅
+  2025-11          +1.1%  ✅
+  2025-12          +9.3%  ✅
+  2026-01          +1.2%  ✅
+  2026-02          +5.6%  ✅
+  2026-03          -2.0%  ❌
+
+  Win months: 10/13 (77%)
+  Avg month:  +3.1%
+  Best month: +12.2%
+  Worst month:-7.2%
+
+  📅 Quarterly Returns
+  2024Q4          +12.4%  ✅
+  2025Q1           -4.7%  ❌
+  2025Q2          +12.3%  ✅
+  2025Q3           +4.6%  ✅
+  2025Q4          +11.0%  ✅
+  2026Q1           +5.0%  ✅
+  Win quarters: 5/6 (83%)
+
+  📊 Per-Window Breakdown
+  Window   Period                         Sharpe    Return%  WinRate
+  ──────────────────────────────────────────────────────────────────────
+  W1       2024-10-15→2025-01-31   3.6m   +1.16      +7.0%    57.9%
+  W2       2025-05-15→2025-08-31   3.6m   +3.35     +19.3%    59.5%
+  W3       2025-11-15→2026-03-07   3.7m   +3.38     +18.3%    59.7%
+
+  Worst DD: -12.5%  (2025-07-07 → 2025-07-19, 12d)
+
+======================================================================
+  COMPARISON: CONTINUOUS vs ORIGINAL
+======================================================================
+  sharpe               Continuous=3.06         Original=2.48
+  total_return_pct     Continuous=107.0        Original=51.3
+  max_dd_pct           Continuous=-12.5        Original=-12.5
+  win_rate_12h         Continuous=58.5         Original=59.0
+  win_months           Continuous=13/18        Original=10/13
+  win_quarters         Continuous=6/6          Original=5/6
+
+======================================================================
+  ✅ R58 COMPLETE
+======================================================================

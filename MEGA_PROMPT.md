@@ -2119,6 +2119,75 @@ Data: last 30 days (Feb-Mar 2026), Binance FR + premium.
 
 **Решение**: НЕ деплоить. Оставить скрипты на мониторинг. Если FR вернётся к positive (bull market) → пересмотреть. R68 остаётся единственной production стратегией.
 
+### Post-Audit Validation (R105–R108)
+
+AI-рецензент выявил 4 несоответствия в отчёте. Проведена независимая валидация (`_validate_r105_r108.py`).
+
+#### Issue 1: "37 opps/month" (R105) vs "12 trades за 4+ года" (R107)
+
+**Root cause: несовпадение данных.**
+
+| Dataset | Symbols | Unique periods | Date range |
+|---|---|---|---|
+| R105 (full Binance FR) | 50 | 10,251 | 2020-01 → 2026-03 |
+| R107 (FR ∩ Premium Index) | 48 | 2,738 | 2021-12 → 2026-03 |
+
+- 2 символа (FTM, MKR) есть в FR, но нет в Premium Index
+- При >0.08% threshold: **8,532** coin-opps в full data vs **67** в merged data
+- Из 67 coin-level сигналов: **12 entered**, 34 rejected (capacity full), 21 rejected (overlap)
+- Entry rate: 12/67 = 17.9%
+
+**Вывод**: 37 opps/month и 12 trades — оба корректны для своих определений. Проблема — R105 анализировал полные данные (2020+), а R107 backtest работал на пересечении (с 2021-12). Capacity blocking (max_pos=3, hold=192h) отклонил 82% сигналов.
+
+#### Issue 2: "Worst basis -21%" vs "MaxDD -0.13%"
+
+**Root cause: позиционный размер + selection bias при n=12.**
+
+- Position size per leg = $16.67 ($100/3/2)
+- Worst basis -21% × $16.67 = max $3.55 потеря = 3.6% от капитала
+- Но: basis change **во время реальных 12 позиций** был значительно меньше:
+
+| Metric | Value |
+|---|---|
+| N observations during positions | 285 |
+| Mean basis change | -0.0071% |
+| Std | 0.0688% |
+| Min / Max | -0.8136% / +0.1569% |
+| P1 / P99 | -0.1790% / +0.1097% |
+| Max cumulative adverse (single trade) | -0.8136% |
+| In dollar terms | $0.14 |
+
+**MaxDD -0.13% реален**, но при n=12 trades **статистически бессмысленен** — не репрезентативен для tail risk.
+
+#### Check 1: FR > 0.05% за последние 90 дней
+
+| Threshold | Periods (of 1,246) | Coin-opps | Top coin |
+|---|---|---|---|
+| > 0.03% | 51 (4.1%) | 51 | FLOW/USDT (0.35%) |
+| > 0.05% | 30 (2.4%) | 30 | FLOW/USDT (0.35%) |
+| > 0.08% | 13 (1.0%) | 13 | FLOW/USDT (0.35%) |
+
+Opportunities есть, но **только на FLOW** и с низкой частотой. При max_pos=3 и hold=24 это ~1-2 trades/month.
+
+#### Check 3: Liquidation distance
+
+- При 1x leverage, margin $16.67 per position
+- Liquidation = 80%+ adverse price move → **negligible risk**
+- Для hedged позиции (spot+perp) risk = basis change, не price change
+- Max basis change при наших trades: -0.81% → $0.14 потеря
+- BTC worst 192h drawdown: -54.9%, но это не релевантно для hedged position
+
+#### Corrected Summary Table
+
+| Step | Verdict | Key Metric | Correction |
+|---|---|---|---|
+| R105 Analysis | ✅ PASS | 37 opps/month historically | Корректно для full data |
+| R106 Backtest | ✅ PASS | Sharpe=6.64 (без basis) | Корректно, но без friction |
+| R107 Basis Risk | ⚠️ UNPRACTICAL | Revised Sharpe=2.42, **n=12 trades** | Sharpe на 12 trades бессмысленен |
+| R108 Paper | ❌ FAIL | 0 opportunities in current market | Подтверждено: только FLOW, ~1 opp/mo |
+
+**Усиленное заключение**: НЕ ДЕПЛОИТЬ. Причина не только "текущий рынок плохой" (R108), но и **недостаточная статистическая база** — 12 trades за 4 года не позволяют сделать выводы о Sharpe/DD. Стратегия теоретически корректна, но непрактична на текущих данных.
+
 ### Добавлено в "proven useless":
 - ❌ Funding arb в текущем режиме (R108, zero opportunities 2025-2026)
 
