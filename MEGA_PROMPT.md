@@ -1738,4 +1738,113 @@ mlc job cancel r60-portfolio-opt
 
 ---
 
+## 14. DeepResearch v3: CG Alpha + Risk Overlay (R80–R86) — ЗАВЕРШЕНО
+
+> Обновление: 8 апреля 2026. Полный цикл CG alpha + vol overlay research.
+
+### Контекст
+
+После R48 (champion 31f, Sharpe=1.66 на original WF) была введена **continuous WF** (R68):
+- 3 окна без гэпов, wall-to-wall test coverage Oct 2024 – Mar 2026
+- Config: 4L/2S, 12h rebalance, PROD_CFG (trend_cutoff=0.9, dyn_threshold=0.7, ema_alpha=0.5, hysteresis=3)
+- **R68 baseline: Net Sharpe = 3.777, MaxDD = -13.95%, Return = 179.3%, 688 periods**
+
+```python
+CONTINUOUS_WINDOWS = [
+    {"name": "W1", "train_end": "2024-06-01", "test_start": "2024-10-15", "test_end": "2025-05-14"},
+    {"name": "W2", "train_end": "2025-01-01", "test_start": "2025-05-15", "test_end": "2025-11-14"},
+    {"name": "W3", "train_end": "2025-07-01", "test_start": "2025-11-15", "test_end": "2026-03-17"},
+]
+```
+
+### R80 — CG Data Alignment (✅)
+
+**Скрипт**: `_research_r80_cg_align.py`
+
+Все raw CG фичи имеют catastrophic lookahead при direct-merge:
+
+| Feature | Direct IC | Shift1 IC | Ratio |
+|---------|-----------|-----------|-------|
+| cg_liq_imb | -0.333 | +0.002 | 145× |
+| cg_taker_imb | +0.276 | +0.005 | 61× |
+| cg_oi_chg | +0.347 | -0.020 | 17× |
+| cg_fr | +0.108 | -0.015 | 7× |
+| cg_liq_log | -0.048 | +0.008 | 6× |
+| cg_ls_ratio | -0.004 | -0.008 | 0.5× |
+
+**Вывод**: CG timestamp = конец периода → direct merge = утечка будущего. Всегда использовать shift1.
+
+### R81 — Vol Overlay Grid (✅)
+
+**Скрипт**: `_research_r81_vol_overlay.py`
+
+Grid: L∈{20,40} × vol_tgt∈{median,p25} × s_min∈{0.25,0.35} × s_max∈{1.25,1.50} = 16 configs.
+DD overlay: dd>10% → scale×0.7, dd>15% → scale×0.5.
+
+Best config: `L20_p25_smin035_smax15`
+- Sharpe: 3.730 (ΔSh = -0.047)
+- MaxDD: **-10.41%** (было -13.95%, ↓25.4%)
+- Calmar: 35.8 (было 27.1, ↑32.2%)
+- Return: 130.7% (было 179.3%)
+
+8/16 configs прошли acceptance. Все L20_p25 → DD=-10.41%, все L40_p25 → DD=-11.55%.
+
+### R82 — CG Feature Factory (✅)
+
+13 z-score/momentum фичей (shift1, rolling 120 periods):
+- TAKER: cg_taker_imb_z120, cg_taker_flow_z120
+- LIQ: cg_liq_imb_z120, cg_liq_log_z120, cg_liq_spike
+- OI: cg_oi_z120, cg_oi_notional_chg, cg_oi_surge
+- FUNDING: cg_fr_z120, cg_fr_accel, cg_fr_accel_z120
+- LS: cg_ls_z120, cg_ls_chg_z120
+
+Все 13/13 прошли coverage gate ≥0.95 (98.9–100%).
+
+### R83 — IC Scan (✅)
+
+| Feature | Pooled IC | Stability | MaxCorr | Gate |
+|---------|-----------|-----------|---------|------|
+| cg_liq_log_z120 | 0.0197 | 0.67 | 0.518 | ✗ (IC<0.03) |
+| cg_fr_z120 | -0.0085 | 1.00 | 0.510 | ✗ (IC<0.03) |
+| cg_taker_imb_z120 | 0.0034 | 0.67 | 0.921 | ✗ (redundant) |
+| остальные 10 | |IC|<0.021 | 0.0–0.33 | — | ✗ |
+
+Gate: |IC|≥0.03, stability≥2/3, max_corr<0.7, coverage≥0.95. **0/13 прошли.**
+
+### R84 — Baseline Re-run (✅)
+
+⚠️ **Обнаружен баг**: оркестратор (`_research_orchestrate.py`) загружал данные своим путём, не через R68 `load_data()`. Train sizes отличались (на 800-1200 строк). Результат: Sharpe=-0.077 — **невалиден**.
+
+R86 fix: использовал каноничный `load_data()` из R68. Baseline: **Sharpe=3.777**, MaxDD=-13.95%, n_periods=688 — **совпадает** с оригиналом.
+
+### R85 — Bootstrap (✅, пересчитан в R86)
+
+Block bootstrap (block=10, N=1000, 688 periods):
+
+| Comparison | P(exp>base) | Median ΔSh | Verdict |
+|------------|-------------|------------|---------|
+| R81 best vs R68 | **0.372** | **-0.129** | **✗ REJECT** |
+
+Vol overlay не проходит bootstrap. Sharpe R81 (3.730) < R68 (3.777), 63% ресэмплов baseline лучше.
+
+### Выводы DeepResearch v3
+
+1. **CG Alpha — ЗАКРЫТО** (как линейная альфа). Z-score/momentum IC 0.002–0.020 после shift1. Ни одна не прошла |IC|≥0.03.
+2. **Vol Overlay — НЕ ПОДТВЕРЖДЁН.** MaxDD↓25%, но Sharpe↓0.047. Bootstrap P=0.372 < 0.8.
+3. **R68 baseline стабилен.** Повторный запуск = точно 3.777.
+4. **Баг data loading:** оркестратор давал Sharpe=-0.077 из-за другого пути загрузки данных.
+
+### Добавлено в "proven useless":
+- ❌ Raw CG values без shift1 (lookahead, R80)
+- ❌ CG z-score/momentum линейная альфа (IC<0.03, R83)
+- ❌ Vol overlay как Sharpe improvement (bootstrap reject, R85/R86)
+- ❌ Temporal features, meta-stacking, LambdaRank, reject option (R60–R70)
+
+### Открытые направления (не протестированы):
+- ❓ CG tail-event features (liq > p95) как regime → R92
+- ❓ Funding carry как параллельная rule-based система → R91
+- ❓ Vol overlay как DD cap (не для Sharpe, а для risk management)
+
+---
+
 *Конец документа. Используй как полный контекст для любой AI-модели.*
