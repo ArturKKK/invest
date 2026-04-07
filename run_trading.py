@@ -75,24 +75,32 @@ SYMBOLS_TO_OKX = {
     for sym in SYMBOLS
 }
 
-# Symbols that don't exist on OKX Demo swaps or are compliance-restricted
-_OKX_BLOCKED = {
-    'MATIC/USDT', 'UNI/USDT', 'APT/USDT', 'S/USDT', 'MANA/USDT',
-    'RUNE/USDT', 'EGLD/USDT', 'FLOW/USDT', 'SNX/USDT', 'ENJ/USDT',
+# Symbols that don't exist on OKX live swaps (delisted or no contract)
+_OKX_LIVE_BLOCKED = {
+    'MATIC/USDT',   # delisted, rebranded to POL
+    'RUNE/USDT',    # no USDT-SWAP on OKX
+    'MKR/USDT',     # no USDT-SWAP on OKX
+}
+
+# Additional symbols blocked on OKX Demo (but available on live)
+_OKX_DEMO_EXTRA_BLOCKED = {
+    'UNI/USDT', 'APT/USDT', 'S/USDT', 'MANA/USDT',
+    'EGLD/USDT', 'FLOW/USDT', 'SNX/USDT', 'ENJ/USDT',
     'BAT/USDT', 'ONE/USDT', 'ICX/USDT', 'ENS/USDT', 'GALA/USDT',
     'GRT/USDT',
     # Compliance-restricted (51155)
-    'CHZ/USDT', 'MKR/USDT',
+    'CHZ/USDT',
 }
 
 # R25 simulation symbols (SYM_35) — CLS mode filters to these
+# Note: MATIC and RUNE removed (no OKX swap), leaves 33 tradeable
 CLS_SYMBOLS = {
     'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
     'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT',
-    'MATIC/USDT', 'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'NEAR/USDT',
+    'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'NEAR/USDT',
     'FIL/USDT', 'APT/USDT', 'ARB/USDT', 'OP/USDT', 'AAVE/USDT',
     'INJ/USDT', 'S/USDT', 'ALGO/USDT', 'SAND/USDT', 'MANA/USDT',
-    'AXS/USDT', 'THETA/USDT', 'RUNE/USDT', 'EGLD/USDT', 'XTZ/USDT',
+    'AXS/USDT', 'THETA/USDT', 'EGLD/USDT', 'XTZ/USDT',
     'FLOW/USDT', 'CHZ/USDT', 'CRV/USDT', 'LDO/USDT', 'SNX/USDT',
 }
 
@@ -1453,13 +1461,15 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
             print(f"   ⚠️  Signal too weak (spread={max_spread:.2f} < {conf_thresh}), skipping")
             return []
 
-    # Filter out blocked symbols (only applies to OKX demo, live has all symbols)
+    # Filter out symbols without OKX swap contracts (live + demo)
+    blocked = set(_OKX_LIVE_BLOCKED)
     if risk_cfg.get('_demo_mode', False):
-        before = len(signals)
-        signals = signals[~signals['symbol'].isin(_OKX_BLOCKED)].copy()
-        after = len(signals)
-        if before != after:
-            print(f"   🚫 Filtered {before - after} blocked symbols ({after} tradeable)")
+        blocked |= _OKX_DEMO_EXTRA_BLOCKED
+    before = len(signals)
+    signals = signals[~signals['symbol'].isin(blocked)].copy()
+    after = len(signals)
+    if before != after:
+        print(f"   🚫 Filtered {before - after} blocked symbols ({after} tradeable)")
 
     # Min z-score filter: split by sign to match sim logic
     # Sim: cand_L = [score_z >= min_zscore], cand_S = [score_z <= -min_zscore]
