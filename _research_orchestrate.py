@@ -537,9 +537,7 @@ def block_bootstrap_sharpe(
         def _sh(r):
             if len(r) < 2 or r.std() < 1e-10:
                 return 0.0
-            eq = (1 + r).cumprod()
-            rc = eq.pct_change().dropna().values
-            return float(rc.mean() / (rc.std() + EPS) * np.sqrt(PERIODS_PER_YEAR))
+            return float(r.mean() / (r.std() + EPS) * np.sqrt(PERIODS_PER_YEAR))
 
         sharpe_base_boot.append(_sh(rb_s))
         sharpe_exp_boot.append(_sh(re_s))
