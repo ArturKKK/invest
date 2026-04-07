@@ -183,9 +183,14 @@ def train_ensemble_ranking(df, feats, windows, seeds, objective="rank"):
                     if d[col].isna().any():
                         d[col] = d[col].fillna(0)
 
-            tr = train_[avail + ["target_binary", "fwd_ret_12h", "timestamp"]].dropna()
-            va = val_[avail + ["target_binary", "fwd_ret_12h", "timestamp"]].dropna()
-            te = test_[avail + ["target_binary", "timestamp", "symbol", "fwd_ret_12h"]].dropna()
+            if objective == "rank":
+                tr = train_[avail + ["target_binary", "fwd_ret_12h", "timestamp"]].dropna()
+                va = val_[avail + ["target_binary", "fwd_ret_12h", "timestamp"]].dropna()
+                te = test_[avail + ["target_binary", "timestamp", "symbol", "fwd_ret_12h"]].dropna()
+            else:
+                tr = train_[avail + ["target_binary"]].dropna()
+                va = val_[avail + ["target_binary"]].dropna()
+                te = test_[avail + ["target_binary", "timestamp", "symbol"]].dropna()
             fwd = test_[["timestamp", "symbol", "fwd_ret_12h"]].rename(
                 columns={"fwd_ret_12h": "fwd_ret"}).dropna()
 
@@ -388,7 +393,7 @@ def simulate(merged, regime_df, n_long=4, n_short=2, cfg=PROD_CFG):
             remaining = grp[~grp["symbol"].isin(new_longs | new_shorts)]
             for _, r in remaining.sort_values("pred_rank").head(nl - len(new_longs)).iterrows():
                 new_longs.add(r["symbol"])
-            for _, r in remaining.sort_values("pred_rank", ascending=False).head(ns - len(new_shorts)).iterrows():
+            for _, r in grp[~grp["symbol"].isin(new_longs | new_shorts)].sort_values("pred_rank", ascending=False).head(ns - len(new_shorts)).iterrows():
                 new_shorts.add(r["symbol"])
         else:
             new_longs = set(grp[grp["pred_rank"] <= nl]["symbol"].tolist()) if nl > 0 else set()

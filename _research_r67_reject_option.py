@@ -349,7 +349,12 @@ def main():
     for t in THRESHOLDS:
         label = f"t={t:.2f}" if t > 0 else "baseline_4L2S"
         print(f"\n  Simulating {label}...")
-        port = simulate_reject(preds, regime_df, threshold=t)
+        if t == 0:
+            # Use R65-compatible simulate for exact baseline reproduction
+            from _research_r65_gross_net import simulate as simulate_r65
+            port = simulate_r65(preds, regime_df, n_long=4, n_short=2, cfg=PROD_CFG)
+        else:
+            port = simulate_reject(preds, regime_df, threshold=t)
         if port.empty:
             print(f"    EMPTY (threshold too high)")
             results.append({"threshold": t, "label": label, "gross_sharpe": 0, "net_sharpe": 0})
