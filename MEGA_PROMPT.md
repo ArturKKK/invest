@@ -1140,6 +1140,25 @@ LightGBM lambdarank + XGBRanker вместо binary classification. Группи
 
 **Итог R60-R70**: Из 25+ вариантов — единственное надёжное улучшение: **4L/2S** (по gross alpha, не по costs). В continuous WF: Net Sharpe **3.777**, ret **+179%**. Reject option, uncertainty gating, и LambdaRank разрушают performance. Система на локальном оптимуме — дальнейшее улучшение через feature/model engineering имеет <5% шанс.
 
+### Аудит замечаний AI-консультанта (2026-04-07)
+
+Консультант поднял 4 concerns по результатам R65-R70:
+
+| # | Concern | Вердикт | Детали |
+|---|---------|---------|--------|
+| 1 | Look-ahead bias в continuous WF | **НЕТ** | Даты хардкожены (ORIGINAL_WINDOWS). train < val < 15d gap < test. Фильтрация: `df[df["timestamp"] < tr_end]` |
+| 2 | Leverage inflates Sharpe/return | **НЕТ** | simulate() = 1x leverage. `gross_port_ret = 0.5*long_ret - 0.5*short_ret`. Return +179% = unleveraged |
+| 3 | R69 "alpha от seed disagreement" | **НЕВЕРНО** | Код фильтрует OUT high p_std (controversial). Фильтрация любых монет ломает ranking → причина в сужении юниверса |
+| 4 | Sharpe 3.78 подозрительно высоко | **ВАЛИДНО** | SE ≈ 0.38, CI [3.04, 4.52]. 500 12h-периодов, 3 WF окна. Перекрытие окон в continuous WF может inflate через non-independence |
+
+### Deploy 4L/2S на VPS (✅ 2026-04-07)
+
+- `run_trading.py`: DEFAULT_RISK n_long=6→4, n_short=3→2; CLS mode override: аналогично
+- Shadow logging: каждый цикл записывает что выбрал бы 6L/3S → `trading_logs/shadow_6L3S.jsonl`
+- Первый цикл 4L/2S: BNB(L), ETH(L), LTC(L), XRP(L), FIL(S), THETA(S)
+- Shadow 6L/3S добавил бы: BTC(L), XTZ(L), ALGO(S)
+- Пакеты VPS: pandas=2.3.3, lgb=4.6.0, xgb=3.2.0 ✅
+
 ---
 
 ## 8. История утечек данных (Data Leakage)
