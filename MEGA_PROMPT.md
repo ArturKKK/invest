@@ -2188,8 +2188,40 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 
 **Усиленное заключение**: НЕ ДЕПЛОИТЬ. Причина не только "текущий рынок плохой" (R108), но и **недостаточная статистическая база** — 12 trades за 4 года не позволяют сделать выводы о Sharpe/DD. Стратегия теоретически корректна, но непрактична на текущих данных.
 
+## R109 — Macro Features IC Scan ❌ FAIL
+
+**Гипотеза**: Macro-экономические фичи (DXY, VIX, SPX, US10Y, Gold) могут добавить предсказательную силу к R68.
+
+**Данные**: yfinance (бесплатно). Daily, shift(1) для lookahead prevention, forward-fill на hourly.
+
+**12 features tested:**
+
+| Feature | Pooled IC | Mean TS IC | Stability | Max Corr (vs R68) | Gate |
+|---|---|---|---|---|---|
+| btc_dxy_corr_20d | -0.0177 | -0.0021 | 0.67 | 0.058 | ❌ IC |
+| us10y_chg_5d | -0.0157 | -0.0198 | 0.33 | 0.070 | ❌ IC |
+| us10y_level | -0.0120 | -0.3503 | 0.33 | 0.450 | ❌ IC |
+| vix_level | +0.0114 | -0.3503 | 0.33 | 0.201 | ❌ IC |
+| spx_ret_20d | +0.0076 | +0.3503 | 0.33 | 0.309 | ❌ IC |
+| btc_spx_corr_20d | +0.0075 | +0.0046 | 0.67 | 0.115 | ❌ IC |
+| gold_ret_5d | -0.0066 | +0.0198 | 0.33 | 0.121 | ❌ IC |
+| vix_chg_5d | -0.0059 | -0.3503 | 1.00 | 0.252 | ❌ IC |
+| dxy_ret_5d | -0.0049 | -0.3503 | 0.33 | 0.127 | ❌ IC |
+| dxy_ret_20d | -0.0033 | -0.3503 | 0.33 | 0.075 | ❌ IC |
+| spx_ret_5d | -0.0026 | +0.3503 | 0.67 | 0.269 | ❌ IC |
+| vix_z60 | +0.0005 | -0.3503 | 0.33 | 0.219 | ❌ IC |
+
+**Gate**: |IC| ≥ 0.03, stability ≥ 2/3, coverage ≥ 95%, redundancy < 0.70.
+
+**Result**: 0/12 features pass gate. Best |IC| = 0.0177 (btc_dxy_corr_20d) — ниже порога 0.03.
+
+**VERDICT: ❌ FAIL** — macro features не имеют предсказательной силы для crypto returns на 12h горизонте. WF test не проводился. R68 остаётся champion без изменений.
+
+**Time**: 2.9 минуты. **Cost**: $0.
+
 ### Добавлено в "proven useless":
 - ❌ Funding arb в текущем режиме (R108, zero opportunities 2025-2026)
+- ❌ Macro features (DXY/VIX/SPX/US10Y/Gold): IC < 0.02 для всех 12 фич (R109)
 
 ---
 
