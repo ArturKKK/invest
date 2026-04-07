@@ -2249,10 +2249,39 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 
 **Time**: 8.9 минут.
 
+## R111 — Spillover Features (inter-coin lags + market factors) ❌ FAIL
+
+**Гипотеза**: Межмонетные лаги (BTС→altcoins), market factors (PCA, dispersion), и spillover (β×btc_ret_lag) добавят предсказательную силу.
+
+**9 features tested:**
+
+| Feature | IC | Stability | Max Corr (vs existing) | Gate |
+|---|---|---|---|---|
+| pc1_ret_lag1 | -0.0273 | 0.00 | 0.796 (pct_coins_up_12h) | ❌ cov=0.24 |
+| dispersion_12h | +0.0216 | 0.67 | **0.945** (ret_dispersion_12h) | ❌ redundant |
+| btc_ret_12h_lag1 | -0.0146 | 0.33 | 0.704 (pct_coins_up_12h) | ❌ IC+redundant |
+| eth_ret_12h_lag1 | -0.0125 | 0.67 | 0.751 (pct_coins_up_12h) | ❌ IC+redundant |
+| spill_btc | -0.0117 | 0.33 | 0.686 (pct_coins_up_12h) | ❌ IC |
+| mkt_ret_12h | -0.0015 | 0.33 | 0.845 (pct_coins_up_12h) | ❌ IC+redundant |
+| mkt_ret_12h_exBTC | -0.0010 | 0.33 | 0.844 (pct_coins_up_12h) | ❌ IC+redundant |
+| spill_mkt | +0.0009 | 0.33 | 0.838 (pct_coins_up_12h) | ❌ IC+redundant |
+| beta_btc_60 | -0.0008 | 0.33 | 0.210 (iv_rv_spread) | ❌ IC |
+
+**Gate**: |IC| ≥ 0.03, stability ≥ 2/3, coverage ≥ 70%, redundancy < 0.70.
+
+**Result**: 0/9 pass gate. Best |IC| = 0.027 (pc1_ret_lag1), но coverage только 24.5%.
+
+**Ключевой insight**: Большинство spillover фич **высоко коррелированы** с уже существующими breadth features (pct_coins_up_12h, ret_dispersion_12h). R68 уже захватывает market-level информацию через эти features. Нового сигнала нет.
+
+**VERDICT: ❌ FAIL** — spillover features либо redundant (corr > 0.70 с existing), либо IC < 0.03. WF test не проводился.
+
+**Time**: 3.9 минуты.
+
 ### Добавлено в "proven useless":
 - ❌ Funding arb в текущем режиме (R108, zero opportunities 2025-2026)
 - ❌ Macro features (DXY/VIX/SPX/US10Y/Gold): IC < 0.02 для всех 12 фич (R109)
 - ❌ Prediction neutralization (Numerai-style): Sharpe всегда падает, 0/48 PASS (R110)
+- ❌ Spillover features (inter-coin lags, PCA, market factors): redundant с existing breadth (R111)
 
 ---
 
