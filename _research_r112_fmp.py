@@ -68,7 +68,14 @@ def build_fmp_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
     df = df.sort_values(["symbol", "timestamp"]).copy()
     timestamps = sorted(df["timestamp"].unique())
 
-    # Need fwd_ret_12h for FMP return computation
+    # Use PAST returns (ret_12h) for FMP — NOT fwd_ret_12h to avoid lookahead.
+    # ret_12h = close(t)/close(t-12) - 1: fully realized at time t.
+    if "ret_12h" not in df.columns:
+        df["ret_12h"] = df.groupby("symbol")["close"].transform(
+            lambda x: x.pct_change(12)
+        )
+
+    # Still need fwd_ret_12h for the IC scan target
     if "fwd_ret_12h" not in df.columns:
         df["fwd_ret_12h"] = df.groupby("symbol")["close"].transform(
             lambda x: x.pct_change(12).shift(-12)
@@ -84,14 +91,16 @@ def build_fmp_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
         log(f"    Processing characteristic: {char}")
 
         # ── Step 1: Compute FMP returns per timestamp ───────────────
+        # Use PAST returns (ret_12h) and LAGGED characteristics (shift 1)
+        # to ensure no lookahead.
         fmp_rets = {}
         for ts, grp in df.groupby("timestamp"):
-            sub = grp[[char, "fwd_ret_12h"]].dropna()
+            sub = grp[[char, "ret_12h"]].dropna()
             if len(sub) < 5:
                 continue
             z = (sub[char] - sub[char].mean()) / (sub[char].std() + 1e-10)
             w = z / (z.abs().sum() + 1e-10)  # dollar-neutral
-            fmp_ret = (w * sub["fwd_ret_12h"]).sum()
+            fmp_ret = (w * sub["ret_12h"]).sum()
             fmp_rets[ts] = fmp_ret
 
         fmp_series = pd.Series(fmp_rets).sort_index()
@@ -123,8 +132,8 @@ def build_fmp_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
         # fmp_tail: rolling skewness (60 periods)
         fmp_df[f"fmp_tail_{char}"] = fmp_df["fmp_ret"].rolling(60, min_periods=30).skew()
 
-        # Shift all by 1 to avoid lookahead (FMP ret uses fwd_ret which is forward-looking,
-        # but fmp_level etc. aggregate PAST fmp rets, so shift(1) ensures t-1 info only)
+        # Shift all by 1 — derived features use past FMP rets (built from past returns),
+        # shift(1) ensures we only use info fully available at t-1.
         feat_cols = [f"fmp_{suf}_{char}" for suf in FMP_SUFFIXES]
         for col in feat_cols:
             fmp_df[col] = fmp_df[col].shift(1)
