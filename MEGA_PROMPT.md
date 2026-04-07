@@ -1932,6 +1932,196 @@ Bootstrap: P(Calmar better)=0.684, P(Sharpe better)=0.421 ⇒ не значим�
 - ❌ Return mix R68+R93 без значимости (R99, P(Sharpe)=0.42)
 - ❌ Rank ensemble с double-ranking (R100, деградирует baseline)
 
+### R102 — Baseline Equivalence ✅ PASS
+Cached R68 predictions → R68 simulate(4,2) → **Sharpe=3.7771, MaxDD=-13.95%, N=688** — бит-в-бит совпадение с каноничным R68.
+Left-join R68+R93 с pred=R68 → equity correlation=**1.000000**, max abs diff=0.
+
+### R103 — Logit Ensemble ❌ REJECTED
+| α | Sharpe | MaxDD | Return |
+|---|---:|---:|---:|
+| 0.00 (R93 logit) | 2.941 | -18.4% | 138.8% |
+| 0.25 | 2.446 | -17.2% | 107.4% |
+| 0.50 | 2.116 | -18.7% | 83.1% |
+| 0.75 | 2.639 | -14.6% | 119.7% |
+| 1.00 (R68 logit) | 2.797 | -15.1% | 134.6% |
+
+α=1.0 → Sharpe 2.797 (каноничный R68=3.777). Logit-трансформация `raw_prob` вместо rank-blend `pred` разрушает EMA-smoothing behaviour. Все α деградируют.
+Bootstrap P(Sharpe better)=0.151. **REJECTED.**
+
+### R104 — Tiebreak Ensemble ❌ REJECTED
+| M (long pool) | N (short pool) | Sharpe | MaxDD |
+|---|---|---:|---:|
+| 6 | 3 | 2.653 | -18.0% |
+| 6 | 4 | **3.023** | -24.0% |
+| 6 | 5 | 2.776 | -15.5% |
+| 8 | 3 | 2.449 | -17.2% |
+| 10 | 4 | 3.010 | -20.4% |
+
+Best M=6 N=4: Sharpe=3.023 — все конфиги хуже R68 (3.777). R93 tiebreak ухудшает R68-отобранных кандидатов.
+Bootstrap P(Sharpe better)=0.221. **REJECTED.**
+
+### Итог R102–R104
+R93 (4h-target) **не улучшает** R68 ни в одном из подходов:
+- Logit ensemble: logit(raw_prob) ≠ rank-blend, ломает EMA
+- Tiebreak: R93 ранжирует монеты иначе чем R68 (разные targets), подмешивание ухудшает
+- R93 оставить на мониторинг (shadow). R68 = champion без изменений.
+
+### Добавлено в "proven useless":
+- ❌ Logit ensemble R68+R93 (R103, baseline degradation)
+- ❌ Tiebreak ensemble R68+R93 (R104, R93 ranking incompatible)
+
+---
+
+## R105–R106 — Funding Rate Arbitrage (market-neutral carry)
+
+**Новое направление**: short perp + long spot = hedge price risk → собираем funding payments.
+Ортогонально R68 (directional ML). Принципиально отличается от R91 (R91 использовал FR как ценовой предиктор — провалился).
+
+### R105 — Historical Analysis ✅ PASS
+Data: Binance 8h FR, 294K rows, 50 символов, 2020-01 → 2026-03.
+
+**Per-coin FR (top-5 carry):**
+| Symbol | Mean FR | Ann Carry | % positive | % >0.02% |
+|---|---:|---:|---:|---:|
+| FTM/USDT | 0.0169% | 18.5% | 88.0% | 14.6% |
+| XRP/USDT | 0.0144% | 15.8% | 81.8% | 14.9% |
+| LTC/USDT | 0.0144% | 15.8% | 83.1% | 14.3% |
+| AAVE/USDT | 0.0141% | 15.4% | 86.2% | 10.8% |
+| MKR/USDT | 0.0138% | 15.1% | 88.0% | 12.0% |
+
+**Opportunity frequency (threshold → opps/month):**
+| Threshold | Opps/mo | Coin-opps/mo | % periods | Avg coins |
+|---:|---:|---:|---:|---:|
+| 0.01% | 45 | 643 | 26.8% | 14.3 |
+| 0.03% | 37 | 462 | 19.6% | 12.4 |
+| 0.05% | 33 | 357 | 14.1% | 10.9 |
+| 0.10% | 22 | 206 | 6.4% | 9.4 |
+
+**Persistence**: AC(lag1=8h)=0.711, AC(lag3=24h)=0.574 — FR highly persistent, good for hold.
+
+**Regime stability (по годам):**
+| Year | Mean FR | Ann Carry | % >0.02% |
+|---:|---:|---:|---:|
+| 2020 | 0.0108% | 11.8% | 23.4% |
+| 2021 | 0.0335% | **36.7%** | 35.4% |
+| 2022 | -0.0027% | **-2.9%** | 0.0% |
+| 2023 | 0.0057% | 6.2% | 5.8% |
+| 2024 | 0.0112% | 12.3% | 13.1% |
+| 2025 | 0.0017% | 1.9% | 0.1% |
+| 2026 | -0.0148% | -16.3% | 0.6% |
+
+⚠️ **2022 bear market: negative carry.** 2025-2026 тоже слабые. Стратегия зависит от бычьего/нейтрального рынка.
+
+**Theoretical carry (entry > threshold, hold N periods, pay 0.16% RT):**
+| Threshold | Hold | Net carry% | Win% | Entries/mo |
+|---:|---:|---:|---:|---:|
+| 0.05% | 24h | +0.145% | 77.6% | 138 |
+| 0.05% | 48h | +0.404% | 93.7% | 138 |
+| 0.08% | 24h | +0.251% | 93.7% | 75 |
+| 0.08% | 96h | +1.171% | 97.9% | 75 |
+
+Cross-validation Binance↔OKX: corr=0.679, mean_abs_diff=0.022%.
+**VERDICT: PASS** — 37 opps/month at 0.03% (need ≥5).
+
+### R106 — Backtest ✅ PASS
+Grid: 5 entry × 3 exit × 4 hold × 3 positions = 156 valid configs.
+Capital=$100, round-trip=0.16%.
+
+**Top-10 by Sharpe:**
+| Entry | Exit | Hold | Pos | Sharpe | Ret% | DD% | Win% | Trades |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.080% | 0.005% | 24 | 3 | **6.638** | +14.7% | -0.8% | 66.7% | 147 |
+| 0.050% | 0.010% | 24 | 3 | 6.586 | +15.2% | -1.1% | 65.2% | 204 |
+| 0.050% | 0.005% | 24 | 3 | 6.537 | +15.2% | -1.0% | 66.2% | 201 |
+| 0.080% | 0.010% | 24 | 3 | 6.378 | +14.3% | -0.8% | 65.3% | 150 |
+| 0.050% | 0.010% | 24 | 2 | 5.885 | +15.3% | -1.5% | 61.7% | 149 |
+
+Best: entry=0.080%, exit=0.005%, hold=24 (192h), max_positions=3.
+- Sharpe=6.638, Return=+14.7% (6y), MaxDD=-0.8%, 147 trades
+- Funding earned=$22.57, Costs=$7.84
+- **Hedge P&L = $0.00** (теоретический хедж идеальный — basis risk НЕ моделирован!)
+
+⚠️ **Caveats**:
+1. Hedge_pnl=0 — в реальности spot≠perp pricing, нужен R107 для basis risk
+2. Regime-dependent: 2022+2025-2026 убыточные (bear/flat market = negative FR)
+3. Sharpe 6.6 завышен из-за (a) идеального хеджа, (b) no slippage на entry/exit
+4. На $100 капитала чистый return $14.7 за 6 лет ≈ $2.4/год — micro-scale
+
+**VERDICT: PASS** — Sharpe=6.638 ≥ 1.0. Proceed to R107 (basis risk).
+
+### R107 — Hedge Quality & Basis Risk ✅ PASS
+Data: Binance premium_index (perp-spot basis), 496K rows, 48 sym, 2021-12 → 2026-03.
+
+**Basis distribution (top coins, sorted by ΔBasis σ):**
+| Symbol | Basis µ% | ΔBasis σ% | |ΔBasis| µ% |
+|---|---:|---:|---:|
+| BTC/USDT | -0.029 | 0.023 | 0.014 |
+| ETH/USDT | -0.028 | 0.030 | 0.018 |
+| ADA/USDT | -0.026 | 0.037 | 0.026 |
+| XRP/USDT | -0.027 | 0.037 | 0.022 |
+
+**Worst-case basis moves (all coins aggregate):**
+| Hold | Mean |ΔBasis|% | σ% | P1/P99% | Worst% |
+|---:|---:|---:|---:|---:|
+| 8h | 0.027 | 0.054 | -0.10/+0.10 | -11.4 |
+| 24h | 0.029 | 0.066 | -0.11/+0.11 | -11.2 |
+| 192h | 0.033 | 0.154 | -0.11/+0.11 | -21.3 |
+
+**Basis risk vs funding income (ключевая таблица):**
+| Filter | Mean FR% | Basis σ% | Net PnL% | Ratio | Ann Sharpe | Win% |
+|---|---:|---:|---:|---:|---:|---:|
+| All FR>0 | 0.011 | 0.043 | +0.013 | 4.0x | 9.16 | 65% |
+| FR>0.03% | 0.049 | 0.063 | +0.054 | **1.3x** | 26.53 | 85% |
+| FR>0.05% | 0.066 | 0.077 | +0.079 | **1.2x** | 31.61 | 91% |
+| FR>0.08% | 0.098 | 0.127 | +0.150 | **1.3x** | 37.28 | 99% |
+
+→ При FR>0.05-0.08% basis risk ≈ 1.2-1.3x от FR, но net PnL всё равно положительный. Win rate 91-99%.
+
+**Revised R106 backtest (с basis risk):**
+| Config | Sharpe | Return% | MaxDD% | Vol% | Trades | Win% |
+|---|---:|---:|---:|---:|---:|---:|
+| Best (entry=0.08%, hold=24) | **2.421** | +1.47% | -0.13% | 0.24% | 12 | 100% |
+| Alt (entry=0.05%, hold=24) | **2.625** | +2.14% | -0.19% | 0.32% | — | — |
+| Conservative (hold=6) | 0.657 | +0.49% | -0.15% | 0.30% | — | — |
+
+⚠️ Sharpe упал с 6.64 → **2.42** (basis risk добавил реальную vol). Всего 12 trades за 4+ лет.
+Yearly: 2022=0%, 2023=+0.09%, 2024=+1.36%, 2025=0%, 2026=0%. Почти весь return — 2024.
+
+**VERDICT: PASS** — revised Sharpe=2.421 ≥ 1.0, basis_ratio=1.3x < 2x.
+
+### R108 — Paper Trading Monitor ❌ FAIL
+Data: last 30 days (Feb-Mar 2026), Binance FR + premium.
+
+**Result: ZERO opportunities.**
+- R106_best (entry>0.08%): **0 entries** за 30 дней
+- R106_alt (entry>0.05%): **0 entries** за 30 дней
+- Paper return: **0.000%** (ничего не произошло)
+- Deviation from backtest: **-100%** (ожидалось >0, получено 0)
+
+Причина: 2026 FR ≈ -0.015% (negative). Рынок bear/flat → лонги не платят funding → нет opportunities.
+
+**VERDICT: FAIL** — paper 100% deviation (>50% kill). Стратегия неактивна в текущем режиме.
+
+### Итог R105–R108: Funding Rate Arbitrage
+| Step | Verdict | Key Metric |
+|---|---|---|
+| R105 Analysis | ✅ PASS | 37 opps/month historically |
+| R106 Backtest | ✅ PASS | Sharpe=6.64 (без basis) |
+| R107 Basis Risk | ✅ PASS | Revised Sharpe=2.42 (с basis) |
+| R108 Paper | ❌ FAIL | 0 opportunities in current market |
+
+**Заключение**: Funding arb работает в bull/neutral market (2020-2021, 2024) но **мертва в bear/flat (2022, 2025-2026)**. При $100 капитала чистый доход ~$1-2/год в хорошие годы. Стратегия:
+- ✅ Market-neutral, ортогональна R68
+- ✅ Sharpe 2.4 с учётом basis risk
+- ❌ Regime-dependent (negative FR в bear market)
+- ❌ Low absolute return ($1-2/year per $100)
+- ❌ Текущий рынок: 0 opportunities
+
+**Решение**: НЕ деплоить. Оставить скрипты на мониторинг. Если FR вернётся к positive (bull market) → пересмотреть. R68 остаётся единственной production стратегией.
+
+### Добавлено в "proven useless":
+- ❌ Funding arb в текущем режиме (R108, zero opportunities 2025-2026)
+
 ---
 
 *Конец документа. Используй как полный контекст для любой AI-модели.*
