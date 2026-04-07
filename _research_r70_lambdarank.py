@@ -133,8 +133,8 @@ def _make_relevance_labels(group_fwd_ret: np.ndarray, n_grades=5) -> np.ndarray:
         return np.zeros(n, dtype=np.float32)
     # Rank from 0 to n-1 (ascending)
     order = np.argsort(np.argsort(group_fwd_ret))  # double argsort = rank
-    # Scale to 0..n_grades-1
-    grades = (order * n_grades / n).astype(np.float32)
+    # Scale to 0..n_grades-1 (must be int for LambdaRank)
+    grades = (order * n_grades // n).astype(np.int32)
     return np.clip(grades, 0, n_grades - 1)
 
 
