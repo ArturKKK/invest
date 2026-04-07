@@ -2277,11 +2277,43 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 
 **Time**: 3.9 минуты.
 
+## R112 — Factor-Mimicking Portfolios (FMP) ❌ FAIL
+
+**Гипотеза**: Построить FMP из характеристик (cum_funding_24h, oi_velocity, rel_volume_cs) → time-series features (level, z120, momentum, skewness) → добавить как market-level фичи.
+
+**Методология FMP**: На каждом timestamp t: z-score характеристики → веса w = z/Σ|z| (dollar-neutral) → fmp_ret = Σ(w × ret_12h). Затем из ряда FMP returns строим 4 производные фичи × 3 характеристики = 12 фич. Все features shift(1).
+
+**⚠️ Обнаружена и исправлена утечка данных**: Первая версия использовала fwd_ret_12h (forward return) для FMP — IC=0.23 (!!), Sharpe 5.48. После исправления на ret_12h (past return) — IC упал до 0.004-0.018. **Всегда использовать realized returns для FMP!**
+
+**12 features tested (corrected version):**
+
+| Feature | IC | Stability | Max Corr | Gate |
+|---|---|---|---|---|
+| fmp_level_cum_funding_24h | -0.0183 | 0.67 | 0.069 | ❌ IC |
+| fmp_mom_rel_volume_cs | +0.0164 | 0.33 | 0.244 | ❌ IC+stab |
+| fmp_level_rel_volume_cs | -0.0165 | 0.33 | 0.304 | ❌ IC+stab |
+| fmp_tail_oi_velocity | +0.0161 | 0.67 | 0.082 | ❌ IC |
+| fmp_z120_cum_funding_24h | +0.0113 | 1.00 | 0.063 | ❌ IC |
+| fmp_mom_cum_funding_24h | +0.0104 | 1.00 | 0.028 | ❌ IC |
+| fmp_mom_oi_velocity | -0.0086 | 0.00 | 0.139 | ❌ IC+stab |
+| fmp_z120_oi_velocity | -0.0046 | 0.00 | 0.152 | ❌ IC+stab |
+| fmp_tail_cum_funding_24h | -0.0041 | 0.67 | 0.055 | ❌ IC |
+| fmp_level_oi_velocity | -0.0041 | 0.67 | 0.576 | ❌ IC |
+| fmp_z120_rel_volume_cs | +0.0039 | 1.00 | 0.372 | ❌ IC |
+| fmp_tail_rel_volume_cs | +0.0029 | 0.33 | 0.120 | ❌ IC+stab |
+
+**Result**: 0/12 pass gate. Best |IC| = 0.018. FMP approach в crypto hourly data не даёт IC ≥ 0.03.
+
+**VERDICT: ❌ FAIL** — WF test не проводился.
+
+**Time**: 5.4 минуты.
+
 ### Добавлено в "proven useless":
 - ❌ Funding arb в текущем режиме (R108, zero opportunities 2025-2026)
 - ❌ Macro features (DXY/VIX/SPX/US10Y/Gold): IC < 0.02 для всех 12 фич (R109)
 - ❌ Prediction neutralization (Numerai-style): Sharpe всегда падает, 0/48 PASS (R110)
 - ❌ Spillover features (inter-coin lags, PCA, market factors): redundant с existing breadth (R111)
+- ❌ Factor-Mimicking Portfolios (FMP): IC < 0.02 для всех 12 фич после fix lookahead (R112)
 
 ---
 
