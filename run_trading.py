@@ -153,10 +153,10 @@ UNRANKED_COLS = {
 }
 
 # Default risk config (overridden by optimal_config.json)
-# R7 winner: 6L/3S asymmetric (long-heavy)
+# R65/R68 winner: 4L/2S concentrated (gross alpha +1.13 vs 6L/3S)
 DEFAULT_RISK = {
-    'n_long': 6,
-    'n_short': 3,
+    'n_long': 4,
+    'n_short': 2,
     'vol_target': 0.008,
     'vol_lookback': 48,
     'kelly_frac': 0.8,
@@ -2944,15 +2944,15 @@ def main():
         risk_cfg['min_zscore'] = args.min_zscore
     risk_cfg['_demo_mode'] = (args.mode == 'paper')
 
-    # CLS mode: 6L/3S, no risk stack overlays (R26 winner: F-6L3S-dt0.7)
+    # CLS mode: 4L/2S, no risk stack overlays (R65 winner: 4L/2S, gross alpha > 6L/3S)
     if args.cls:
-        risk_cfg['n_long'] = 6
-        risk_cfg['n_short'] = 3
+        risk_cfg['n_long'] = 4
+        risk_cfg['n_short'] = 2
         risk_cfg['kelly_frac'] = 1.0       # full allocation (no kelly cut)
         risk_cfg['min_zscore'] = 0.0        # no filtering
         risk_cfg['confidence_threshold'] = 0.0
         risk_cfg['_cls_mode'] = True        # disable vol_scale in construct_portfolio
-        print(f"   📋 CLS mode: 6L/3S, kelly=1.0, no min_zscore, no vol_scale")
+        print(f"   📋 CLS mode: 4L/2S, kelly=1.0, no min_zscore, no vol_scale")
 
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
@@ -3172,6 +3172,39 @@ def main():
             for pos in positions:
                 print(f"   {pos['symbol']:<15} {pos['side']:<6} ${pos['usd']:>7.0f} "
                       f"{pos['score']:>+8.3f}")
+
+        # ── Shadow log: what old 6L/3S would have picked ──
+        try:
+            shadow_cfg = dict(risk_cfg, n_long=6, n_short=3)
+            shadow_pos = construct_portfolio(signals, trading_capital, shadow_cfg, dict(state),
+                                              leverage=risk_cfg['leverage'],
+                                              coin_vol=coin_vol,
+                                              regime_data=regime_data)
+            shadow_syms = {p['symbol']: p['side'] for p in shadow_pos}
+            live_syms = {p['symbol']: p['side'] for p in positions}
+            only_shadow = {s: sd for s, sd in shadow_syms.items() if s not in live_syms}
+            only_live = {s: sd for s, sd in live_syms.items() if s not in shadow_syms}
+            shadow_line = ', '.join(f"{s}({sd[0].upper()})" for s, sd in sorted(shadow_syms.items()))
+            diff_parts = []
+            if only_shadow:
+                diff_parts.append('shadow_only: ' + ','.join(f"{s}({sd[0].upper()})" for s, sd in sorted(only_shadow.items())))
+            if only_live:
+                diff_parts.append('live_only: ' + ','.join(f"{s}({sd[0].upper()})" for s, sd in sorted(only_live.items())))
+            diff_str = ' | '.join(diff_parts) if diff_parts else 'identical'
+            print(f"   👻 Shadow 6L/3S: {shadow_line}")
+            print(f"   👻 Diff vs 4L/2S: {diff_str}")
+            # Persist to shadow log file for later analysis
+            import json as _json
+            shadow_entry = {
+                'ts': now.isoformat(),
+                'live_4L2S': [{'s': p['symbol'], 'd': p['side'], 'score': p['score']} for p in positions],
+                'shadow_6L3S': [{'s': p['symbol'], 'd': p['side'], 'score': p['score']} for p in shadow_pos],
+            }
+            shadow_log_path = os.path.join(log_dir, 'shadow_6L3S.jsonl')
+            with open(shadow_log_path, 'a') as _sf:
+                _sf.write(_json.dumps(shadow_entry) + '\n')
+        except Exception as _shadow_err:
+            print(f"   ⚠️  Shadow log error: {_shadow_err}")
 
         # 6. Execute (partial rebalance + limit orders)
         resize_details = []  # populated by rebalance_positions if any resizes
