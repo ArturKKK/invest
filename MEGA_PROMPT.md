@@ -2219,9 +2219,40 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 
 **Time**: 2.9 минуты. **Cost**: $0.
 
+## R110 — Partial Neutralization Sweep ❌ FAIL
+
+**Гипотеза**: Убрать нежелательные экспозиции R68 к risk/regime факторам через cross-sectional ridge regression (Numerai-style) может улучшить Sharpe или Calmar.
+
+**Grid**: 3 exposure sets × 4 λ × 5 α = 60 комбинаций.
+
+| Exposure Set | Exposures |
+|---|---|
+| SET1 (minimal) | btc_beta_168h, ret_48h |
+| SET2 (risk+liq) | + rel_volume_cs, rvol_24h |
+| SET3 (derivs) | + cum_funding_24h, oi_velocity |
+
+**Baseline**: R68 4L/2S Sharpe=3.777, DD=-13.9%, Calmar=12.86
+
+**Лучшие результаты** (из 48 non-baseline):
+
+| Config | Sharpe | DD | Calmar | P(Sh↑) | P(Cal↑) |
+|---|---|---|---|---|---|
+| SET2/λ=0.1/α=0.25 | 2.650 | -17.5% | 5.43 | 0.06 | 0.07 |
+| SET1/λ=0.1/α=0.5 | 2.056 | -15.7% | 4.21 | 0.04 | 0.10 |
+| SET3/λ=0.1/α=0.75 | 1.699 | -10.2% | 3.37 | 0.08 | 0.11 |
+
+**PASS-A (Sharpe uplift)**: 0/48. **PASS-B (Risk uplift)**: 0/48.
+
+Нейтрализация **всегда ухудшает** Sharpe (от -1.1 до -3.7). Даже при минимальном α=0.25 Sharpe падает с 3.78 до ~2.0-2.6. Корреляция с оригинальным signal 0.87-0.99 — нейтрализация слишком агрессивна для этого типа модели.
+
+**VERDICT: ❌ FAIL** — neutralization destroys signal. R68 signal не имеет вредной экспозиции к BTC beta / momentum / vol — они *нужны* для alpha.
+
+**Time**: 8.9 минут.
+
 ### Добавлено в "proven useless":
 - ❌ Funding arb в текущем режиме (R108, zero opportunities 2025-2026)
 - ❌ Macro features (DXY/VIX/SPX/US10Y/Gold): IC < 0.02 для всех 12 фич (R109)
+- ❌ Prediction neutralization (Numerai-style): Sharpe всегда падает, 0/48 PASS (R110)
 
 ---
 
