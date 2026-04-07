@@ -1,85 +1,142 @@
-# Plan: Parallel Systems — Funding Carry + Liq Mean-Reversion (R90–R95)
+# Plan: R68 + R93 Combination — Attribution & Ensemble (R97–R100)
 
 ## Статус: 8 апреля 2026
 
-**Контекст**: DeepResearch v3 (R80–R86) показал, что CG alpha как линейные фичи в ML не работает (0/13 прошли IC gate). Vol overlay не проходит bootstrap (P=0.372). R68 baseline (Sharpe=3.777) устойчив.
+**Контекст**: R93 (4h ML) показал Sharpe=3.190, MaxDD=-10.1%, P(Sharpe>0)=0.962. 
+R68 (12h ML) — Sharpe=3.777, MaxDD=-13.95%, Return=179%.
+Corr(R68, R93) = 0.456 — умеренная, есть потенциал для комбинации.
 
-**Новая стратегия**: Вместо улучшения R68 — строим 1–2 **параллельные, принципиально другие системы** и смешиваем их с R68. Это диверсификация на уровне стратегий, не фич.
+**Аномалия**: R93 Return=34.8% при Sharpe=3.19 vs R68 Return=179% при Sharpe=3.78.
+Нужно понять ПОЧЕМУ, прежде чем смешивать.
 
----
-
-## R90 — Data Audit (prerequisite)
-
-**Файл**: `_research_r90_data_audit.py`
-
-| Check | Описание |
-|-------|----------|
-| OHLCV | load_research_frame() — rows, symbols, date range |
-| CG funding | funding.parquet — rows, symbols, coverage |
-| CG liq | liq.parquet — rows, symbols, coverage |
-| CG oi | oi.parquet — rows/symbols |
-| CG taker | taker.parquet — rows/symbols |
-| CG ls | ls_ratio.parquet — rows/symbols |
-| Shift1 | Verify cg_date + 1d alignment |
-
-**Acceptance**: Все datasets загружаются. Coverage ≥ 80% по символам.
+**Порядок**: R97 Attribution → R100 Rank Ensemble → R99 Simple Mix (если нужен).
+**Пропуск**: R98 (merged в R99), R101 (overfitting risk).
 
 ---
 
-## R91 — Funding Carry Strategy (rule-based, NO ML)
+## R97 — Attribution Analysis (MANDATORY FIRST)
 
-**Файл**: `_research_r91_funding_carry.py`
+**Файл**: `_research_r97_attribution.py`
 
-**Идея**: Coins с низким FR → long (получаем funding), coins с высоким FR → short (получаем funding).
+**Цель**: Понять разницу R68 Return=179% vs R93 Return=34.8% при похожем Sharpe.
 
-**Сигнал**: `carry_score = -fr_close` (shift1)
+### Метрики (считаем отдельно для R68 и R93 на aligned timestamps):
 
-**Grid**:
-- K ∈ {2L/2S, 3L/3S, 4L/2S}
-- rebal_hours ∈ {12, 24}
+| Metric | Описание |
+|--------|----------|
+| n_trading_periods | Кол-во ребалансировок |
+| pct_risk_off | Доля периодов без позиций (all cash) |
+| mean_gross_ret | Средний return за период (до костов) |
+| std_ret | Стд return за период |
+| avg_turnover | Средний turnover (доля позиций, которые менялись) |
+| avg_cost_bps | Средний cost per period (bps) |
+| net_ret_per_period | mean_gross - avg_cost |
 
-**Simulation**: R68 `simulate()` с carry_score вместо ML pred
+### Breakdown:
+- Per-window (W1, W2, W3)
+- Per-quarter (Q4'24, Q1'25, Q2'25, Q3'25, Q4'25, Q1'26)
 
-**Acceptance**: Sharpe > 0, корреляция с R68 < 0.3
+### Гипотезы для проверки:
+1. R93 сидит в кэше больше (pct_risk_off выше)?
+2. R93 торгует чаще → больше костов (turnover)?
+3. R93 имеет меньший gross_ret per period?
+4. R93 concentration: торгует меньше символов?
 
----
-
-## R92 — Liquidation Event Mean-Reversion
-
-**Файл**: `_research_r92_liq_events.py`
-
-**Событие**: `liq_zscore > threshold`
-**Направление**: liq_long >> liq_short → go long (и наоборот)
-
-**Grid**:
-- threshold ∈ {2.0, 2.5, 3.0}
-- hold H ∈ {1, 2, 3} × 12h
-- K ∈ {1L/1S, 2L/1S, 2L/2S}
-- cooldown ∈ {0, 1, 2}
-
-**Acceptance**: Sharpe > 0, hit rate > 50%, corr с R68 < 0.3
-
----
-
-## R94 — Strategy Mix
-
-**Файл**: `_research_r94_strategy_mix.py`
-
-**Grid weights**: (0.7,0.15,0.15), (0.6,0.2,0.2), (0.5,0.25,0.25), (0.8,0.1,0.1), risk_parity
-
-**Acceptance**: Mix Sharpe > R68 × 1.05, Mix MaxDD < R68 MaxDD × 0.85
+### Acceptance:
+- Чёткое объяснение ΔReturn в виде decomposition
+- Понимание, нужен ли vol-match перед mixing
 
 ---
 
-## R95 — Bootstrap Significance
+## R100 — Rank Ensemble (PRIORITY 1)
 
-**Файл**: `_research_r95_bootstrap.py`
+**Файл**: `_research_r100_rank_ensemble.py`
 
-Block bootstrap (B=10, N=1000). R94-best vs R68.
+**Идея**: Один портфель из комбинированных rank-сигналов.
 
-**Acceptance**: P(mix > R68) > 0.80, Median ΔSh > 0.08
+```
+r_combined = α * rank_cs(p_12h) + (1-α) * rank_cs(p_4h)
+```
+
+где `rank_cs` = cross-sectional rank (0 to 1), `p_12h` = R68 predictions, `p_4h` = R93 predictions.
+
+### Требования:
+- **Alignment**: нужны predictions R68 и R93 на одних и тех же timestamp'ах
+- R93 predictions: `results/r93_predictions.parquet`
+- R68 predictions: нужно сохранить (или пересчитать) из `_research_r68_continuous_wf.py`
+
+### Grid:
+- α ∈ {0.0, 0.25, 0.50, 0.75, 1.0}
+- α=1.0 = pure R68, α=0.0 = pure R93 (benchmark)
+
+### Selection:
+- TOP 4 / BOTTOM 2 (4L/2S) из combined_rank
+- Simulate с standard R68 costs, 12h rebalance
+
+### Bootstrap:
+- Best α config vs R68 (α=1.0)
+- P(ΔSharpe > 0) > 0.80 → ACCEPT
+
+### Acceptance:
+- Sharpe ≥ R68 (3.78) AND MaxDD < R68 (-13.95%)
+- OR Sharpe ≥ 3.5 AND MaxDD < -10%
 
 ---
+
+## R99 — Simple Return Mix (ONLY IF R97 shows vol-match needed)
+
+**Файл**: `_research_r99_return_mix.py`
+
+**Идея**: Два отдельных портфеля, returns складываются с весами.
+
+```
+ret_mix = (1 - w93) * ret_R68 + w93 * ret_R93_scaled
+```
+
+### Vol-scaling (если R97 показал разницу vol):
+```
+σ_R68 = std(ret_R68)
+σ_R93 = std(ret_R93)
+ret_R93_scaled = ret_R93 * (σ_R68 / σ_R93)
+```
+
+### Grid:
+- w93 ∈ {0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50}
+
+### Optimisation target: **Calmar ratio** (return / MaxDD), не Sharpe!
+
+### Bootstrap:
+- Best w93 vs R68-only
+- P(ΔCalmar > 0) > 0.80 → ACCEPT
+
+### Acceptance:
+- Calmar ↑ при сохранении Sharpe ≥ 3.5
+
+---
+
+## Execution Pipeline
+
+```
+R97 (attribution)  →  understand vol/return difference
+       ↓
+R100 (rank ensemble)  →  combine signals into one portfolio
+       ↓
+R99 (return mix, if needed)  →  fallback: two portfolios with weights
+```
+
+## Decision Tree
+
+```
+IF R97 shows vol-match NOT needed:
+    → R100 rank ensemble (preferred, one portfolio)
+    → IF R100 beats R68 → DEPLOY
+    → IF R100 fails → R99 return mix
+
+IF R97 shows vol-match needed:
+    → R99 first (vol-scaled mix)
+    → R100 with vol-scaled predictions
+    → Best of R99/R100 → DEPLOY
+```
 
 ## Порядок: R90 → R91 + R92 → R94 → R95
 

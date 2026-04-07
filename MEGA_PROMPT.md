@@ -1840,10 +1840,101 @@ Vol overlay не проходит bootstrap. Sharpe R81 (3.730) < R68 (3.777), 6
 - ❌ Vol overlay как Sharpe improvement (bootstrap reject, R85/R86)
 - ❌ Temporal features, meta-stacking, LambdaRank, reject option (R60–R70)
 
-### Открытые направления (не протестированы):
-- ❓ CG tail-event features (liq > p95) как regime → R92
-- ❓ Funding carry как параллельная rule-based система → R91
-- ❓ Vol overlay как DD cap (не для Sharpe, а для risk management)
+---
+
+## 15. Параллельные стратегии + 4h ML Engine (R90–R95) — ЗАВЕРШЕНО
+
+> Обновление: 8 апреля 2026. Попытка построить параллельные системы для диверсификации с R68.
+
+### R90 — Data Audit (✅)
+
+Все данные в наличии:
+- OHLCV: 1,826,014 rows × 105 cols, 35 символов, **1h timeframe**, 2017–2026
+- Доступные fwd_ret: `fwd_ret_1h`, `fwd_ret_4h`, `fwd_ret_12h`, `fwd_ret_24h`, `fwd_ret_48h`
+- CG parquets: funding (49K), liq (55K), oi (51K), taker (55K), ls_ratio (50K)
+
+### R91 — Funding Carry (✗ ПРОВАЛ)
+
+**Идея**: carry_score = -fr_close (shift1). Long low-FR coins, short high-FR coins.
+
+| Config | Sharpe | MaxDD | Return |
+|--------|--------|-------|--------|
+| 2L/2S 12h | **-0.295** | -62.0% | -53.8% |
+| 4L/2S 24h | -0.418 | -44.0% | -24.3% |
+| 3L/3S 12h | -1.017 | -73.7% | -72.1% |
+
+Все конфиги убыточные. `fwd_ret_12h` = ценовой return, funding payments не учтены. FR — слабый предиктор цены.
+Corr(R91, R68) = **-0.341** — хорошая диверсификация, но бесполезная (убыточная стратегия).
+
+### R92 — Liquidation Event Mean-Reversion (частичный успех)
+
+**Событие**: liq_zscore > threshold → mean-reversion (longs liquidated → go long).
+
+Лучший конфиг: Sharpe=**0.535**, MaxDD=-53.0%. Bootstrap P(Sharpe>0) = **0.812** ✅
+Corr(R92, R68) = **-0.031** — почти ноль, идеальная диверсификация. Но Sharpe слишком мал.
+
+### R93 — 4h ML Engine (✅ СИЛЬНАЯ МОДЕЛЬ)
+
+**Идея**: тот же LGB+XGB ensemble (5+5 seeds), те же 31 фича, CONTINUOUS_WINDOWS — но target = `fwd_ret_4h` вместо `fwd_ret_12h`.
+
+| Config | Sharpe | MaxDD | Return | Win | N |
+|--------|--------|-------|--------|-----|---|
+| **4L2S_12h** | **3.190** | **-10.1%** | 34.8% | 57.3% | 689 |
+| 3L3S_4h | 2.584 | -14.3% | 91.7% | 54.6% | 2071 |
+| 4L2S_4h | 2.508 | -17.2% | 105.8% | 55.5% | 2071 |
+| 6L3S_4h | 2.415 | -11.4% | 77.0% | 55.4% | 2071 |
+| 6L3S_12h | 1.454 | -9.5% | 11.9% | 56.3% | 689 |
+
+**Ключевое**:
+- Best: 4L2S_12h, **Sharpe=3.190, MaxDD=-10.1%** (лучше R68 по DD)
+- Corr(R93, R68) = **0.456** — умеренная корреляция
+- Bootstrap P(Sharpe>0) = **0.962** — железно прибыльная
+- Trend filter критичен: без него 4L2S Sharpe: 3.19 → -1.07
+- **Аномалия**: Return=34.8% при Sharpe=3.19 vs R68 Return=179% при Sharpe=3.78 — непонятно, нужен attribution analysis
+
+### R94 — Strategy Mix (DD↓, Sharpe не бьёт R68)
+
+Корреляции:
+```
+      R68    R91    R92
+R68  1.000 -0.341 -0.031
+R91 -0.341  1.000  0.144
+R92 -0.031  0.144  1.000
+```
+
+| Weights | Sharpe | MaxDD | Return |
+|---------|--------|-------|--------|
+| R68 only | 3.780 | -13.9% | 179% |
+| **80/10/10** | **3.461** | **-9.8%** | 110% |
+| 70/15/15 | 2.892 | -8.0% | 81% |
+| risk_parity | 1.613 | -10.9% | 42% |
+
+Best: 80/10/10 — **MaxDD с 13.9% до 9.8% (↓30%)**, Sharpe падает с 3.78 до 3.46.
+
+### R95 — Bootstrap
+
+| Тест | P | ΔSharpe | Verdict |
+|------|---|---------|---------|
+| R91 vs cash | 0.370 | -0.277 | ✗ |
+| R92 vs cash | **0.812** | +0.558 | ✅ |
+| R94 mix vs R68 | 0.239 | -0.341 | ✗ REJECT |
+
+### Выводы R90–R95
+
+1. **Carry (R91) — мёртвая идея.** FR не предсказывает цену.
+2. **Liq events (R92) — прибыльны** (P=0.812), но Sharpe=0.54 слишком мал.
+3. **4h ML (R93) — сильная модель** (Sharpe=3.19, P=0.962), нужен attribution + mixing.
+4. **Микс R68+R91+R92** снижает DD на 30%, но не бьёт R68 по Sharpe.
+5. **R93 + R68 mix** — непроверен, главный кандидат для следующего раунда.
+
+### Добавлено в "proven useless":
+- ❌ Funding carry как ценовая стратегия (FR ≠ price predictor, R91)
+- ❌ Liq events standalone (Sharpe=0.54, не масштабируется, R92)
+
+### Открытые вопросы:
+- ❓ R93 attribution: почему Return=35% при Sharpe=3.19?
+- ❓ Rank ensemble (R68 12h rank + R93 4h rank) → один портфель
+- ❓ Return mix (R68 + R93 scaled) → два портфеля
 
 ---
 
