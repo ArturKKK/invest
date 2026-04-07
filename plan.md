@@ -16,28 +16,32 @@
 | R67 | Reject option (prob threshold) | 1.507 best | Провал — снижает positions |
 | R69 | Percentile uncertainty gating | 0.608 best | Катастрофа — фильтрует alpha-генераторы |
 
+| R70 | LambdaRank (NDCG@K) | 0.796 | Провал — binary лучше |
+
 ### Закрытые направления (не возвращаться):
 - ❌ Temporal features (ret lags catastrophic, cg_temporal hurt combined)
 - ❌ Meta-stacking (OOF от слабых моделей = шум)
 - ❌ Uncertainty gating (любой вариант — fixed/percentile — разрушает)
 - ❌ Reject option / score-gap threshold (kills diversification)
 - ❌ dynamic_K, edge_cost_filter, prob_weighting (R60 failures)
+- ❌ LambdaRank / Ranking objective (NDCG ниже чем binary, Sharpe хуже)
 
 ---
 
-## R70 — LambdaRank Objective (🔄 RUNNING)
+## R70 — LambdaRank Objective (✅ DONE — провал)
 
 LightGBM lambdarank + XGBRanker вместо binary classification.
-Оптимизирует NDCG@K — прямо top-K ranking quality.
 
-- [x] Скрипт написан (фикс int labels)
-- [x] Задеплоен на MLC (invest-y5u733)
-- [x] Запущен (PID 1438)
-- [ ] Результаты собраны
+| Config | Gross Sh | Net Sh | NDCG@4 | Ret% |
+|--------|----------|--------|--------|------|
+| binary_4L2S | 2.467 | 2.014 | 0.5651 | 46.8% |
+| rank_4L2S | 1.546 | 0.796 | 0.5253 | 10.6% |
+
+LambdaRank хуже binary по ВСЕМ метрикам. Закрыто.
 
 ---
 
-## Следующие шаги (после R70)
+## Следующие шаги
 
 ### 1. Deploy 4L/2S в прод (VPS)
 - Поменять PROD_CFG n_long=6→4, n_short=3→2
@@ -49,8 +53,9 @@ LightGBM lambdarank + XGBRanker вместо binary classification.
 - Sim vs live расхождения
 - Какие trades убыточны? Какие монеты wrong? Какие режимы убивают alpha?
 
-### 3. Если R70 LambdaRank покажет результат → deploy
-Если нет → система в финальном оптимуме, переход к live monitoring.
+### 3. Система в финальном оптимуме
+70 раундов → единственное улучшение: **4L/2S** (gross alpha, +1.13 Sharpe).
+Incremental feature/model engineering exhausted.
 
 ---
 

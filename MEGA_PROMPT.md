@@ -1125,11 +1125,20 @@ Adaptive filtering: на каждом timestamp убираем монеты с p
 
 **Вывод**: Percentile gating КАТАСТРОФИЧЕСКИ ухудшает. Даже при pct=0.9 (фильтруем только 12% самых неуверенных) → Sharpe падает с 2.98 до 0.61. Причина: фильтрация убирает монеты ИМЕННО из top/bottom, которые и генерируют alpha. Тема uncertainty gating закрыта окончательно.
 
-### R70 — LambdaRank Objective (🔄 running)
+### R70 — LambdaRank Objective (✅ 2026-04-07)
 
 LightGBM lambdarank + XGBRanker вместо binary classification. Группировка по timestamp, NDCG@4/@2 для оптимизации top-K ranking quality.
 
-**Итог R60-R69**: Из 20+ вариантов — единственное надёжное улучшение: **4L/2S** (по gross alpha, не по costs). В continuous WF: Net Sharpe **3.777**, ret **+179%**. Reject option и uncertainty gating разрушают performance. Ranking objective (R70) — последняя идея в текущем цикле.
+| Config | Gross Sh | Net Sh | NDCG@4 | NDCG@2 | Ret% | DD% |
+|--------|----------|--------|--------|--------|------|-----|
+| binary_4L2S | 2.467 | 2.014 | 0.5651 | 0.5563 | 46.8% | -14.3% |
+| binary_6L3S | 2.302 | 1.752 | 0.5651 | 0.5563 | 32.6% | -11.5% |
+| rank_4L2S | 1.546 | 0.796 | 0.5253 | 0.5167 | 10.6% | -14.5% |
+| rank_6L3S | 0.874 | 0.042 | 0.5253 | 0.5167 | -0.7% | -17.6% |
+
+**Вывод**: LambdaRank хуже binary по ВСЕМ метрикам. NDCG@4 ниже (0.525 vs 0.565), Sharpe rank_4L2S=0.80 vs binary_4L2S=2.01. Binary classification уже хорошо оптимизирует ranking quality через probability calibration — переход на ranking loss не даёт улучшения. Тема закрыта.
+
+**Итог R60-R70**: Из 25+ вариантов — единственное надёжное улучшение: **4L/2S** (по gross alpha, не по costs). В continuous WF: Net Sharpe **3.777**, ret **+179%**. Reject option, uncertainty gating, и LambdaRank разрушают performance. Система на локальном оптимуме — дальнейшее улучшение через feature/model engineering имеет <5% шанс.
 
 ---
 
