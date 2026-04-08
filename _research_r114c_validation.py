@@ -326,8 +326,25 @@ def main():
         },
         "check3_pass": check3_pass,
     }
+    # Convert numpy types for JSON serialization
+    def _convert(obj):
+        if isinstance(obj, (np.bool_, np.integer)):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
+    def _deep_convert(d):
+        if isinstance(d, dict):
+            return {k: _deep_convert(v) for k, v in d.items()}
+        if isinstance(d, list):
+            return [_deep_convert(v) for v in d]
+        return _convert(d)
+
     with open("results/r114c_validation.json", "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(_deep_convert(results), f, indent=2)
 
     log(f"\nSaved: results/r114c_validation.json")
     log(f"Total time: {time.time()-t0:.0f}s")

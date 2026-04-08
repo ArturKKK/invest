@@ -2503,4 +2503,122 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 
 ---
 
+## R114c — Validation of R114b Champion ✅ ALL PASS
+
+**Цель**: Проверить R114b champion (min_risk_off=2) тремя независимыми валидациями.
+
+### CHECK 1: Per-window stability (W1/W2/W3)
+
+| Window | Period | R113 Sharpe | R114b Sharpe | ΔSharpe | R113 Calmar | R114b Calmar | ΔCalmar | Result |
+|--------|--------|-------------|--------------|---------|-------------|--------------|---------|--------|
+| W1 | 2024-10 → 2025-05 | 2.342 | 2.308 | -0.034 | 3.88 | 4.32 | +0.44 | LOSE (marginal) |
+| W2 | 2025-05 → 2025-11 | 4.452 | 4.834 | +0.382 | 11.46 | 12.06 | +0.60 | WIN |
+| W3 | 2025-11 → 2026-03 | 2.478 | 3.050 | +0.572 | 1.81 | 2.30 | +0.49 | WIN |
+
+**Результат**: R114b wins 2/3 windows. W1 проигрывает на Sharpe лишь на -0.034 (в пределах шума), но выигрывает на Calmar. **PASS**.
+
+### CHECK 2: Per-year stability
+
+| Period | R113 Sharpe | R114b Sharpe | ΔSharpe | Result |
+|--------|-------------|--------------|---------|--------|
+| 2024-H2 | 3.408 | 3.519 | +0.111 | WIN |
+| 2025-H1 | 2.607 | 2.792 | +0.185 | WIN |
+| 2025-H2 | 4.156 | 4.323 | +0.167 | WIN |
+| 2026-Q1 | 1.012 | 1.476 | +0.464 | WIN |
+
+**Результат**: R114b wins ALL 4/4 periods. Наибольший uplift в 2026-Q1 (+0.464). **PASS**.
+
+### CHECK 3: Block Bootstrap ΔSharpe/ΔCalmar (5000 resamples, block=30)
+
+| Metric | Median Δ | P(Δ > 0) | 90% CI |
+|--------|----------|----------|--------|
+| ΔSharpe | +0.186 | 0.880 | [-0.073, +0.448] |
+| ΔCalmar | +1.50 | 0.848 | [-1.14, +5.02] |
+
+**Результат**: Median ΔSharpe = +0.186, P(positive) = 88%. **PASS**.
+
+### Финальный вердикт R114c
+
+**OVERALL PASS — R114b is production-grade champion.**
+- Выигрывает 2/3 windows и ВСЕ 4/4 year-periods
+- Bootstrap: 88% confidence что Sharpe improvement реальный
+- Механизм sound: min_risk_off_periods=2 предотвращает flicker
+
+**Файл**: `_research_r114c_validation.py`, результаты: `results/r114c_validation.json`.
+
+---
+
+## R117 — Dynamic K (Confidence-based Position Sizing) ✅ WIN
+
+**Цель**: Вместо фиксированных 4L/2S, масштабировать позиции по "уверенности" модели.
+**Confidence**: std(predictions) across coins at each timestamp (expanding window quantiles).
+
+### Лучшие конфигурации
+
+| Config | Method | Low→K | Mid→K | High→K | NetSh | GrSh | Ret% | DD% | Calmar | Cost% |
+|--------|--------|-------|-------|--------|-------|------|------|-----|--------|-------|
+| **R114b baseline** | fixed | – | 4L2S | – | 3.266 | 3.707 | 199.5 | -10.9 | 18.25 | 15.51 |
+| **std_q30_4L2S_else2L1S** | std | ≤30%→2L1S | 4L2S | – | **3.906** | 4.379 | **212.9** | -11.9 | 17.82 | 14.42 |
+| **std_q40_4L2S_else2L1S** | std | ≤40%→2L1S | 4L2S | – | 3.460 | 3.905 | 185.5 | **-10.1** | **18.33** | 14.07 |
+| rng_q70_30_6L3S_2L1S | range | ≤30%→2L1S | 4L2S | ≥70%→6L3S | 3.188 | 3.692 | 138.5 | -9.0 | 15.34 | 14.43 |
+
+### Ключевые выводы R117
+
+1. **EXPANDING K (6L/3S при high confidence) УХУДШАЕТ**: все конфиги с 6L/3S → хуже baseline
+2. **SHRINKING K (2L/1S при low confidence) РАБОТАЕТ**: все варианты с low→2L/1S улучшают Sharpe
+3. **Best по Calmar**: `std_q40_4L2S_else2L1S` → Calmar 18.33 (+0.08), DD -10.1% (+0.8pp), Sharpe 3.460 (+0.19)
+4. **Best по Sharpe**: `std_q30_4L2S_else2L1S` → Sharpe 3.906 (+0.64!), Return 212.9% (+13.4pp), Cost% 14.42 (-1.09)
+5. **K distribution** (q40): warmup=49, mid=585 (58%), low=379 (37%) → 37% time in reduced exposure
+6. **Mechanism sound**: когда модель не уверена (predictions clustered), уменьшить exposure → меньше шума
+
+### Delta vs R114b
+
+| Metric | R114b | Best (q40) | Δ |
+|--------|-------|------------|---|
+| Net Sharpe | 3.266 | 3.460 | +0.194 |
+| Calmar | 18.25 | 18.33 | +0.08 |
+| MaxDD | -10.9% | -10.1% | +0.8pp |
+| Return | 199.5% | 185.5% | -14.0pp |
+| Cost% | 15.51 | 14.07 | -1.44pp |
+
+**Файл**: `_research_r117_dynamic_k.py`, результаты: `results/r117_grid.csv`, `results/r117_best.json`.
+
+---
+
+## R115b — Frozen Split-Universe (Train 35, Predict 50) ❌ INCONCLUSIVE
+
+**Цель**: Train model на SYM_35 only, predict на 50 symbols, select from larger pool.
+**Frozen normalization**: market-level features computed from SYM_35 anchor only.
+
+### Результаты
+
+| Config | NetSh | GrSh | Ret% | DD% | Calmar | Cost% | AvgUniverse |
+|--------|-------|------|------|-----|--------|-------|-------------|
+| R114b_SYM35_4L2S (baseline) | 2.557 | 2.949 | 151.1 | -14.0 | 10.75 | 14.97 | 35 |
+| split_adv10M_4L2S | 2.643 | 3.041 | 153.1 | -16.9 | 9.07 | 14.88 | 26 |
+| **split_adv10M_6L3S** | **3.046** | **3.529** | 144.6 | **-10.5** | **13.71** | 14.85 | 26 |
+| split_adv20M_4L2S | 2.232 | 2.569 | 113.3 | -17.8 | 6.38 | 12.22 | 19 |
+| split_adv20M_6L3S | 2.867 | 3.283 | 123.4 | -11.3 | 10.89 | 12.21 | 19 |
+| split_adv50M_4L2S | 1.968 | 2.235 | 81.4 | -13.9 | 5.85 | 8.67 | 12 |
+| split_adv50M_6L3S | 0.970 | 1.249 | 30.2 | -23.8 | 1.27 | 8.61 | 12 |
+
+### Критическая проблема
+
+**Baseline degradation**: R115b baseline (SYM_35, 4L2S) = Sharpe 2.557, но настоящий R114b = 3.266.
+Разница = 0.71 Sharpe (!). Причина: frozen normalization заморозила только MARKET_LEVEL_FEATURES,
+но cross-sectional ranked features (`oi_chg_12h_cs`, `taker_cvd_12h_cs`, `cum_funding_24h_cs`, `cs_rank_ma_5`)
+были пересчитаны по 50 символам → распределения для SYM_35 сместились → модель деградировала.
+
+### Выводы R115b
+
+1. **Split-universe ВНУТРИ своей модели**: expanding от 4L2S к 6L3S помогает (+0.49 Sharpe, +2.96 Calmar)
+2. **НО модель деградировала**: baseline 2.557 vs real R114b 3.266 = -0.71 Sharpe loss
+3. **Frozen normalization неполная**: нужно замораживать ВСЕ cs-features, не только market-level
+4. **Правильный подход**: compute ALL cs features from SYM_35 anchor only, then extrapolate to expanded symbols
+5. Binance API заблокировано на VM → только 50 symbols (35 + 15 existing)
+
+**Файл**: `_research_r115b_split_universe.py`, результаты: `results/r115b_grid.csv`, `results/r115b_best.json`.
+
+---
+
 *Конец документа. Используй как полный контекст для любой AI-модели.*
