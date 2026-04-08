@@ -1747,7 +1747,8 @@ mlc job cancel r60-portfolio-opt
 После R48 (champion 31f, Sharpe=1.66 на original WF) была введена **continuous WF** (R68):
 - 3 окна без гэпов, wall-to-wall test coverage Oct 2024 – Mar 2026
 - Config: 4L/2S, 12h rebalance, PROD_CFG (trend_cutoff=0.9, dyn_threshold=0.7, ema_alpha=0.5, hysteresis=3)
-- **R68 baseline: Net Sharpe = 3.777, MaxDD = -13.95%, Return = 179.3%, 688 periods**
+- **R68 baseline (честный, R113 fix): Net Sharpe = 3.057, MaxDD = -11.2%, Return = 183.9%, 1013 periods, Calmar = 16.47**
+- *(Старый нечестный baseline: Sharpe 3.777, 688 periods — 32% flat-периодов пропускались через `continue`)*
 
 ```python
 CONTINUOUS_WINDOWS = [
@@ -2314,6 +2315,60 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 - ❌ Prediction neutralization (Numerai-style): Sharpe всегда падает, 0/48 PASS (R110)
 - ❌ Spillover features (inter-coin lags, PCA, market factors): redundant с existing breadth (R111)
 - ❌ Factor-Mimicking Portfolios (FMP): IC < 0.02 для всех 12 фич после fix lookahead (R112)
+
+## R113 — P0 Fix + Trend Cutoff Reoptimization ✅
+
+### Предыстория: критический баг sim-vs-live (P0)
+
+**Баг**: `simulate()` при `trend_str > trend_cutoff` делала `continue` — пропуск периода. В симуляции = 0% return (кэш). В live боте `construct_portfolio()` возвращала `[]`, но позиции **оставались открытыми** на бирже и дрифтили без управления.
+
+Старый Sharpe 3.777 был **нечестным** — 325 из 1013 периодов (32%) просто не учитывались в расчёте. Реальная доходность привязана к 688 периодам, а риск — к 1013.
+
+### P0 Fix: simulate_v2() — risk-off state machine
+
+Новая архитектура разделяет два состояния:
+- **selection_state** (EMA/prev_preds) — **живёт через risk_off**. При выходе из flat-периода EMA-smoothing продолжает с правильными значениями, hysteresis корректен.
+- **positions_state** (prev_longs/prev_shorts) — очищается при enter_off. Re-entry = все позиции "новые" (честные costs).
+
+Ключевые отличия от наивного фикса:
+1. **Каждый** rebal timestamp записывает return (no `continue` skip). Periods = calendar.
+2. Risk-off с **гистерезисом**: enter_off когда `trend_str > cutoff_on`, exit_off когда `trend_str < cutoff_off` (= cutoff_on − 0.1).
+3. EMA **не сбрасывается** в risk_off → нет деградации gross returns на активных периодах.
+4. Dynamic exposure (0.7–cutoff диапазон) привязан к cutoff_on.
+
+**Sanity check**: Periods = 1013 = expected calendar periods → **PASS**.
+
+### Версии пакетов — КРИТИЧНО для воспроизводимости
+
+Обнаружено: незапиненные пакеты (pandas 3.0.2 вместо 2.3.3) давали Net Sharpe 2.228 вместо 3.777 на том же коде. pandas 3.0 тихо ломает `groupby.apply` (дропает grouping column). **requirements.txt теперь полностью запинен:**
+- numpy==2.4.3, pandas==2.3.3, scipy==1.17.1, lightgbm==4.6.0, xgboost==3.2.0, scikit-learn==1.8.0
+
+### R113 Grid Results (cutoff_on sweep)
+
+| cutoff_on | cutoff_off | Net Sharpe | Gross Sharpe | Return | MaxDD | Calmar | %flat | #off events | Avg Off Dur |
+|---|---|---|---|---|---|---|---|---|---|
+| **0.9** | **0.8** | **3.057** | **3.510** | **183.9%** | **-11.2%** | **16.47** | 33.9% | 71 | 4.8 |
+| 1.0 | 0.9 | 3.061 | 3.526 | 188.8% | -12.2% | 15.49 | 28.7% | 60 | 4.8 |
+| 1.2 | 1.1 | 2.975 | 3.431 | 201.3% | -14.7% | 13.68 | 21.9% | 45 | 4.9 |
+| 1.5 | 1.4 | 2.135 | 2.585 | 135.5% | -17.7% | 7.66 | 12.3% | 32 | 3.9 |
+| 1.8 | 1.7 | 1.913 | 2.355 | 123.1% | -23.4% | 5.25 | 6.5% | 18 | 3.7 |
+| 2.0 | 1.9 | 1.940 | 2.377 | 130.2% | -24.2% | 5.37 | 3.8% | 9 | 4.3 |
+| 2.5 | 2.4 | 1.740 | 2.170 | 115.3% | -25.4% | 4.53 | 1.1% | 2 | 5.5 |
+| 3.0 | 2.9 | 1.721 | 2.142 | 116.5% | -26.1% | 4.46 | 0.7% | 2 | 3.5 |
+| None | — | 1.565 | 1.956 | 110.6% | -28.5% | 3.88 | 0% | 0 | 0 |
+
+### Выводы R113
+
+1. **Чёткая монотонность**: ниже cutoff → больше flat → лучше Sharpe/DD/Calmar. Trend filter реально защищает: без него MaxDD -28.5% и Sharpe 1.565.
+2. **cutoff_on=0.9/0.8** — лучший risk-adjusted: Calmar 16.47, DD -11.2%. cutoff_on=1.0 чуть выше по Sharpe (+0.004) но хуже по DD и Calmar.
+3. **Честный baseline**: Net Sharpe **3.057** (vs 3.777 старый нечестный). Разница = учёт flat-периодов с нулевым return.
+4. **Фикс live бота**: `run_trading.py` теперь при risk_off закрывает все позиции через `rebalance_positions(exchange, [], ...)`. State machine с `state['trend_risk_off']` flag.
+5. **Файл**: `_research_r113_trend_cutoff_reopt.py`, результаты: `results/r113_grid.csv`, `results/r113_best.json`.
+
+### Обновление production baseline:
+- **Старый baseline (нечестный)**: Net Sharpe = 3.777, 688 periods (32% пропущено)
+- **Новый baseline (честный)**: Net Sharpe = **3.057**, 1013 periods, MaxDD = -11.2%, Calmar = 16.47, Return = 183.9%
+- Config: `cutoff_on=0.9, cutoff_off=0.8`, всё остальное без изменений (4L/2S, ema_alpha=0.5, hysteresis=3)
 
 ---
 
