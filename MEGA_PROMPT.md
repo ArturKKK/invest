@@ -43,7 +43,7 @@
 - Walk-forward валидация на 3 окнах (W1, W2, W3)
 
 **VPS**: root@185.42.163.63 (SSH через SOCKS5 proxy), `/home/trader/invest/`
-- Текущий статус: ОСТАНОВЛЕН (DD=-21.9%, stopped=True)
+- Текущий статус: RUNNING (R114b champion deployed, state machine fix: cutoff_off=0.8, moff=2)
 - ⚠️ НИКОГДА не деплоить на VPS без явного запроса пользователя. Каждый редеплой стоит ~$5 в комиссиях.
 
 ---
@@ -2618,6 +2618,89 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 5. Binance API заблокировано на VM → только 50 symbols (35 + 15 existing)
 
 **Файл**: `_research_r115b_split_universe.py`, результаты: `results/r115b_grid.csv`, `results/r115b_best.json`.
+
+---
+
+## Консенсус AI‑консультантов (9 апреля 2026)
+
+Два независимых консультанта проанализировали результаты R114c/R117/R115b.
+
+### Согласованные решения (100% консенсус)
+
+1. **Deploy R114b NOW** — validated (R114c ALL 3 CHECKS PASS), деплоить немедленно
+2. **R117 q40 > q30** — лучший risk profile (DD -10.1%, Calmar 18.33), q30 = aggressive/overfitting risk
+3. **R117c обязательно** — перед продом обязательна валидация по протоколу R114c + sensitivity sweep
+4. **Combo (R117+R115b) — только после отдельной валидации**
+
+### Расхождение: R115b
+
+- **Консультант 1**: Чинить → R115c full-frozen cs (freeze ALL cs features, non-regression gate)
+- **Консультант 2**: **Закрыть R115 полностью** — проблема глубже normalization: joint distribution 35 coins, extrapolation опасна
+
+**Принятое решение**: **R115 CLOSED.** Universe = 35. Консультант 2 аргументировал убедительнее:
+даже full-frozen cs не решает joint distribution problem, модель обучена на 35 символов.
+
+### Доп. инсайт от консультанта 2 (стратегический)
+
+```
+R68 original (dishonest): Sharpe 3.777
+R113 (honest fix):        Sharpe 3.057  (-0.72)
+R114b (churn reduction):  Sharpe 3.266  (+0.21)
+R117 q40 (dynamic K):     Sharpe 3.460  (+0.19, pending validation)
+
+Total honest recovery:    3.057 → 3.460 = +0.40
+Dilution from 34% flat:   Sharpe 3.46 × 1/sqrt(0.66) ≈ 4.26 equivalent
+→ Active-period Sharpe STRONGER than original R68
+→ Research map ALMOST FULLY CLOSED within current paradigm
+```
+
+### Action plan (в процессе)
+
+- [x] Deploy R114b на VPS (state machine fix: cutoff_off=0.8, min_risk_off_periods=2) — DONE
+- [x] R117c validation — **FAIL** (1/3 windows, catastrophic W3, bootstrap P=0.61)
+- **VERDICT: R114b remains champion.**
+
+### R117c Validation Results (9 апреля 2026)
+
+```
+CHECK 0 Sensitivity sweep: PASS (3/4 q values beat baseline)
+  q=0.30: Sharpe +0.640, Calmar -0.43
+  q=0.35: Sharpe +0.310, Calmar +0.91 (best Calmar=19.16!)
+  q=0.40: Sharpe +0.194, Calmar +0.08
+  q=0.45: Sharpe -0.492, Calmar -7.40 → CLIFF
+
+CHECK 1 Per-window: FAIL (1/3 wins + CATASTROPHIC in W3)
+  W1: ΔSharpe=+1.129  WIN (big)
+  W2: ΔSharpe=-0.397  LOSE (marginal, Calmar +2.24)
+  W3: ΔSharpe=-1.340  LOSE CATASTROPHIC (3.050→1.710)
+
+CHECK 2 Per-year: PASS (2/4 marginal)
+  2024-H2: +2.535 WIN | 2025-H1: +0.472 WIN
+  2025-H2: -0.653 LOSE | 2026-Q1: -0.681 LOSE
+
+CHECK 3 Bootstrap: FAIL
+  P(ΔSharpe>0) = 0.611 (need >0.80)
+  P(ΔCalmar>0) = 0.604 (need >0.80)
+  Median ΔSharpe = +0.152, 90% CI: [-0.678, +1.027]
+```
+
+**Инсайт**: Dynamic K помогал в ранних периодах (W1, 2024-H2) но вредил в поздних (W3, 2026-Q1).
+Эффект regime-dependent → не generalize → keep R114b fixed 4L/2S.
+
+### Закрытые направления (финальная карта)
+
+```
+CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
+        Trend filter (binary 0.9), Churn (min_off=2), Ensemble,
+        Rebalance (12h), Neutralization, Spillover, FMP,
+        Continuous sizing, Expanding K (6L/3S worse),
+        8h rebalance, Universe expansion (R115),
+        Dynamic K — R117c FAIL (regime-dependent)
+
+OPEN:
+  1. CryptoQuant exchange flows (external data, untested)
+  2. Execution-aware cost control (discussed, not implemented)
+```
 
 ---
 
