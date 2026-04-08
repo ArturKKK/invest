@@ -2409,4 +2409,98 @@ Opportunities есть, но **только на FLOW** и с низкой ча�
 
 ---
 
+## R114b — Risk-off Churn Reduction ✅ WIN
+
+### Гипотеза
+Сохранить R113 edge, но уменьшить unnecessary off-events через timing hysteresis:
+- `min_risk_off_periods`: once in risk_off, stay at least N periods before exit
+- `min_risk_on_periods`: once in risk_on, stay at least N periods before can re-enter off
+
+### Grid (36 конфигов): cutoff_off × min_off × min_on
+
+| Config | NetSh | GrSh | Ret% | DD% | Calmar | %flat | #off | AvgDur | Cost% |
+|---|---|---|---|---|---|---|---|---|---|
+| **R113 baseline** | **3.057** | **3.510** | **183.9** | **-11.2** | **16.47** | **33.9%** | **71** | **4.8** | **16.21** |
+| **off0.8_moff2_mon0** | **3.266** | **3.707** | **199.5** | **-10.9** | **18.25** | **36.6%** | **68** | **5.4** | **15.51** |
+| off0.8_moff2_mon1 | 3.266 | 3.707 | 199.5 | -10.9 | 18.25 | 36.6% | 68 | 5.4 | 15.51 |
+| off0.8_moff3_mon0 | 3.196 | 3.627 | 186.8 | -10.9 | 17.09 | 39.0% | 63 | 6.2 | 14.88 |
+| off0.75_moff2_mon0 | 3.140 | 3.568 | 184.0 | -11.3 | 16.25 | 38.3% | 63 | 6.1 | 14.92 |
+| off0.8_moff3_mon2 | 3.143 | 3.577 | 183.2 | -11.4 | 16.03 | 37.5% | 59 | 6.3 | 15.07 |
+
+### Выводы R114b
+
+1. **off0.8_moff2_mon0 — новый чемпион**: Sharpe 3.266 (+0.21), DD -10.9% (+0.3pp), Calmar 18.25 (+1.78), Return 199.5% (+15.6pp).
+2. `min_risk_off_periods=2` (24h минимальный stay in risk_off) — ключевое улучшение. Предотвращает "flicker" — быстрый выход/вход в risk_off.
+3. `min_risk_on_periods=0/1` эквивалентны (no effect). `mon=2` слегка вредит.
+4. Снижение cutoff_off (0.75, 0.7, 0.65) увеличивает flat% и ухудшает Sharpe — original 0.8 оптимален.
+5. Churn reduction -25% не достигнуто (68 vs 71), но метрики однозначно лучше.
+6. **Файл**: `_research_r114b_churn_reduction.py`, результаты: `results/r114b_grid.csv`, `results/r114b_best.json`.
+
+### Обновление production config:
+- **Старый**: `cutoff_on=0.9, cutoff_off=0.8, min_risk_off=1, min_risk_on=0`
+- **Новый**: `cutoff_on=0.9, cutoff_off=0.8, min_risk_off_periods=2, min_risk_on_periods=0`
+
+---
+
+## R115 — Universe Expansion (35 → 50) ❌ INCONCLUSIVE
+
+### Что было сделано
+- Binance API недоступен на VM → использовали 50 existing символов (35 + 15 дополнительных из download_crypto.py)
+- Модель обучена на ВСЕХ 50 символах (не 35)
+- Point-in-time ADV filter (7d rolling dollar volume)
+- Grid: min_adv ∈ {5M, 10M, 20M} × n_long/n_short ∈ {(4,2), (6,3)}
+
+### Результаты
+
+| Config | NetSh | GrSh | Ret% | DD% | Calmar | Cost% | AvgN |
+|---|---|---|---|---|---|---|---|
+| R113 SYM_35 (50-sym model) | 1.386 | 1.847 | 58.9 | -24.3 | 2.43 | 17.02 | 35 |
+| adv5M_4L2S | 1.637 | 2.161 | 74.5 | -16.8 | 4.43 | 19.37 | 32 |
+| adv10M_4L2S | 1.833 | 2.303 | 83.2 | -11.5 | 7.24 | 16.65 | 26 |
+| **adv20M_4L2S** | **2.563** | **2.991** | **119.7** | **-10.1** | **11.83** | **13.83** | **19** |
+| adv5M_6L3S | 0.802 | 1.415 | 24.3 | -18.0 | 1.35 | 19.45 | 32 |
+| adv10M_6L3S | 1.683 | 2.216 | 64.2 | -18.0 | 3.57 | 16.87 | 26 |
+| adv20M_6L3S | 1.397 | 1.866 | 46.0 | -22.4 | 2.05 | 13.73 | 19 |
+
+### Ключевое наблюдение: обучение на 50 символах УБИЛО модель!
+- **R113 с моделью обученной на 35 symb**: Sharpe 3.057, DD -11.2%, Calmar 16.47
+- **R113 с моделью обученной на 50 symb**: Sharpe 1.386, DD -24.3%, Calmar 2.43
+- Деградация = 15 дополнительных мелких альтов добавили noise в training
+
+### Выводы R115
+1. **НЕ расширять training universe** — extra low-cap coins = noise, degraded predictions.
+2. Volume filter работает: adv20M (19 coins avg) лучше adv5M (32 coins avg). Качество > количество.
+3. 4L/2S стабильно лучше 6L/3S при любом ADV пороге.
+4. Правильный подход для будущего: train на SYM_35, но **predict на 50+** (split universes). Требует модификации train_ensemble.
+5. Binance API не работает на MLC VM → нужно качать данные локально.
+6. **Файл**: `_research_r115_universe_expansion.py`, результаты: `results/r115_grid.csv`.
+
+---
+
+## R116 — 8h Rebalance A/B Test ❌ FAIL
+
+### Гипотеза
+Больше decision points (3/day vs 2) → потенциально лучше timing. Модель та же (12h target), только частота ребалансировки ↑.
+
+### Результаты
+
+| Config | NetSh | GrSh | Ret% | DD% | Calmar | Cost% |
+|---|---|---|---|---|---|---|
+| **12h co=0.9 (baseline)** | **3.057** | **3.510** | **183.9** | **-11.2** | **16.47** | **16.21** |
+| 12h co=1.0 | 3.061 | 3.526 | 188.8 | -12.2 | 15.49 | 16.94 |
+| 8h co=0.9 | 0.503 | 0.918 | 19.6 | -23.3 | 0.84 | 18.97 |
+| 8h co=1.0 | 0.531 | 0.945 | 22.0 | -23.0 | 0.95 | 19.88 |
+| 8h co=None | -0.090 | 0.276 | -16.1 | -51.0 | -0.32 | 25.07 |
+
+### Выводы R116
+
+1. **Катастрофический FAIL**: 8h rebalance Sharpe 0.5 vs 12h Sharpe 3.06. Calmar 0.95 vs 16.47.
+2. Модель обучена предсказывать 12h returns. При 8h rebalance используем fwd_ret_8h, который захватывает лишь часть предсказанного move.
+3. 8h returns = меньший signal + те же costs → signal-to-noise ratio коллапсирует.
+4. Подтверждает R93: shorter timeframe = worse risk-adjusted performance.
+5. **12h rebalance оптимален** для текущей модели.
+6. **Файл**: `_research_r116_8h_rebalance.py`, результаты: `results/r116_grid.csv`.
+
+---
+
 *Конец документа. Используй как полный контекст для любой AI-модели.*
