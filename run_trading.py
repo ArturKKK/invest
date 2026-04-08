@@ -1502,19 +1502,36 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     eq_boost = 1.0
 
     if cls_mode:
-        # R26 CFG: trend_cutoff=0.9 → close-to-flat (match simulation behavior)
+        # R114b champion: trend state machine with hysteresis
+        # cutoff_on=0.9, cutoff_off=0.8, min_risk_off_periods=2
         if regime_data:
             ts_val = regime_data.get('trend_strength', 0)
-            if ts_val > 0.9:
-                print(f"   🔴 CLS trend_cutoff: trend_str={ts_val:.2f} > 0.9, flatten to cash")
+            is_risk_off = state.get('trend_risk_off', False)
+
+            if is_risk_off:
+                periods_off = state.get('risk_off_periods', 0) + 1
+                state['risk_off_periods'] = periods_off
+                can_exit = (ts_val < 0.8 and periods_off >= 2)
+                if not can_exit:
+                    print(f"   🔴 CLS risk-off: trend_str={ts_val:.2f}, "
+                          f"off_periods={periods_off}, staying flat")
+                    return []
+                print(f"   🟢 CLS risk-off EXIT: trend_str={ts_val:.2f} < 0.8, "
+                      f"off_periods={periods_off} >= 2")
+                state['trend_risk_off'] = False
+                state['risk_off_periods'] = 0
+            elif ts_val > 0.9:
+                print(f"   🔴 CLS trend_cutoff: trend_str={ts_val:.2f} > 0.9, "
+                      f"entering risk-off")
                 state['trend_risk_off'] = True
+                state['risk_off_periods'] = 0
                 return []
+
             # dyn_threshold=0.7 → scale exposure down linearly
             if ts_val > 0.7:
                 dyn_exposure = max(0.1, 1.0 - (ts_val - 0.7) / (0.9 - 0.7) * 0.5)
-                print(f"   📊 CLS dyn_exposure: trend_str={ts_val:.2f}, exp={dyn_exposure:.2f}")
-        # Clear risk-off flag when trend normalizes
-        state.pop('trend_risk_off', None)
+                print(f"   📊 CLS dyn_exposure: trend_str={ts_val:.2f}, "
+                      f"exp={dyn_exposure:.2f}")
         # CLS: no regime-asym, no vol-scale, no sm, no eq-boost (match sim)
     else:
         # ── R7: Regime-conditional asymmetry ──
