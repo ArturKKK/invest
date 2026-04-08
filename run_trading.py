@@ -1427,9 +1427,8 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     if state.get('stopped', False):
         if dd > risk_cfg['dd_resume']:
             state['stopped'] = False
-            # Reset peak to current equity to avoid deadlock
-            state['peak'] = equity
-            print(f"   🟢 DD recovered to {dd*100:.1f}%, resuming trading (peak reset to {equity:.2f})")
+            # Keep true peak — don't reset it, DD is now calculated correctly
+            print(f"   🟢 DD recovered to {dd*100:.1f}%, resuming trading (peak={peak:.2f}, equity={equity:.2f})")
         else:
             print(f"   🔴 DD stop active ({dd*100:.1f}%), skipping cycle")
             return []
@@ -2830,13 +2829,28 @@ def update_dashboard(exchange, positions, signals, state, results, root,
                 'confidence': round(float(row.get('confidence', 0)), 3),
             })
 
+    # Use state equity if exchange fetch failed (avoid stale dashboard equity)
+    if not exchange_ok:
+        equity = state.get('equity', capital)
+
+    # Update peak from dashboard equity too (avoid dd_pct > 0)
+    peak = state.get('peak', capital)
+    if equity > peak:
+        state['peak'] = equity
+        peak = equity
+
+    # Track total_pnl in state
+    initial_cap = state.get('initial_capital', capital)
+    total_pnl = round(equity - initial_cap, 2)
+    state['total_pnl'] = total_pnl
+
     # Equity history: append to existing
     eq_history = state.get('equity_history', [])
     eq_history.append({
         'timestamp': now.isoformat(),
         'equity': round(equity, 2),
-        'pnl': round(equity - capital, 2),
-        'dd_pct': round(equity / state.get('peak', capital) - 1, 4),
+        'pnl': total_pnl,
+        'dd_pct': round(min(0, equity / peak - 1), 4),
     })
     # Keep last 2000 points
     eq_history = eq_history[-2000:]
@@ -2988,9 +3002,13 @@ def main():
     state_path = os.path.join(log_dir, 'trading_state.json')
     state = load_state(state_path)
     if 'equity' not in state:
+        # Fresh state — bootstrap equity from exchange if possible
         state['equity'] = args.capital
         state['peak'] = args.capital
         state['recent_rets'] = []
+        state['initial_capital'] = args.capital
+    if 'initial_capital' not in state:
+        state['initial_capital'] = args.capital
     if 'prev_equity' not in state:
         state['prev_equity'] = state.get('equity', args.capital)
 
@@ -3008,6 +3026,24 @@ def main():
     exchange = None
     if args.mode in ('paper', 'live'):
         exchange = init_exchange(args.mode)
+
+    # Bootstrap equity from exchange on fresh state
+    if exchange and state.get('equity', args.capital) == args.capital:
+        try:
+            bal = exchange.fetch_balance()
+            total_usdt = float(bal.get('USDT', {}).get('total', 0))
+            exch_pos = exchange.fetch_positions()
+            upnl = sum(float(p.get('unrealizedPnl', 0))
+                       for p in exch_pos if float(p.get('contracts', 0)) > 0)
+            live_equity = total_usdt + upnl
+            if live_equity > 1:  # sanity: not empty account
+                state['equity'] = round(live_equity, 4)
+                state['peak'] = max(state.get('peak', args.capital), live_equity)
+                state['prev_equity'] = round(live_equity, 4)
+                print(f"   📊 Bootstrap equity from exchange: ${live_equity:.2f} "
+                      f"(CLI capital: ${args.capital})")
+        except Exception as e:
+            print(f"   ⚠️  Bootstrap equity failed: {e}")
 
     # Init Telegram bot
     bot = create_bot()
@@ -3324,7 +3360,10 @@ def main():
             current_upnl = sum(pos.get('last_upnl', 0) for pos in ledger.values())
             prev_upnl = state.get('prev_upnl_total')
             if prev_upnl is None:
+                # First cycle after restart: bootstrap from exchange
+                # This avoids silently dropping PnL that occurred while bot was down
                 prev_upnl = current_upnl
+                print(f"   📊 Bootstrap prev_upnl: ${current_upnl:+.2f} (first cycle)")
             upnl_delta = current_upnl - prev_upnl
             cycle_pnl = realized_pnl + upnl_delta
             state['prev_upnl_total'] = round(current_upnl, 4)
@@ -3499,6 +3538,11 @@ def main():
                                    for p in exch_pos if float(p.get('contracts', 0)) > 0)
                         live_equity = total_usdt + upnl
                         peak = state.get('peak', args.capital)
+                        # Update peak if equity went up intra-cycle
+                        if live_equity > peak:
+                            state['peak'] = live_equity
+                            peak = live_equity
+                        state['equity'] = live_equity
                         dd = live_equity / peak - 1 if peak > 0 else 0
 
                         if dd < risk_cfg['dd_stop']:
