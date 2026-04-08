@@ -1,25 +1,30 @@
-# Core
-numpy
-pandas
-scipy
-pyarrow          # parquet support
+# Core — pinned to local .venv versions (2026-04-08)
+numpy==2.4.3
+pandas==2.3.3
+scipy==1.17.1
+pyarrow==23.0.1
 
 # ML
-lightgbm
-catboost
-xgboost
-scikit-learn     # required by lightgbm sklearn API
-optuna           # hyperparameter optimization
+lightgbm==4.6.0
+catboost==1.2.10
+xgboost==3.2.0
+scikit-learn==1.8.0
+joblib==1.5.3
+optuna==4.8.0
 
 # Features
-ta               # technical analysis indicators
+ta==0.11.0
 
 # Data
-ccxt             # crypto exchange API
-requests         # HTTP requests for news fetching
+ccxt==4.5.42
+requests==2.32.5
 
 # NLP / Sentiment
-vaderSentiment   # VADER sentiment analysis for news
+vaderSentiment==3.3.2
+
+# Misc
+tqdm==4.67.3
+python-dotenv==1.2.2
 
 # Optional (for HIST transformer, only needed on GPU cluster)
 # torch
