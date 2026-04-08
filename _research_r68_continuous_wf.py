@@ -218,7 +218,24 @@ def simulate(merged, regime_df, n_long, n_short, cfg=PROD_CFG):
         if ts not in regime_df.index or ts not in grouped: continue
         row = regime_df.loc[ts]
         trend_str = row.get("trend_strength", 0)
-        if trend_str > trend_cutoff: continue
+        if trend_str > trend_cutoff:
+            # Close-to-flat: record closing cost + 0 return (match live behavior)
+            if prev_longs or prev_shorts:
+                n_prev = len(prev_longs) + len(prev_shorts)
+                avg_weight = 1.0 / n_prev if n_prev > 0 else 0
+                close_cost = sum(_cost_for_sym(s) * avg_weight for s in prev_longs | prev_shorts)
+                all_rets.append({
+                    "timestamp": ts, "gross_ret": 0.0, "net_ret": -close_cost,
+                    "cost": close_cost, "n_long": 0, "n_short": 0,
+                    "turnover": n_prev,
+                })
+            else:
+                all_rets.append({
+                    "timestamp": ts, "gross_ret": 0.0, "net_ret": 0.0,
+                    "cost": 0.0, "n_long": 0, "n_short": 0, "turnover": 0,
+                })
+            prev_longs, prev_shorts = set(), set()
+            continue
         grp = grouped[ts].copy()
         n = len(grp)
 

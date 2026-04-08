@@ -1502,16 +1502,19 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     eq_boost = 1.0
 
     if cls_mode:
-        # R26 CFG: trend_cutoff=0.9 → skip cycle entirely
+        # R26 CFG: trend_cutoff=0.9 → close-to-flat (match simulation behavior)
         if regime_data:
             ts_val = regime_data.get('trend_strength', 0)
             if ts_val > 0.9:
-                print(f"   🔴 CLS trend_cutoff: trend_str={ts_val:.2f} > 0.9, skipping cycle")
+                print(f"   🔴 CLS trend_cutoff: trend_str={ts_val:.2f} > 0.9, flatten to cash")
+                state['trend_risk_off'] = True
                 return []
             # dyn_threshold=0.7 → scale exposure down linearly
             if ts_val > 0.7:
                 dyn_exposure = max(0.1, 1.0 - (ts_val - 0.7) / (0.9 - 0.7) * 0.5)
                 print(f"   📊 CLS dyn_exposure: trend_str={ts_val:.2f}, exp={dyn_exposure:.2f}")
+        # Clear risk-off flag when trend normalizes
+        state.pop('trend_risk_off', None)
         # CLS: no regime-asym, no vol-scale, no sm, no eq-boost (match sim)
     else:
         # ── R7: Regime-conditional asymmetry ──
@@ -3229,6 +3232,23 @@ def main():
             )
             pnl_snapshot = actions.get('pnl_snapshot', {})
             # Mark closed dash_trades with PnL
+            dash_trades = state.get('dash_trades', [])
+            closed_keys = {(s.replace('/USDT', ''), side)
+                           for s, side in actions.get('closed', set())}
+            for t in dash_trades:
+                key = (t['symbol'], t['side'])
+                if t.get('closed') is None and key in closed_keys:
+                    t['pnl'] = round(pnl_snapshot.get(key, 0), 2)
+                    t['closed'] = now.isoformat()
+            state['dash_trades'] = dash_trades
+        elif not positions and state.get('trend_risk_off'):
+            # Trend cutoff — flatten to match simulation (return=0 when risk-off)
+            print(f"\n🔴 Trend risk-off: closing all positions to match sim behavior...")
+            results, actions = rebalance_positions(
+                exchange, [], leverage=risk_cfg['leverage'],
+                dry_run=False, use_limit=True
+            )
+            pnl_snapshot = actions.get('pnl_snapshot', {})
             dash_trades = state.get('dash_trades', [])
             closed_keys = {(s.replace('/USDT', ''), side)
                            for s, side in actions.get('closed', set())}
