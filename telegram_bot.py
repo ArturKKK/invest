@@ -105,10 +105,13 @@ class TelegramBot:
             silent=True,
         )
 
-    def alert_positions(self, positions, capital, leverage=3):
+    def alert_positions(self, positions, capital, leverage=3, reason=None):
         """Alert: new portfolio positions."""
         if not positions:
-            self.send("📊 <b>No positions this cycle</b> (DD stop or no signal)")
+            if reason:
+                self.send(f"📊 <b>No positions this cycle</b> ({reason})")
+            else:
+                self.send("📊 <b>No positions this cycle</b>")
             return
 
         longs = [p for p in positions if p["side"] == "long"]

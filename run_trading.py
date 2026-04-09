@@ -1505,6 +1505,7 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         # cutoff_on=0.9, cutoff_off=0.8, min_risk_off_periods=2
         if regime_data:
             ts_val = regime_data.get('trend_strength', 0)
+            state['_last_trend_str'] = ts_val
             is_risk_off = state.get('trend_risk_off', False)
 
             if is_risk_off:
@@ -3472,7 +3473,15 @@ def main():
         # 8. Telegram alerts
         try:
             if bot.enabled:
-                bot.alert_positions(positions, args.capital, risk_cfg['leverage'])
+                # Determine reason for no positions
+                _reason = None
+                if not positions:
+                    if state.get('stopped'):
+                        _reason = "DD stop"
+                    elif state.get('trend_risk_off'):
+                        ts = state.get('_last_trend_str', 0)
+                        _reason = f"BTC trend risk-off (trend_str={ts:.2f})"
+                bot.alert_positions(positions, args.capital, risk_cfg['leverage'], reason=_reason)
                 bot.alert_fills(results)
         except Exception as e:
             print(f"   ⚠️  Telegram alert error: {e}")
