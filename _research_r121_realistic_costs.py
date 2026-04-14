@@ -83,11 +83,30 @@ def cost_pessimistic(sym):
         return 0.0005 + 0.0004 + 0.0002   # 11 bps
 
 
+def cost_prod_blended(sym):
+    """S6: Models actual prod execution mix (maker-first Tier1, aggressive limit Tier2, market Tier3).
+
+    Tier1 (BTC,ETH,SOL,BNB,XRP): _maker_first_limit → post_only, 90s TTL, 3 retries
+      → ~90% maker (2bp) + 10% fallback taker (5bp+1bp spread) = 2.4 bps
+    Tier2 (mid-cap): _limit_with_fallback → aggressive limit 0.03% cross
+      → ~50% maker-like (2bp fee + 2bp spread) + 50% taker (5bp fee + 2bp spread) = 5.5 bps
+    Tier3 (small-cap): plain market
+      → 100% taker (5bp fee + 5bp spread) = 10 bps
+    """
+    if sym in TIER1_SYMS:
+        return 0.90 * 0.0002 + 0.10 * 0.0006   # 2.4 bps blended
+    elif sym in TIER3_SYMS:
+        return 0.0005 + 0.0005                   # 10 bps (pure taker)
+    else:
+        return 0.50 * 0.0004 + 0.50 * 0.0007     # 5.5 bps blended
+
+
 COST_MODELS = {
-    "original":    (cost_original,    0.00008),   # funding: 0.8bp/12h
-    "okx_taker":   (cost_okx_taker,   0.00012),   # funding: 1.2bp/12h (1.5 settlements × 0.8bp)
-    "okx_maker":   (cost_okx_maker,   0.00012),   # same funding
-    "pessimistic": (cost_pessimistic,  0.00015),   # funding: 1.5bp/12h (stress)
+    "original":      (cost_original,      0.00008),   # funding: 0.8bp/12h
+    "okx_taker":     (cost_okx_taker,     0.00012),   # funding: 1.2bp/12h (1.5 settlements × 0.8bp)
+    "okx_maker":     (cost_okx_maker,     0.00012),   # same funding
+    "pessimistic":   (cost_pessimistic,   0.00015),   # funding: 1.5bp/12h (stress)
+    "prod_blended":  (cost_prod_blended,  0.00012),   # funding: 1.2bp/12h
 }
 
 
@@ -348,6 +367,7 @@ def main():
         ("S3_okx_maker",        "okx_maker",   0.0),
         ("S4_okx_maker+delay",  "okx_maker",   0.0003),
         ("S5_pessimistic",      "pessimistic", 0.0005),   # 5bp noise std
+        ("S6_prod_blended",     "prod_blended", 0.0003),  # actual prod execution mix
     ]
 
     for label, cm_key, delay in SCENARIOS:
@@ -429,15 +449,20 @@ def main():
         log(f"  Worst case vs original:                   {d_worst:+.3f} Sharpe")
 
     # Most realistic scenario
-    log(f"\n  MOST REALISTIC scenario for current prod:   S2 (okx_taker + delay)")
+    s6 = next((m for m in results if m['label'] == 'S6_prod_blended'), None)
+    log(f"\n  MOST REALISTIC scenario (actual prod mix):  S6 (prod_blended + delay)")
+    if s6:
+        log(f"    Sharpe: {s6['net_sharpe']:.3f}  (was {base['net_sharpe']:.3f})")
+        log(f"    Return: {s6['total_ret_pct']:.1f}%  (was {base['total_ret_pct']:.1f}%)")
+        log(f"    MaxDD:  {s6['max_dd_pct']:.1f}%  (was {base['max_dd_pct']:.1f}%)")
+        log(f"    Calmar: {s6['calmar']:.2f}  (was {base['calmar']:.2f})")
+
+    log(f"\n  S2 lower bound (100% taker):                S2 (okx_taker + delay)")
     if len(results) >= 3:
         real = results[2]
-        log(f"    Sharpe: {real['net_sharpe']:.3f}  (was {base['net_sharpe']:.3f})")
-        log(f"    Return: {real['total_ret_pct']:.1f}%  (was {base['total_ret_pct']:.1f}%)")
-        log(f"    MaxDD:  {real['max_dd_pct']:.1f}%  (was {base['max_dd_pct']:.1f}%)")
-        log(f"    Calmar: {real['calmar']:.2f}  (was {base['calmar']:.2f})")
+        log(f"    Sharpe: {real['net_sharpe']:.3f}")
 
-    log(f"\n  IF we implement limit orders:               S4 (okx_maker + delay)")
+    log(f"\n  IF all orders go maker:                     S4 (okx_maker + delay)")
     if len(results) >= 5:
         maker = results[4]
         log(f"    Sharpe: {maker['net_sharpe']:.3f}  (was {base['net_sharpe']:.3f})")
@@ -456,7 +481,8 @@ def main():
     df_res = pd.DataFrame(save_results)
     df_res.to_csv("results/r121_cost_audit.csv", index=False)
 
-    best_realistic = results[2] if len(results) >= 3 else results[-1]
+    best_realistic = next((m for m in results if m['label'] == 'S6_prod_blended'),
+                          results[2] if len(results) >= 3 else results[-1])
     with open("results/r121_realistic.json", "w") as f:
         json.dump({
             "realistic_sharpe": best_realistic["net_sharpe"],
