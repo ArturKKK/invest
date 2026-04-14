@@ -2802,6 +2802,48 @@ LGB_combined                2.888   162.5   -10.9   14.85   +0.057
 
 **Файл**: `_research_r122_riskoff_btc.py` (commit d4ec8cd)
 
+## R123 — News Sentiment Feature Evaluation ❌ NEGATIVE (14 апреля 2026)
+
+**Гипотеза**: Добавление news sentiment фичей к 31 champion features улучшит Sharpe.
+
+**Данные**: 2.4M строк crypto_news.parquet (2020-09 → 2026-03), VADER-scored, 10 фичей (8 per-coin + 2 market-level). Политические фичи отсутствуют.
+
+**IC Scan** (14 фичей, включая 4 interaction):
+```
+Feature                               MeanIC    W1       W2       W3    Stable
+nx_mkt_sent_x_vol                    -0.0375  -0.031  -0.132  +0.050     ✓
+market_news_sentiment_24h            -0.0374  -0.050  -0.118  +0.056     ✓
+market_news_count_24h                -0.0336  +0.002  -0.091  -0.012     ✗
+nx_sent_divergence                   +0.0257  +0.040  +0.082  -0.045     ✓
+nx_mkt_count_zscore                  -0.0246  +0.048  -0.077  -0.044     ✓
+(rest: |IC| < 0.022, unstable)
+```
+4/14 фичей прошли IC gate (|IC|>0.02, стабильные в ≥2/3 окон). Но IC нестабильны: W2 доминирует, W1/W3 слабые или противоположного знака.
+
+**Эксперименты** (WF 3 окна × 5 сидов, S6 prod_blended costs):
+```
+Experiment             NetSh    Ret%     DD%  Calmar  ΔSharpe  P(imp)
+A_baseline (31f)       2.831   157.3   -10.9   14.38     —       —
+B_market (+2f)         1.881    85.8   -17.8    4.82   -0.950   0.104
+C_mkt_pol (=B)         1.881    85.8   -17.8    4.82   -0.950   0.104
+D_all_news (+10f)      1.095    40.8   -22.1    1.85   -1.736   0.019
+E_ic_pass (+4f)        0.624    20.1   -24.5    0.82   -2.207   0.003
+F_interact (+6f)       0.802    28.6   -19.5    1.47   -2.029   0.006
+```
+
+**Анализ**:
+- **Все эксперименты хуже baseline**, включая market-only (B: -0.950 Sharpe)
+- DD ухудшается с -10.9% до -17.8...−24.5%
+- IC-passing фичи (E) — **худший результат** (0.624). IC scan обманчив: W2 доминирует, модель переобучается
+- Парадокс: IC фичи значимы, но при добавлении в ансамбль **вредят** — noise injection в LGB/XGB
+- Bootstrap: P(improvement) < 0.11 для всех вариантов = baseline однозначно лучше
+- Возможная причина: VADER слишком грубый (60% accuracy), нужен FinBERT/CryptoBERT или LLM
+
+**VERDICT: ❌ NEGATIVE** — News sentiment features вредят LGB+XGB ensemble. Не внедрять. 
+Для будущего: LLM-filtered sentiment (GPT/Claude) мог бы дать лучший сигнал, но требует API costs.
+
+**Файл**: `_research_r123_news_sentiment.py` (commit 1d6895f)
+
 ### Закрытые направления (обновлённая карта)
 
 ```
@@ -2811,13 +2853,14 @@ CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
         Continuous sizing, Expanding K (6L/3S worse),
         8h rebalance, Universe expansion (R115),
         Dynamic K — R117c FAIL (regime-dependent),
-        Risk-off BTC directional — R122 INCONCLUSIVE (+0.057 noise)
+        Risk-off BTC directional — R122 INCONCLUSIVE (+0.057 noise),
+        News sentiment (VADER) — R123 NEGATIVE (all variants hurt model)
 
 OPEN:
   1. CryptoQuant exchange flows (external data, untested)
   2. Extend maker-first execution to Tier2/Tier3 (R121: +0.32 Sharpe potential)
   3. OKX fee tier optimization (referral discount 20%, OKB holding for Lv2)
-  4. News sentiment features (LLM-filtered, R123 planned)
+  4. LLM-filtered news (GPT/Claude API, not VADER — potential future R-round)
 ```
 
 ---
