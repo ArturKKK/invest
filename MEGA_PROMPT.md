@@ -2705,7 +2705,7 @@ OPEN:
 
 ## R121 — Realistic Cost Model Audit ✅ DONE (14 апреля 2026)
 
-**Проблема**: Бэктест занижал комиссии. Функция `_cost_for_sym()` предполагала 92% maker fills (лимитные ордера), но продакшен использует `type='market'` — 100% taker (маркетные ордера). Комиссия taker на OKX = 0.035% per side, а maker = -0.005% (rebate). Разница 4bp на каждую сторону — на обороте 2.5x это существенно.
+**Проблема**: Бэктест занижал комиссии. Функция `_cost_for_sym()` предполагала 92% maker fills (лимитные ордера), но продакшен использует смесь: Tier1 через maker-first (post_only), Tier2 через aggressive limit, Tier3 через market. Комиссия taker на OKX Regular Lv1 = 0.05% per side, maker = 0.02%. При обороте 2.5x за период это существенная разница.
 
 **Метод**: Walk-forward ensemble (3 окна × 5 сидов × LGB+XGB = 30 моделей), 6 сценариев с разными моделями костов. Прогон на MLC VM с правильными пакетами (numpy 2.4.3, scipy 1.17.1).
 
@@ -2758,6 +2758,67 @@ W3:     3.050    2.496        2.677         2.904        2.063
 **Результаты**: `results/r121_cost_audit.csv`, `results/r121_realistic.json`
 
 **VERDICT: ✅ DONE** — система валидна с реальными костами. Реалистичный Sharpe = 2.83 (S6 prod blended). Следующий шаг: расширить maker-first execution на Tier2/Tier3 для ещё +0.32 Sharpe.
+
+## R122 — Directional BTC During Risk-Off ❌ INCONCLUSIVE (14 апреля 2026)
+
+**Гипотеза**: 36.6% времени модель в кэше (risk-off при trend_strength > 0.9). Может ли directional BTC/ETH стратегия генерировать доход в эти периоды?
+
+**Метод**: 
+1. Извлечь все risk-off периоды (2463 hourly bars, 382 спелла, средн. длительность 77h)
+2. Naive baseline: long BTC при uptrend, short при downtrend, 50% exposure
+3. LGB модель на 27 BTC-specific фичах (momentum, vol, derivatives, macro, sentiment), binary classification
+4. Walk-forward на тех же 3 окнах, 5 сидов
+5. Объединить: risk-on = main L/S модель, risk-off = BTC directional
+
+**Статистика risk-off**:
+- BTC mean return: +0.162% per 12h (positive bias → BTC trend continuation works)
+- 52.8% positive returns (слабый edge)
+- Trend UP: mean +0.281%, Trend DOWN: mean -0.011% (short не работает)
+- "Always long" standalone Sharpe ≈ 1.53
+
+**Результаты**:
+
+```
+Strategy                    NetSh    Ret%     DD%  Calmar  ΔSharpe
+S6_baseline (main only)     2.831   157.3   -10.9   14.38     —
+Naive_combined              2.390   136.2   -19.5    6.98   -0.441
+LGB_combined                2.888   162.5   -10.9   14.85   +0.057
+```
+
+**По окнам (LGB combined)**:
+- W1: 2.002 (was 1.880, +0.122) — единственное улучшение
+- W2: 4.334 (unchanged)
+- W3: 2.677 (unchanged)
+
+**Анализ**:
+- **Naive вредит**: DD ухудшается с -10.9% до -19.5%. Шорт BTC при даунтрендах убыточен.
+- **LGB маргинально помогает (+0.057 Sharpe)**, но только потому что модель неуверена (mean confidence 0.055 → крошечные позиции). Accuracy 53.8% — почти монетка.
+- Прирост +0.057 = **шум, не сигнал**. Не прошёл бы bootstrap.
+- Улучшение только в W1, W2/W3 нетронуты → не generalize.
+
+**Инсайт**: Risk-off периоды — это когда BTC делает резкие движения. Ловить тренд continuation на 12h горизонте при 53% accuracy невозможно. Модель правильно "отказывается" торговать (low confidence), что фактически = оставаться в кэше.
+
+**VERDICT: ❌ INCONCLUSIVE** — +0.057 Sharpe нестатистически значим. Risk-off = правильно быть в кэше. Не внедрять.
+
+**Файл**: `_research_r122_riskoff_btc.py` (commit d4ec8cd)
+
+### Закрытые направления (обновлённая карта)
+
+```
+CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
+        Trend filter (binary 0.9), Churn (min_off=2), Ensemble,
+        Rebalance (12h), Neutralization, Spillover, FMP,
+        Continuous sizing, Expanding K (6L/3S worse),
+        8h rebalance, Universe expansion (R115),
+        Dynamic K — R117c FAIL (regime-dependent),
+        Risk-off BTC directional — R122 INCONCLUSIVE (+0.057 noise)
+
+OPEN:
+  1. CryptoQuant exchange flows (external data, untested)
+  2. Extend maker-first execution to Tier2/Tier3 (R121: +0.32 Sharpe potential)
+  3. OKX fee tier optimization (referral discount 20%, OKB holding for Lv2)
+  4. News sentiment features (LLM-filtered, R123 planned)
+```
 
 ---
 
