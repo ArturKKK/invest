@@ -2699,8 +2699,65 @@ CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
 
 OPEN:
   1. CryptoQuant exchange flows (external data, untested)
-  2. Execution-aware cost control (discussed, not implemented)
+  2. Extend maker-first execution to Tier2/Tier3 (R121: +0.32 Sharpe potential)
+  3. OKX fee tier optimization (referral discount 20%, OKB holding for Lv2)
 ```
+
+## R121 — Realistic Cost Model Audit ✅ DONE (14 апреля 2026)
+
+**Проблема**: Бэктест занижал комиссии. Функция `_cost_for_sym()` предполагала 92% maker fills (лимитные ордера), но продакшен использует `type='market'` — 100% taker (маркетные ордера). Комиссия taker на OKX = 0.035% per side, а maker = -0.005% (rebate). Разница 4bp на каждую сторону — на обороте 2.5x это существенно.
+
+**Метод**: Walk-forward ensemble (3 окна × 5 сидов × LGB+XGB = 30 моделей), 6 сценариев с разными моделями костов. Прогон на MLC VM с правильными пакетами (numpy 2.4.3, scipy 1.17.1).
+
+**Сценарии**:
+- **S0 original** — старая модель костов из бэктеста (92% maker assumption). Заниженные комиссии.
+- **S2 okx taker + delay** — нижняя граница: все ордера маркетные, OKX taker fee 0.05%, фандинг 1.2bp/12h, шум исполнения 3bp.
+- **S4 okx maker + delay** — верхняя граница: все лимитные ордера, OKX maker fee 0.02%, тот же фандинг и шум.
+- **S5 pessimistic** — worst case: максимальные комиссии (5bp/side + wide spread), фандинг 1.5bp/12h, шум 5bp.
+- **S6 prod blended** — **реальный прод**: Tier1 (BTC,ETH,SOL,BNB,XRP) через maker-first (90% maker 2bp + 10% taker 6bp = 2.4bp), Tier2 (средние альты) через aggressive limit (50% maker 4bp + 50% taker 7bp = 5.5bp), Tier3 (мелкие) через market (10bp).
+
+**Результаты**:
+
+```
+Scenario                    NetSh    Ret%     DD%  Calmar  Cost%
+S0_original (старый бэктест) 3.266   199.5   -10.9   18.25  15.5%
+S2_okx_taker+delay (нижняя)  2.612   138.3   -11.5   12.02  38.3%
+S6_prod_blended (РЕАЛЬНЫЙ)   2.831   157.3   -10.9   14.38  30.6%
+S4_okx_maker+delay (верхняя) 3.147   187.4   -10.9   17.27  19.6%
+S5_pessimistic (worst case)  2.057    96.4   -13.5    7.15  57.6%
+```
+
+**По окнам (Net Sharpe)**:
+
+```
+         S0      S2(нижняя)  S6(РЕАЛЬНЫЙ)  S4(верхняя)  S5(worst)
+W1:     2.305    1.675        1.880         2.200        1.122
+W2:     4.834    4.065        4.334         4.709        3.411
+W3:     3.050    2.496        2.677         2.904        2.063
+```
+
+Все окна прибыльны во всех сценариях.
+
+**Декомпозиция влияния**:
+- Маркетные ордера vs старая модель: **-0.651 Sharpe** (главный фактор)
+- Execution delay (3bp шум): **-0.003 Sharpe** (пренебрежимо)
+- Реальный prod execution mix vs 100% taker: **+0.219 Sharpe** (maker-first на Tier1 работает)
+- Переход всех ордеров на лимитки: **+0.535 Sharpe** (потолок)
+
+**Выводы**:
+1. **Реальный прод (S6) даёт Sharpe 2.83, Calmar 14.4** — наиболее точная оценка live performance.
+2. **Бэктест завышал Sharpe на 0.44** из-за неправильной модели костов (с учётом что прод уже использует maker-first).
+3. **Maker-first на Tier1 уже экономит**: S6 (2.83) vs S2 (2.61) = +0.22 Sharpe от существующего maker-first execution.
+4. **Расширение maker-first на все тиры** может поднять ещё на +0.32 Sharpe (до 3.15).
+5. **Execution delay не проблема**: при ребалансировке раз в 12h slippage пренебрежим.
+6. **Даже worst case (Sharpe 2.06, Calmar 7.15)** — система прибыльна.
+
+**ПРИМЕЧАНИЕ**: В R121 cost functions используют OKX Regular Lv1 fees: taker 0.05% (5 bps), maker 0.02% (2 bps). НЕ VIP, НЕ rebate. Код: строки 53, 65 файла `_research_r121_realistic_costs.py`.
+
+**Файл**: `_research_r121_realistic_costs.py` (commit 768f93c)
+**Результаты**: `results/r121_cost_audit.csv`, `results/r121_realistic.json`
+
+**VERDICT: ✅ DONE** — система валидна с реальными костами. Реалистичный Sharpe = 2.83 (S6 prod blended). Следующий шаг: расширить maker-first execution на Tier2/Tier3 для ещё +0.32 Sharpe.
 
 ---
 
