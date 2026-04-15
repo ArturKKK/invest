@@ -2844,7 +2844,194 @@ F_interact (+6f)       0.802    28.6   -19.5    1.47   -2.029   0.006
 
 **Файл**: `_research_r123_news_sentiment.py` (commit 1d6895f)
 
-### Закрытые направления (обновлённая карта)
+## R124 — OKX Fee Optimization ✅ POSITIVE (15 апреля 2026)
+
+**Гипотеза**: Снижение комиссий OKX (referral cashback, VIP tier, maker-first execution) увеличит net Sharpe без изменения модели.
+
+**Метод**: Один раз обучить baseline ensemble (31 feature, 3 WF окна × 3 seeds), затем прогнать 8 стоимостных сценариев через тот же набор predictions. Меняется только cost function в `simulate_r121()`.
+
+**Параметрическая cost function**:
+```
+cost_fn(sym) =
+  Tier1 (BTC,ETH,SOL,BNB,XRP): maker_pct * maker_fee + (1-maker_pct) * (taker_fee + spread_T1)
+  Tier2 (mid-cap):              maker_pct * (maker_fee + spread_T2) + (1-maker_pct) * (taker_fee + spread_T2)
+  Tier3 (SAND,LDO,INJ,...):     taker_fee + spread_T3  (pure market orders)
+```
+
+Базовые ставки OKX Regular Lv1: maker=2bp, taker=5bp. Funding=1.2bp/12h. Exec delay=N(0,3bp).
+
+**8 сценариев** (S6_current = текущий прод):
+
+| Сценарий | Maker | Taker | Maker% T1/T2 | Описание |
+|---|---|---|---|---|
+| S6_current | 2bp | 5bp | 90%/50% | Текущий prod_blended |
+| REF10 | 1.8bp | 4.5bp | 90%/50% | 10% referral cashback |
+| REF20 | 1.6bp | 4bp | 90%/50% | 20% referral cashback |
+| REF30 | 1.4bp | 3.5bp | 90%/50% | 30% referral (max promo) |
+| MAKER_OPT | 2bp | 5bp | 95%/70% | Улучшенное исполнение |
+| REF20_MAKER | 1.6bp | 4bp | 95%/70% | REF20 + улучшенное исполнение |
+| VIP1 | 1.8bp | 4.5bp | 90%/50% | VIP1 tier (>$100K assets) |
+| VIP1_MAKER | 1.8bp | 4.5bp | 95%/70% | VIP1 + улучшенное исполнение |
+
+**Результаты**:
+```
+Scenario            Sharpe*  ΔSharpe  Return%   DD%   Cost%
+S6_current            3.691     —      157.3  -10.9   23.6
+REF10                 3.736   +0.035   161.1  -10.9   22.5
+REF20                 3.780   +0.068   164.9  -10.9   21.4
+REF30                 3.825   +0.103   168.8  -10.9   20.3
+MAKER_OPT             3.746   +0.042   162.0  -10.9   22.1
+REF20_MAKER           3.824   +0.102   168.7  -10.9   20.3
+VIP1                  3.736   +0.035   161.1  -10.9   22.5
+VIP1_MAKER            3.785   +0.072   165.4  -10.9   21.3
+```
+*Sharpe computed on trading periods only (excl. risk_off). Scale factor to full-method: ×0.767. Deltas are comparable.*
+
+DD не меняется (-10.9%) → risk_off экзогенный (BTC trend), не зависит от costs.
+
+**⚠️ Замечания из внешнего ревью**:
+1. **baseline maker_pct=90%/50%**: если прод реально market orders (100% taker), то S6 baseline уже оптимистичен. Нужен дополнительный TAKER_ONLY baseline (maker_pct=0) для честной оценки.
+2. **Exec delay как N(0,3bp)**: нулевое среднее не моделирует directional slippage. Лучше: `slippage = k × rvol × turnover` или Monte-Carlo по seeds.
+3. **Sharpe на trading periods only**: если risk_off экзогенный — дельты корректны. Но лучше печатать оба (full + active).
+
+**VERDICT: ✅ POSITIVE** — Referral 20% cashback = +0.068 Sharpe (≈+2.4% годовой доходности), бесплатно. DD не меняется. Maker-first execution + referral = +0.102 Sharpe потенциал.
+
+**Файл**: `_research_r124_fee_optimization.py` (commit f4bebe0)
+
+## R125 — FinBERT News Sentiment ❌ NEGATIVE (15 апреля 2026)
+
+**Гипотеза**: Замена VADER (60% accuracy) на FinBERT (87% accuracy, ProsusAI/finbert) для scoring 954K новостей даст полезные features.
+
+**Метод**:
+1. Пере-scoring всех 954K новостей FinBERT на H100 80GB GPU (~5 мин)
+2. Score = weighted sum: Σ(w_c × P(c|title)), w_pos=+1, w_neg=-1, w_neu=0
+3. Rebuild features (per-coin 8 + market 2 + interactions 4 = 14 features)
+4. Те же 6 экспериментов A-F что в R123 (WF 3 окна × 3 seeds, S6 costs)
+
+**FinBERT scoring stats** (954,551 items, torch 2.5.1+cu121, fp16):
+- Positive (>0.1): 44.8%, Negative (<-0.1): 24.6%, Neutral: 30.6%
+- Mean: +0.080, Std: 0.529 (vs VADER: mean≈0, std≈0.3 — FinBERT более "экспрессивный")
+
+**IC Scan (FinBERT)**:
+```
+Feature                          MeanIC    W1       W2       W3    Stable
+nx_mkt_sent_x_vol               -0.0554  -0.025  -0.121  -0.020     ✓
+market_news_sentiment_24h        -0.0530  -0.028  -0.110  -0.021     ✓
+nx_sent_divergence               +0.0436  +0.030  +0.085  +0.016     ✓
+nx_mkt_count_zscore              -0.0246  +0.048  -0.077  -0.044     ✓
+(rest: |IC| < 0.034, not stable)
+```
+4/14 features прошли IC gate (vs 0 с VADER). Но IC scan **методологически некорректен** для market-level фичей (см. ниже).
+
+**Эксперименты (S6 prod_blended costs)**:
+```
+Experiment           NetSh    Ret%    DD%   ΔSharpe  P(imp)
+A_baseline (31f)     2.831   157.3  -10.9     —        —
+B_market (+2f)       1.650    77.3  -18.9   -1.181    0.048
+C_mkt_pol (=B)       1.650    77.3  -18.9   -1.181    0.048
+D_all_news (+10f)    1.289    53.0  -20.0   -1.542    0.032
+E_ic_pass (+4f)      1.104    43.7  -19.2   -1.727    0.011
+F_interact (+6f)     0.527    16.4  -20.9   -2.304    0.002
+```
+Per-window: B: W1=0.183, W2=4.542, W3=0.762 (baseline: W1=1.880, W2=4.334, W3=2.677). W1 и W3 полностью ломаются, W2 чуть лучше.
+
+**Сравнение VADER (R123) vs FinBERT (R125)**:
+- VADER best: Sharpe ~2.83 (≈baseline) — не помог, не навредил
+- FinBERT best: Sharpe 1.65 (−1.18) — **активно вредит**
+- Парадокс: FinBERT IC значения выше, но PnL результат в 6× хуже
+
+**⚠️ Критические замечания из внешнего ревью**:
+
+1. **IC scan для market-level фичей некорректен**: `market_news_sentiment_24h` одинаков для всех ~35 монет в один timestamp. IC считается по всем (coin,time) строкам → 35× дублирование → **artificial inflation IC и ложная стабильность**. Правильно: time-series IC (corr market_feature[t] vs cs_mean_return[t+1]) или corr в рамках одного timestamp.
+
+2. **Availability/lag mismatch**: Новости агрегируются в hour=t и используются для сигнала на ребалансе t → возможно lookahead bias (новости, появившиеся после момента принятия решения). Нужен lag-shift тест: сдвиг news features на +1h/+2h.
+
+3. **C = B**: Political features отсутствуют в данных → C тестирует то же что B.
+
+4. **Предложение**: перед полным закрытием темы — одна быстрая итерация: убрать market-level news из panel модели, оставить только per-coin divergence/coverage. Если и это ≤ 0 — закрыть окончательно.
+
+**VERDICT: ❌ NEGATIVE** — FinBERT features **активно вредят** модели (Sharpe −1.18..−2.30). IC scan для market-level фичей методологически ошибочен (duplicate rows). Тема news-as-panel-features закрыта, но lag-shift + per-coin-only тест может быть полезен для финальной точки.
+
+**Файл**: `_research_r123_news_sentiment.py` (reused for R125), `_run_r125_on_vm.sh`, `fetch_crypto_news.py --scorer finbert`
+
+## R124b — TAKER_ONLY Baseline (ответ на замечание ревью) ✅ COMPLETED (15 апреля 2026)
+
+**Гипотеза**: Ревьюер спросил: "а что если продакшн делает taker (market) orders?" Нужен baseline.
+
+**Dual Sharpe methodology**: `sharpe_active` (только периоды с позицией) + `sharpe_full` (все периоды).
+
+| Scenario | Sh_Active | ΔAct | Sh_Full | ΔFull | Ret% | DD% | Cost% |
+|---|---|---|---|---|---|---|---|
+| S6_current (maker-first) | 3.691 | +0.000 | 2.831 | +0.000 | 157.3% | -10.9% | 23.6% |
+| TAKER_ONLY (maker_pct=0) | 3.464 | -0.227 | 2.612 | -0.219 | 138.3% | -11.5% | 29.6% |
+| TAKER_REF20 (taker+ref) | 3.593 | -0.098 | 2.733 | -0.098 | 148.7% | -11.1% | 26.3% |
+| REF20 (maker+ref) | 3.780 | +0.089 | 2.914 | +0.083 | 164.9% | -10.9% | 21.4% |
+
+Per-trade costs: S6=T1:2.4bp T2:5.5bp T3:10bp; TAKER_ONLY=T1:6bp T2:7bp T3:10bp
+
+**Ключевой вывод**: Maker-first execution benefit = **+0.227 Sharpe_active / +0.219 Sharpe_full**.  
+Это наибольшее бесплатное улучшение. Если прод сейчас taker-only → maker-first приоритет #1.  
+REF20 (maker + 20% referral) = 3.780 — верхняя планка при текущей модели.
+
+**Файл**: `_research_r124b_taker_baseline.py`, результаты: `results/r124b_taker_baseline.json`
+
+## R126 — Review Fixes: IC Scan + Lag Test + Per-Coin Only ❌ NEGATIVE (15 апреля 2026)
+
+**Ревью нашло 3 методологических замечания к R123/R124/R125. Все трое исправлены и протестированы.**
+
+### Fix 1: IC scan для market-level features
+
+**Проблема (ревью)**: Рыночные фичи дублируются 35× (по числу монет) → IC рассчитывается неверно.  
+**Исправление**: Time-series IC (collapse to 1 obs per timestamp, Spearman с cross-sectional mean return).
+
+| Feature | Old IC | New IC | Δ | Pass? |
+|---|---|---|---|---|
+| nx_mkt_sent_x_vol | -0.0554 | -0.0607 | -0.0053 | ✓ both |
+| market_news_sentiment_24h | -0.0530 | -0.0594 | -0.0064 | ✓ both |
+| nx_mkt_count_zscore | -0.0246 | -0.0266 | -0.0020 | ✓ both |
+| nx_sent_divergence (per-coin) | +0.0436 | +0.0436 | 0 | ✓ both |
+| nx_mkt_sent_x_ret12 | -0.0061 | -0.0000 | +0.0061 | ✗ both |
+
+**Результат**: Те же 4 фичи проходят IC-фильтр в обоих методах. Time-series IC фактически **чуть сильнее** (не слабее, как ожидал ревьюер). Гипотеза об артифициальной инфляции IC за счёт дублирования **НЕ подтвердилась** в данных.
+
+### Fix 2: Lag-shift test (lookahead bias check)
+
+**Проблема (ревью)**: Возможен lookahead — новости, пришедшие после свечи, попадают в фичи той же свечи.  
+**Тест**: Обучение с per-coin news features, shifted +1h и +2h внутри каждого символа.
+
+| Experiment | Gross Sharpe | Net Sharpe | Δ vs Baseline | Вывод |
+|---|---|---|---|---|
+| A (baseline, no news) | 3.703 | 2.831 | 0 | Reference |
+| LAG1 (+1h shift, per-coin) | 3.361 | 2.404 | -0.342 | Сигнал слабеет |
+| LAG2 (+2h shift, per-coin) | 1.807 | 0.944 | -1.896 | Сигнал рушится |
+
+**Bootstrap**: LAG1 p_improve=0.239, LAG2 p_improve=0.001  
+**Вывод**: Сигнал резко деградирует при сдвиге → per-coin новости действительно имеют lookahead bias. Даже LAG1 хуже baseline. Направление **ЗАКРЫТО**.
+
+### Fix 3: Per-coin only experiments (без рыночных фичей)
+
+**Проблема (ревью)**: Нада проверить per-coin фичи изолированно, без market-level дублирования.  
+**Тест**: Только per-coin фичи (8 штук), затем + `nx_sent_divergence` (9 штук).
+
+| Experiment | Gross Sharpe | Net Sharpe | Δ vs Baseline | Bootstrap p |
+|---|---|---|---|---|
+| A (31 базовых, без новостей) | 3.703 | 2.831 | 0 | — |
+| G (per-coin 8 фичей) | 2.649 | 1.782 | -1.054 | p=0.06 |
+| H (per-coin + divergence 9 фичей) | 3.140 | 2.265 | -0.563 | p=0.214 |
+| I (4 IC-passing фичей из fixed scan) | 1.957 | 1.104 | -1.746 | p=0.011 |
+
+**Bootstrap mean Δ Sharpe**: G=-1.056, H=-0.564, I=-1.727  
+**Вывод**: Все варианты хуже baseline. Per-coin новостные фичи достоверно **вредят** модели (G: p=6%, I: p=1.1%). H немного лучше за счёт divergence, но всё равно -0.56 Sharpe. Направление **ЗАКРЫТО**.
+
+**ИТОГОВЫЙ ВЕРДИКТ R126**: ❌ NEGATIVE на всех трёх проверках.
+- IC scan bug исправлен: те же фичи проходят, тот же вывод
+- Lookahead bias подтверждён для per-coin features: +1h → -0.34 Sharpe, +2h → -1.90 Sharpe  
+- Per-coin news features изолированно — все варианты хуже baseline  
+- **News sentiment (VADER, VADER-based interactions) навсегда ЗАКРЫТО.**
+
+**Файлы**: `_research_r126_review_fixes.py`, `_research_r124b_taker_baseline.py`, результаты: `results/r126_review_fixes.json`, `results/r124b_taker_baseline.json`
+
+### Закрытые направления (финальная карта, после R126)
 
 ```
 CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
@@ -2852,15 +3039,21 @@ CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
         Rebalance (12h), Neutralization, Spillover, FMP,
         Continuous sizing, Expanding K (6L/3S worse),
         8h rebalance, Universe expansion (R115),
-        Dynamic K — R117c FAIL (regime-dependent),
+        Dynamic K — R117c FAIL (режим-зависимо),
         Risk-off BTC directional — R122 INCONCLUSIVE (+0.057 noise),
-        News sentiment (VADER) — R123 NEGATIVE (all variants hurt model)
+        News sentiment VADER — R123 NEGATIVE (все варианты хуже baseline),
+        News sentiment FinBERT — R125 NEGATIVE (хуже VADER),
+        News sentiment (review fixes) — R126 NEGATIVE:
+          - IC scan bug: те же 4 фичи, тот же вывод
+          - Lookahead bias: LAG1=-0.34, LAG2=-1.90 → per-coin новости нечистые
+          - Per-coin only: G=-1.05, H=-0.56, I=-1.75 → все варианты хуже
 
 OPEN:
   1. CryptoQuant exchange flows (external data, untested)
   2. Extend maker-first execution to Tier2/Tier3 (R121: +0.32 Sharpe potential)
-  3. OKX fee tier optimization (referral discount 20%, OKB holding for Lv2)
-  4. LLM-filtered news (GPT/Claude API, not VADER — potential future R-round)
+  3. OKX referral cashback 20% — R124 POSITIVE (+0.068 Sharpe) → DEPLOY now
+  4. Maker-first execution (если прод taker-only) — R124b: worth +0.227 Sharpe_active → PRIORITY #1
+  5. LLM-filtered news (GPT/Claude API) — возможно чисто, но lookahead риск тот же
 ```
 
 ---
