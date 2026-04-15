@@ -2,7 +2,7 @@
 # R125: FinBERT News Sentiment — GPU VM Runner
 # Run with: setsid bash _run_r125_on_vm.sh > results/r125_log.txt 2>&1 < /dev/null &
 set -e
-cd ~/Dev/invest
+cd /workdir/invest
 mkdir -p results
 
 echo "=== R125 FinBERT News Sentiment ==="
