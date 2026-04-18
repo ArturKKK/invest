@@ -523,7 +523,7 @@
             if (trades.length === 0) {
                 tradesList.innerHTML = '<div class="text-dark-500 text-sm">No trades yet</div>';
             } else {
-                tradesList.innerHTML = trades.slice(0, 30).map(t => {
+                tradesList.innerHTML = trades.map(t => {
                     const isClosed = !!t.closed;
                     const isWin = isClosed ? (t.pnl || 0) >= 0 : true;
                     const scoreStr = t.score ? (t.score >= 0 ? '+' : '') + t.score.toFixed(2) : '';
