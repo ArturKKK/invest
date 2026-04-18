@@ -2723,6 +2723,50 @@ def _write_trades_csv(realized_trades, root):
         print(f"   ⚠️  trades.csv write error: {e}")
 
 
+def _load_csv_trades_into_state(state, root):
+    """Load historical trades from trades.csv into dash_trades (one-time backfill)."""
+    csv_path = os.path.join(root, 'trading_logs', 'trades.csv')
+    if not os.path.exists(csv_path):
+        return
+    existing = state.get('dash_trades', [])
+    # Build set of known trades for dedup: (symbol, side, opened)
+    known = {(t.get('symbol'), t.get('side'), t.get('opened', '')[:19])
+             for t in existing}
+    added = 0
+    try:
+        with open(csv_path) as f:
+            header = f.readline().strip().split(',')
+            for line in f:
+                parts = line.strip().split(',')
+                if len(parts) < 9:
+                    continue
+                row = dict(zip(header, parts))
+                sym = row.get('symbol', '').replace('/USDT', '')
+                side = row.get('side', '')
+                opened = row.get('opened_at', '')
+                key = (sym, side, opened[:19])
+                if key in known:
+                    continue
+                existing.append({
+                    'symbol': sym,
+                    'side': side,
+                    'usd': float(row.get('usd', 0)),
+                    'score': 0,
+                    'pnl': float(row.get('pnl_usd', 0)),
+                    'closed': row.get('exit_time', ''),
+                    'opened': opened,
+                })
+                known.add(key)
+                added += 1
+    except Exception as e:
+        print(f"   ⚠️  trades.csv backfill error: {e}")
+    if added:
+        # Sort by opened time
+        existing.sort(key=lambda t: t.get('opened', ''))
+        state['dash_trades'] = existing[-500:]
+        print(f"   📂 Backfilled {added} historical trades from trades.csv")
+
+
 # ============================================================
 # DASHBOARD JSON UPDATE
 # ============================================================
@@ -2779,7 +2823,8 @@ def update_dashboard(exchange, positions, signals, state, results, root,
                     'confidence': 0,
                 })
 
-            equity = total_usdt + total_upnl
+            # OKX 'total' = eq = cashBal + upl (already includes unrealized PnL)
+            equity = total_usdt
             exchange_ok = True
         except Exception as e:
             print(f"   ⚠️  Dashboard OKX fetch: {e}")
@@ -2853,8 +2898,8 @@ def update_dashboard(exchange, positions, signals, state, results, root,
         'pnl': total_pnl,
         'dd_pct': round(min(0, equity / peak - 1), 4),
     })
-    # Keep last 2000 points
-    eq_history = eq_history[-2000:]
+    # Keep last 20000 points (~14 days at 1-min intervals)
+    eq_history = eq_history[-20000:]
     state['equity_history'] = eq_history
 
     # Trades from results
@@ -2871,8 +2916,8 @@ def update_dashboard(exchange, positions, signals, state, results, root,
                     'closed': None,
                     'opened': now.isoformat(),
                 })
-    # Keep last 100 trades
-    dash_trades = dash_trades[-100:]
+    # Keep last 500 trades (~6 weeks at current trade frequency)
+    dash_trades = dash_trades[-500:]
     state['dash_trades'] = dash_trades
 
     # Win rate from closed trades (actual realized PnL per trade)
@@ -2906,7 +2951,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
         'max_dd': round(max_dd, 4),
         'positions': live_positions,
         'orders': [],
-        'trades': dash_trades[-30:],
+        'trades': dash_trades[-200:],
         'signals': dash_signals,
         'equity_history': eq_history,
         'models': models_str,
@@ -3012,6 +3057,9 @@ def main():
         state['initial_capital'] = args.capital
     if 'prev_equity' not in state:
         state['prev_equity'] = state.get('equity', args.capital)
+
+    # Backfill dashboard trades from trades.csv (recover history)
+    _load_csv_trades_into_state(state, root)
 
     print("=" * 70)
     print(f"  PRODUCTION TRADING — {args.mode.upper()}")
@@ -3542,10 +3590,8 @@ def main():
                     try:
                         bal = exchange.fetch_balance()
                         total_usdt = float(bal.get('USDT', {}).get('total', 0))
-                        exch_pos = exchange.fetch_positions()
-                        upnl = sum(float(p.get('unrealizedPnl', 0))
-                                   for p in exch_pos if float(p.get('contracts', 0)) > 0)
-                        live_equity = total_usdt + upnl
+                        # OKX 'total' already includes unrealized PnL
+                        live_equity = total_usdt
                         peak = state.get('peak', args.capital)
                         # Update peak if equity went up intra-cycle
                         if live_equity > peak:
