@@ -559,7 +559,7 @@
 
             // ── Equity Chart ──
             allEquityData = (d.equity_history || []).map(e => ({ x: e.ts || e.timestamp || e.time, y: e.equity }));
-            setChartRange(currentChartRange, document.querySelector('#chart-tabs button.bg-accent\/20'));
+            setChartRange(currentChartRange, document.getElementById('chart-tab-default'));
 
             // ── System ──
             document.getElementById('sys-models').textContent = d.models || '15 (LGB×10 + CB×5)';
