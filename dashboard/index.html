@@ -119,9 +119,10 @@
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-semibold text-white">Equity Curve</h2>
                 <div class="flex gap-2" id="chart-tabs">
-                    <button onclick="setChartRange('all')" class="text-xs px-3 py-1 rounded-lg bg-accent/20 text-accent-light">All</button>
-                    <button onclick="setChartRange(7)" class="text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200">7d</button>
-                    <button onclick="setChartRange(30)" class="text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200">30d</button>
+                    <button onclick="setChartRange(3, this)" class="text-xs px-3 py-1 rounded-lg bg-accent/20 text-accent-light" id="chart-tab-default">3d</button>
+                    <button onclick="setChartRange(7, this)" class="text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200">7d</button>
+                    <button onclick="setChartRange(14, this)" class="text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200">14d</button>
+                    <button onclick="setChartRange('all', this)" class="text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200">All</button>
                 </div>
             </div>
             <div class="relative h-72">
@@ -368,7 +369,10 @@
         });
     }
 
-    function setChartRange(days) {
+    let currentChartRange = 3;  // default: 3 days
+
+    function setChartRange(days, btn) {
+        currentChartRange = days;
         let data = allEquityData;
         if (days !== 'all' && data.length > 0) {
             const cutoff = new Date();
@@ -379,10 +383,10 @@
         equityChart.update('none');
 
         // Update tab styles
-        document.querySelectorAll('#chart-tabs button').forEach(btn => {
-            btn.className = 'text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200';
+        document.querySelectorAll('#chart-tabs button').forEach(b => {
+            b.className = 'text-xs px-3 py-1 rounded-lg text-dark-400 hover:text-dark-200';
         });
-        event.target.className = 'text-xs px-3 py-1 rounded-lg bg-accent/20 text-accent-light';
+        if (btn) btn.className = 'text-xs px-3 py-1 rounded-lg bg-accent/20 text-accent-light';
     }
 
     // ─── Data Loading ────────────────────────────────────────
@@ -555,8 +559,7 @@
 
             // ── Equity Chart ──
             allEquityData = (d.equity_history || []).map(e => ({ x: e.ts || e.timestamp || e.time, y: e.equity }));
-            equityChart.data.datasets[0].data = allEquityData;
-            equityChart.update('none');
+            setChartRange(currentChartRange, document.querySelector('#chart-tabs button.bg-accent\/20'));
 
             // ── System ──
             document.getElementById('sys-models').textContent = d.models || '15 (LGB×10 + CB×5)';
