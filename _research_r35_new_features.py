@@ -74,6 +74,14 @@ MARKET_LEVEL_FEATURES = {
     "mkt_funding_dispersion",
     "mkt_oi_chg_sum",
     "mkt_oi_extreme_pct",
+    # ── Same value for all symbols at each timestamp ──
+    # Without this, cs_rank makes them constant 0.0 (all tied → rank 0.5 - 0.5 = 0)
+    "pct_coins_up_12h",
+    "pct_coins_up_1h",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
 }
 
 

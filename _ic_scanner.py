@@ -236,6 +236,10 @@ def build_features_minimal(ohlcv, derivs):
     ) + 1e-10
     df["premium_zscore"] = (df["premium_index"] - pi_mean) / pi_std
 
+    # ── Clean inf from pct_change on zero denominators ─────────
+    for col in df.select_dtypes(include=[np.number]).columns:
+        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+
     # ── Forward returns (targets) ───────────────────────────────
     for h in HORIZONS:
         df[f"fwd_ret_{h}h"] = df.groupby("symbol")["close"].transform(

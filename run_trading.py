@@ -608,7 +608,17 @@ def add_cls_features(df, root):
         )
         n_added += 1
 
-    # 8. cg_taker_imb: CoinGlass taker buy/sell imbalance (daily, shift-1 for lookahead safety)
+    # 8. cum_funding_24h: OVERRIDE with Binance source + rolling(24) to match backtest
+    #    add_12h_features creates this from OKX funding_rate with rolling(3) — WRONG source & window
+    if 'funding_rate_binance' in df.columns:
+        df['cum_funding_24h'] = df.groupby('symbol')['funding_rate_binance'].transform(
+            lambda x: x.rolling(24, min_periods=12).sum()
+        )
+        n_valid = df['cum_funding_24h'].notna().sum()
+        print(f"   📊 cum_funding_24h: overridden with Binance source, rolling(24), {n_valid:,} valid")
+        n_added += 1
+
+    # 9. cg_taker_imb: CoinGlass taker buy/sell imbalance (daily, shift-1 for lookahead safety)
     if 'cg_taker_imb' not in df.columns:
         cg_taker_path = os.path.join(root, 'data', 'raw', 'coinglass', 'taker.parquet')
         if os.path.exists(cg_taker_path):
