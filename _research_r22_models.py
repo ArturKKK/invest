@@ -20,13 +20,16 @@ import pandas as pd
 import lightgbm as lgb
 import xgboost as xgb
 import catboost as cb
-import optuna
+try:
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+except ImportError:
+    optuna = None
 from sklearn.linear_model import Ridge
 from scipy import stats
 from pathlib import Path
 import warnings, time, sys, json
 warnings.filterwarnings("ignore")
-optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 from _research_round7 import (
     SYM_35, WINDOWS, cs_rank,
