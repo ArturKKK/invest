@@ -12,6 +12,9 @@ Compares with ORIGINAL_WINDOWS results from R65.
 import sys, warnings, time
 from typing import Dict, Set
 
+from _preflight_check import check_versions
+check_versions()
+
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
