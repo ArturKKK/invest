@@ -156,6 +156,7 @@ def simulate_full(
     all_rets: List[Dict] = []
     prev_longs: Set[str] = set()
     prev_shorts: Set[str] = set()
+    prev_weights: Dict[str, float] = {}  # signed per-symbol weights from prior period
     prev_preds: Dict[str, float] = {}
     cooldown_until: Dict[str, pd.Timestamp] = {}
 
@@ -279,7 +280,7 @@ def simulate_full(
         longs_df = grp[grp["symbol"].isin(new_longs)]
         shorts_df = grp[grp["symbol"].isin(new_shorts)]
 
-        # G2: vol-weighted (1/realized_vol), past-only
+        # Step 1: per-side raw weights (G2 vol-weighted or equal)
         if g2 is not None and vol_lookup is not None and (nl_act + ns_act) > 0:
             vol_col = f"rv_{g2.get('window', '24h')}"
             cap = g2.get("cap", None)
@@ -297,49 +298,66 @@ def simulate_full(
                 if cap is not None:
                     w = min(w, cap)
                 return w
-            long_ws = {s: _w(s) for s in new_longs}
-            short_ws = {s: _w(s) for s in new_shorts}
-            tot_l = sum(long_ws.values()) or 1.0
-            tot_s = sum(short_ws.values()) or 1.0
-            long_ret = sum(long_ws[s] / tot_l * float(longs_df[longs_df["symbol"] == s]["fwd_ret"].iloc[0])
-                          for s in new_longs) if nl_act > 0 else 0.0
-            short_ret = sum(short_ws[s] / tot_s * float(shorts_df[shorts_df["symbol"] == s]["fwd_ret"].iloc[0])
-                           for s in new_shorts) if ns_act > 0 else 0.0
+            raw_long_w = {s: _w(s) for s in new_longs}
+            raw_short_w = {s: _w(s) for s in new_shorts}
         else:
-            long_ret = longs_df["fwd_ret"].mean() if nl_act > 0 else 0.0
-            short_ret = shorts_df["fwd_ret"].mean() if ns_act > 0 else 0.0
+            raw_long_w = {s: 1.0 for s in new_longs}
+            raw_short_w = {s: 1.0 for s in new_shorts}
 
-        # A1 asymmetric kelly weights between L and S sides
+        # Normalise within each side (sum=1 within side)
+        sum_l = sum(raw_long_w.values()) or 1.0
+        sum_s = sum(raw_short_w.values()) or 1.0
+        side_long_w = {s: raw_long_w[s] / sum_l for s in new_longs}
+        side_short_w = {s: raw_short_w[s] / sum_s for s in new_shorts}
+
+        # Step 2: A1 side-level allocation (long-side fraction vs short-side fraction)
         if nl_act > 0 and ns_act > 0:
-            w_l, w_s = 0.5, 0.5
+            w_l_side, w_s_side = 0.5, 0.5
             if a1 is not None:
                 trend_thr = a1.get("trend_thr", 0.25)
                 scale = a1.get("weak_scale", 0.6)
                 if trend_dir > trend_thr:
-                    w_s *= scale
+                    w_s_side *= scale
                 elif trend_dir < -trend_thr:
-                    w_l *= scale
-                tot = w_l + w_s
-                w_l /= tot
-                w_s /= tot
-            gross_ret = w_l * long_ret - w_s * short_ret
-        elif ns_act > 0:
-            gross_ret = -short_ret
+                    w_l_side *= scale
+                tot = w_l_side + w_s_side
+                w_l_side /= tot
+                w_s_side /= tot
         elif nl_act > 0:
-            gross_ret = long_ret
+            w_l_side, w_s_side = 1.0, 0.0
+        elif ns_act > 0:
+            w_l_side, w_s_side = 0.0, 1.0
         else:
             continue
-        gross_ret *= exposure
 
-        if total_positions > 0:
-            avg_w = 1.0 / total_positions
-            turnover_cost = sum(_cost_for_sym(s) * avg_w for s in new_opened)
-            turnover_cost += sum(_cost_for_sym(s) * avg_w for s in closed)
-            holding_cost = funding_per_12h * (rebal_hours / 12)
-            total_cost = turnover_cost + holding_cost
-        else:
-            total_cost = 0.0
+        # Step 3: signed per-symbol weights (after exposure)
+        # gross book value: 1.0 * exposure (=1.0 long-side + 1.0 short-side absolute = 2x leverage when both sides full)
+        # We follow original: gross unit = 1, distributed between sides via w_l_side+w_s_side=1.
+        # So |w_long_i| = w_l_side * side_long_w[i] * exposure  (positive)
+        #    |w_short_i| = w_s_side * side_short_w[i] * exposure (negative)
+        new_w: Dict[str, float] = {}
+        for s in new_longs:
+            new_w[s] = w_l_side * side_long_w[s] * exposure
+        for s in new_shorts:
+            new_w[s] = -w_s_side * side_short_w[s] * exposure
 
+        # Step 4: gross_ret from signed weights * fwd_ret
+        sym_fwd = grp.set_index("symbol")["fwd_ret"]
+        gross_ret = float(sum(w * float(sym_fwd.get(s, 0.0)) for s, w in new_w.items()))
+
+        # Step 5: PROPER turnover cost on |Δw| over union of symbols
+        all_syms = set(new_w) | set(prev_weights)
+        turnover_cost = 0.0
+        for s in all_syms:
+            dw = abs(new_w.get(s, 0.0) - prev_weights.get(s, 0.0))
+            if dw > 0:
+                turnover_cost += dw * _cost_for_sym(s)
+
+        # Holding cost on gross exposure (Σ|w|)
+        gross_exposure = sum(abs(w) for w in new_w.values())
+        holding_cost = funding_per_12h * (rebal_hours / 12) * gross_exposure
+
+        total_cost = turnover_cost + holding_cost
         net_ret = gross_ret - total_cost
 
         # A3 cooldown bookkeeping
@@ -356,6 +374,7 @@ def simulate_full(
                     cooldown_until[sym] = ts + pd.Timedelta(hours=rebal_hours * (n_skip + 1))
 
         prev_longs, prev_shorts = new_longs, new_shorts
+        prev_weights = new_w
         all_rets.append({
             "timestamp": ts, "gross_ret": gross_ret, "net_ret": net_ret,
             "cost": total_cost, "n_long": nl_act, "n_short": ns_act,
