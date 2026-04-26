@@ -169,9 +169,8 @@ def simulate_full(
         row = regime_df.loc[ts]
         trend_str = row.get("trend_strength", 0)
         trend_dir = row.get("trend_direction", 0) if "trend_direction" in row else 0
-        # cef6e2f path: SKIP risk-off (no zero-row record)
+        # cef6e2f path: SKIP risk-off (no zero-row record, no prev reset)
         if trend_str > trend_cutoff:
-            prev_longs, prev_shorts = set(), set()
             continue
 
         grp = grouped[ts].copy()
@@ -200,7 +199,6 @@ def simulate_full(
             min_edge = f2.get("min_edge", 0.05)
             grp = grp[(grp["raw_prob"] - 0.5).abs() >= min_edge]
             if len(grp) < 4:
-                prev_longs, prev_shorts = set(), set()
                 continue
             n = len(grp)
             nl = min(n_long, n // 3)
@@ -214,7 +212,6 @@ def simulate_full(
                 {s for s, until in cooldown_until.items() if until > ts}
             )]
             if len(grp) < 4:
-                prev_longs, prev_shorts = set(), set()
                 continue
             n = len(grp)
             nl = min(n_long, n // 3)
