@@ -75,7 +75,9 @@ def build_or_load_realized_vol(syms: List[str]) -> pd.DataFrame:
     print("  Computing past-only realized vol from raw OHLCV...")
     rows = []
     for sym in syms:
-        path = Path(f"data/raw/{sym}_USDT_1h.parquet")
+        # Convert "BTC/USDT" -> "BTC_USDT" for filename lookup
+        fname_sym = sym.replace("/", "_")
+        path = Path(f"data/raw/{fname_sym}_1h.parquet")
         if not path.exists():
             continue
         df = pd.read_parquet(path)
@@ -84,9 +86,12 @@ def build_or_load_realized_vol(syms: List[str]) -> pd.DataFrame:
         # Past-only rolling std at hour t uses returns through t-1 (shift+rolling)
         df["rv_24h"] = df["ret"].shift(1).rolling(24, min_periods=12).std()
         df["rv_72h"] = df["ret"].shift(1).rolling(72, min_periods=36).std()
-        df["symbol"] = sym
+        df["symbol"] = sym  # keep original "BTC/USDT" for join
         rows.append(df[["timestamp", "symbol", "rv_24h", "rv_72h"]])
-    out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    if not rows:
+        print("  ! No raw OHLCV matched; G2 will be skipped")
+        return pd.DataFrame()
+    out = pd.concat(rows, ignore_index=True)
     out.to_parquet(VOL_PATH)
     print(f"  Saved realized vol: {len(out):,} rows, {out['symbol'].nunique()} syms")
     return out
