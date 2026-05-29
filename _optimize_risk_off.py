@@ -233,8 +233,8 @@ def simulate(merged, regime_df, n_long, n_short, cfg=PROD_CFG):
             exposure = max(0.1, 1.0 - (trend_str - dyn_threshold) / (trend_cutoff - dyn_threshold) * 0.9)
 
         grp = grp.sort_values("pred", ascending=False).reset_index(drop=True)
-        longs = set(grp.head(int(nl)).index)
-        shorts = set(grp.tail(int(ns)).index)
+        longs = list(grp.head(int(nl)).index)
+        shorts = list(grp.tail(int(ns)).index)
         longs_names = set(grp.loc[longs, "symbol"].values)
         shorts_names = set(grp.loc[shorts, "symbol"].values)
 
