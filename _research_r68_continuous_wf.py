@@ -77,6 +77,7 @@ PROD_CFG = {
     "n_long": 6, "n_short": 3, "rebal_hours": 12,
     "trend_cutoff": 0.9, "dyn_threshold": 0.7,
     "ema_alpha": 0.5, "hysteresis": 3,
+    "risk_off_mode": "close",  # "close" = d9019ea (close positions on risk-off), "skip" = cef6e2f (just skip trading)
 }
 
 LGB_PARAMS = {
@@ -217,27 +218,33 @@ def simulate(merged, regime_df, n_long, n_short, cfg=PROD_CFG):
     grouped = {ts: grp for ts, grp in merged.groupby("timestamp")}
     rebal_timestamps = timestamps_sorted[::rebal_hours]
 
+    risk_off_mode = cfg.get("risk_off_mode", "close")
+
     for ts in rebal_timestamps:
         if ts not in regime_df.index or ts not in grouped: continue
         row = regime_df.loc[ts]
         trend_str = row.get("trend_strength", 0)
         if trend_str > trend_cutoff:
-            # Close-to-flat: record closing cost + 0 return (match live behavior)
-            if prev_longs or prev_shorts:
-                n_prev = len(prev_longs) + len(prev_shorts)
-                avg_weight = 1.0 / n_prev if n_prev > 0 else 0
-                close_cost = sum(_cost_for_sym(s) * avg_weight for s in prev_longs | prev_shorts)
-                all_rets.append({
-                    "timestamp": ts, "gross_ret": 0.0, "net_ret": -close_cost,
-                    "cost": close_cost, "n_long": 0, "n_short": 0,
-                    "turnover": n_prev,
-                })
-            else:
-                all_rets.append({
-                    "timestamp": ts, "gross_ret": 0.0, "net_ret": 0.0,
-                    "cost": 0.0, "n_long": 0, "n_short": 0, "turnover": 0,
-                })
-            prev_longs, prev_shorts = set(), set()
+            if risk_off_mode == "close":
+                # CLOSE mode: record closing cost + 0 return (match live behavior from d9019ea)
+                if prev_longs or prev_shorts:
+                    n_prev = len(prev_longs) + len(prev_shorts)
+                    avg_weight = 1.0 / n_prev if n_prev > 0 else 0
+                    close_cost = sum(_cost_for_sym(s) * avg_weight for s in prev_longs | prev_shorts)
+                    all_rets.append({
+                        "timestamp": ts, "gross_ret": 0.0, "net_ret": -close_cost,
+                        "cost": close_cost, "n_long": 0, "n_short": 0,
+                        "turnover": n_prev,
+                    })
+                else:
+                    all_rets.append({
+                        "timestamp": ts, "gross_ret": 0.0, "net_ret": 0.0,
+                        "cost": 0.0, "n_long": 0, "n_short": 0, "turnover": 0,
+                    })
+                prev_longs, prev_shorts = set(), set()
+            elif risk_off_mode == "skip":
+                # SKIP mode: just don't open new positions, don't record period (cef6e2f behavior)
+                pass
             continue
         grp = grouped[ts].copy()
         n = len(grp)
@@ -407,9 +414,24 @@ def main():
     r = analyze(simulate(preds_orig, regime_df, 6, 3), "6L/3S original")
     results.append(r)
 
+    # Risk-off mode comparison (SKIP vs CLOSE)
+    print(f"\n  === RISK-OFF MODE COMPARISON (6L/3S continuous) ===")
+    cfg_close = PROD_CFG.copy()
+    cfg_close["risk_off_mode"] = "close"  # d9019ea
+    cfg_skip = PROD_CFG.copy()
+    cfg_skip["risk_off_mode"] = "skip"   # cef6e2f
+
+    port_close = simulate(preds_cont, regime_df, 6, 3, cfg_close)
+    port_skip = simulate(preds_cont, regime_df, 6, 3, cfg_skip)
+
+    r_close = analyze(port_close, "6L/3S CLOSE mode (d9019ea)")
+    r_skip = analyze(port_skip, "6L/3S SKIP mode (cef6e2f)")
+    results.append(r_close)
+    results.append(r_skip)
+
     # Summary
     print("\n" + "=" * 70)
-    print("  SUMMARY: CONTINUOUS vs ORIGINAL")
+    print("  SUMMARY: CONTINUOUS vs ORIGINAL + RISK-OFF MODES")
     print("=" * 70)
     print(f"  {'Config':<22} {'Gross Sh':>10} {'Net Sh':>10} {'Ret%':>8} {'DD%':>8} {'Periods':>8}")
     print(f"  {'-'*66}")
