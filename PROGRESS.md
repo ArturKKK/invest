@@ -1,7 +1,113 @@
 # Project Progress — AI Crypto Trading System
 
-**Последнее обновление:** 2026-03-31  
+**Последнее обновление:** 2026-04-23  
 **Статус:** Phase 5 — LIVE trading. Ridge α=1000 (R7, EMA=2, 14 features) deployed on VPS. R9+R9B: LightGBM EMA=None = Sh=4.21 (+0.62) strong candidate for R10 deployment. Quick win: deploy `pred_shrinkage=0.05`.
+
+---
+
+## R127 (2026-04-23) — Ablation 2×2 + 6-dead-feature replacement research
+
+**Motive**: user challenged "Sharpe 3.777 is fake" claim from R126. Ran systematic 2×2 ablation to isolate which of 3 "bug fixes" from commit `b325afc` destroyed Sharpe.
+
+### Bugs under test
+- **Fix#1** (`_ic_scanner.py build_features_minimal`): inf→nan cleanup of `oi_chg` etc.
+- **Fix#2** (`_research_r35_new_features.py`): 6 "dead" feats added to `MARKET_LEVEL_FEATURES` set (skip CS-rank): `pct_coins_up_12h`, `pct_coins_up_1h`, `hour_sin`, `hour_cos`, `dow_sin`, `dow_cos`.
+- **Fix#3** (`run_trading.py`): `cum_funding_24h` Binance override — LIVE-only, no-op for R68 backtest. Matrix reduced to 2².
+
+### Results (Net Sharpe 4L/2S continuous, 688 periods, cef6e2f simulate skip-mode)
+| Config | Fix1 | Fix2 | GrossSh | **NetSh** | Δ vs baseline |
+|---|:---:|:---:|---:|---:|---:|
+| F10_F20 (baseline) | ❌ | ❌ | 4.297 | **3.777** ✓ | — |
+| F10_F21 | ❌ | ✅ | 2.611 | **2.135** | **−1.642** 🔥 |
+| F11_F20 | ✅ | ❌ | 3.754 | **3.224** ✓ | −0.553 |
+| F11_F21 | ✅ | ✅ | 2.831 | **2.356** ✓ | −1.42 |
+
+- Baseline **3.777 reproduces exactly** → R126's "fake Sharpe" conclusion was WRONG.
+- **Fix#2 is primary culprit** (−1.64 Sharpe alone).
+- F10_F20 & F11_F20 match memory [mem_2fd5b69cc98e, mem_53b864c12268].
+
+### Interpretation — why Fix#2 hurts
+The 6 feats ARE market-wide constants per timestamp (hour_sin is same for all coins at t=now). Without Fix#2 they go through CS-rank → become identically-zero → effectively occupy a "dead slot" that the model ignores. With Fix#2 they pass raw values → model latches onto time-of-day / breadth regime hints → overfits seasonal spurious patterns → live degradation.
+
+Paradoxically: **"dead weight" slot > "real information" slot** when the information lacks per-symbol variation.
+
+### Decision (user directive verbatim)
+> «нужно их оставить, конечно, и начать ресерч на тему на что их можно заменить»
+
+- Keep 6 feats in CS-rank path (revert Fix#2).
+- Research replacements with **per-symbol variance** so CS-rank produces real signal.
+
+### Replacement experiments (launched on invest-1v40rg)
+All 5 candidate sets each replace the 6 dead slots with 6 new per-symbol feats.
+
+| Exp | Idea | Added feats |
+|---|---|---|
+| A_seasonal_x_symbol | hour/dow harmonics × per-symbol signals | `seas_hsin_x_premz`, `seas_hcos_x_relvol`, `seas_dsin_x_ret12`, `seas_dcos_x_oichg`, `seas_hsin_x_ret1`, `seas_dsin_x_relvol` |
+| B_hod_vol_rank | per-(symbol, hour-of-day / dow) expanding vol & return means + own up-rate | `hod_vol_z`, `dow_vol_z`, `hod_ret_mean`, `dow_ret_mean`, `up_rate_12h_sym`, `up_rate_48h_sym` |
+| C_relative_breadth | per-symbol deviation from market breadth | `breadth_dev_1h`, `breadth_dev_12h`, `ret_12h_mad_z`, `ret12_cs_rank_ma24`, `vol_share`, `vol_share_chg_12h` |
+| D_session_regime | Asia/EU/US session × per-symbol rel_volume + weekend/monday effects | `asia_x_relvol`, `eu_x_relvol`, `us_x_relvol`, `weekend_x_ret12`, `ret_session_8h`, `monday_x_ret12` |
+| E_regime_x_beta | market-breadth × own return + BTC-corr × breadth | `breadth_x_ret12`, `breadth_x_ret12_sign`, `btc_corr_x_breadth`, `disp_x_ret12`, `breadth_x_ret1_sym`, `aligned_with_mkt` |
+| F_drop_only | control: just drop the 6 dead feats | — |
+| BASELINE | sanity (no changes) | — |
+
+Scripts (in repo root):
+- [_replacement_features.py](_replacement_features.py) — 6 experiments, each returns 6 per-symbol feats.
+- [_run_replacement.py](_run_replacement.py) — wrapper: monkey-patches `r68.load_data` to inject features + rewrite `CHAMPION_FEAT_31` (drops 6 DEAD, appends new).
+- [_replacement_all.sh](_replacement_all.sh) — sweep runner writing `/data/datasets/replacement_${EXP}.csv` + summary CSV.
+
+Target: beat F10_F20 baseline Net Sharpe **3.777**. Anything >3.8 wins; >4.0 would be substantial improvement.
+
+### Replacement sweep results (completed 2026-04-23T16:02+03:00)
+
+| Exp | 4L/2S cont NetSh | 4L/2S orig | 6L/3S cont | 6L/3S orig | Δ vs BASELINE (4L cont) |
+|---|---:|---:|---:|---:|---:|
+| **BASELINE** | **3.777** ✓ | 2.984 | 2.509 | 1.779 | — |
+| B_hod_vol_rank | 2.898 | 2.561 | 2.630 | 2.175 | **−0.879** |
+| F_drop_only | 2.898 | 2.561 | 2.630 | 2.175 | −0.879 |
+| E_regime_x_beta | 2.282 | 2.028 | **2.951** | 2.213 | −1.495 (but 6L best!) |
+| D_session_regime | 2.108 | 1.554 | 2.097 | 1.504 | −1.669 |
+| A_seasonal_x_symbol | 2.102 | 1.827 | 2.378 | 1.713 | −1.675 |
+| C_relative_breadth | 1.889 | 1.276 | 1.811 | 0.899 | −1.888 |
+
+**Verdict: no replacement beats baseline 3.777.**
+
+Key findings:
+1. **B_hod_vol_rank ≡ F_drop_only bit-for-bit** — B's 6 new feats had zero effect (likely all NaN on early WF folds where expanding window min_periods=30 fails). Both effectively = "just drop 6 dead feats" = **2.898**.
+2. **Drop-only (2.898) > Fix#2=F21 raw (2.356) > F21 no-Fix#1 (2.135)**: the ranking is clear:
+   - keep 6 as dead CS-rank slot = **3.777** (best)
+   - drop them entirely = 2.898 (−0.88)
+   - add per-symbol replacements = 1.89-2.90 (same or worse)
+   - pass them raw bypassing CS-rank = 2.14 (worst)
+3. **Dead slot > real information** paradox confirmed. The CHAMPION_FEAT_31 set appears to be a **tightly-coupled optimum**: removing any slot (even a "dead" one) breaks model calibration.
+4. **E_regime_x_beta 6L/3S cont = 2.951** vs baseline 2.509: the only bright spot. For 6L/3S config, breadth × own-return interactions add value. Not a 4L winner though, so moot for prod (4L is deployed size).
+
+Decision: **revert to F10_F20 state, do NOT replace 6 feats**. Fix#2 reverted (critical, -1.64 Sharpe bug). Fix#1 reverted (costs 0.55 Sharpe, and VPS never had it — prod already matches 3.777).
+
+### R127.7 — LIVE vs Backtest Parity Gap 🚨
+Checked VPS at commit `ccb3bc2` (before b325afc): Fix#1/Fix#2 NEVER deployed. VPS was already at baseline F10_F20. Both local fixes were divergence, now synced.
+
+**LIVE reality** (bot.log 2026-03-16 → 2026-04-23, 38 days, $110→$80 = −27.3%):
+
+| Metric | Backtest F10_F20 | LIVE | Δ |
+|---|---:|---:|---:|
+| Net Sharpe (ann) | +3.777 | **−4.10** | −7.9 🔥 |
+| Win rate | 59.7% | 23.7% (9/38) | −36pp |
+| Ret total | +179% | −27.3% | −206pp |
+| Trades | 688 WF per | 38 real | small sample |
+
+Not a code bug — identical code. **Classic sim-prod parity gap** per R25 checklist:
+- $80 capital × 1x lev = $5-10 positions → min-order fees eat pnl
+- 51 bot restarts in 5 weeks, `trading_state.json` = `{}` → state lost each restart
+- Sim-prod parity bugs (edge_boost, dynamic L/S, sm_scale overlays) possibly still active in CLS mode
+- Downloaded d6 data → [data_vps_d6/](data_vps_d6): 21200 OB snapshots (50 syms, 2 weeks), 7 coinglass parquets, bot.log
+
+**No deploy needed** — VPS already at target state. Next: **R128 sim-prod parity audit** (walk checklist against `run_trading.py`, save 100 LIVE predictions, diff offline).
+
+
+Artifacts:
+- [_replacement_summary.csv](_replacement_summary.csv) — all 7×4=28 rows of results.
+- [data_vps_d6/](data_vps_d6) — 13MB of VPS prod data (orderbook, coinglass, bot log) pulled 2026-04-23.
+- Memory: [mem_c2e2190b313d] ablation matrix, [mem_007762304796] replacement plan, [mem_68baf6123cc3] replacement results, repo memory `r127_live_parity_gap.md`.
 
 ---
 

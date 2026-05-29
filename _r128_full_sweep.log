@@ -1,0 +1,63 @@
+  ✅ All 6 package versions OK
+  ✅ All 6 package versions OK
+Building cache (training)...
+======================================================================
+  LOADING DATA
+======================================================================
+  [TA] atr_14, gk_vol_24h
+  [DVOL] btc_dvol, iv_rv_spread, dvol_zscore
+  [BREADTH] pct_coins_up_12h/1h, btc_outperform
+  [SEASON] hour_sin/cos, dow_sin/cos
+  [FNG] fear_greed → fng_value, fng_zscore
+  [MACRO] ['vix_close', 'dxy_close', 'vix_zscore', 'dxy_ret_7d']
+  [TA-extra] ['adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  New features added: 18: ['premium_zscore_12h', 'oi_velocity', 'taker_imb_z', 'vol_of_vol', 'dist_from_high_24h', 'vol_ratio_24h', 'ret_168h', 'fng_value', 'fng_zscore', 'vix_close', 'vix_zscore', 'dxy_ret_7d', 'adx', 'mfi_14', 'ret_skew_24h', 'ret_kurt_24h', 'vwap_dev_24h', 'obv_ma_ratio_24']
+  Added 6 extra features (clean, from OHLCV)
+  [R33] Added 5 features (btc_corr, rel_volume_cs, ret_skew, upvol)
+  Loaded liq: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded oi: 51,360 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded taker: 54,460 rows, 35 symbols, 2022-01-01 → 2026-04-05
+  Loaded funding: 49,043 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  Loaded ls_ratio: 49,922 rows, 33 symbols, 2022-01-01 → 2026-04-05
+  CG feature table: 54,460 rows, 10 cols
+  Frame: 1,826,014 rows, 35 symbols
+  Features: 31/31
+  Training 5 seeds × 3 windows...
+  W1/s0: train=1,307,473 test=169,308
+  W2/s0: train=1,484,524 test=144,969
+  W3/s0: train=1,628,167 test=89,343
+  preds: 403,212 rows, 12154 timestamps, 34 symbols
+  funding loaded: 294,695 rows, 50 symbols
+
+=== Running 13 configs (n_long=4, n_short=2) ===
+
+  BASELINE (no overlay)                   : n=1013 act=688 gross=+1.476 net=+1.094 S_g=+2.643 S_n=+2.179 cost=1.7bp turn=2.69
+  A1.kelly_thr0.3_scale0.5                : n=1013 act=688 gross=+1.997 net=+1.535 S_g=+2.744 S_n=+2.350 cost=1.7bp turn=2.69
+  A1.kelly_thr0.2_scale0.5                : n=1013 act=688 gross=+1.944 net=+1.490 S_g=+2.649 S_n=+2.262 cost=1.7bp turn=2.69
+  A1.kelly_thr0.3_scale0.3                : n=1013 act=688 gross=+2.312 net=+1.802 S_g=+2.538 S_n=+2.210 cost=1.7bp turn=2.69
+  A1.kelly_thr0.5_scale0.5                : n=1013 act=688 gross=+1.825 net=+1.389 S_g=+2.693 S_n=+2.283 cost=1.7bp turn=2.69
+  A2.funding_long5bp_short3bp             : n=1013 act=688 gross=+1.140 net=+0.807 S_g=+2.344 S_n=+1.851 cost=1.7bp turn=2.75
+  A2.funding_long3bp_short3bp             : n=1013 act=688 gross=+1.123 net=+0.791 S_g=+2.349 S_n=+1.846 cost=1.7bp turn=2.78
+  A2.funding_long10bp_short5bp            : n=1013 act=688 gross=+1.298 net=+0.942 S_g=+2.579 S_n=+2.082 cost=1.7bp turn=2.73
+  A3.cooldown_-3pct_skip2                 : n=1013 act=688 gross=+1.377 net=+0.939 S_g=+2.557 S_n=+1.987 cost=2.0bp turn=3.45
+  A3.cooldown_-2pct_skip1                 : n=1013 act=688 gross=+1.600 net=+1.097 S_g=+2.843 S_n=+2.234 cost=2.1bp turn=3.80
+  A3.cooldown_-5pct_skip3                 : n=1013 act=688 gross=+1.222 net=+0.847 S_g=+2.372 S_n=+1.853 cost=1.8bp turn=3.04
+  A1+A2 kelly+funding                     : n=1013 act=688 gross=+1.622 net=+1.214 S_g=+2.493 S_n=+2.082 cost=1.7bp turn=2.75
+  A1+A3 kelly+cooldown                    : n=1013 act=688 gross=+2.005 net=+1.451 S_g=+2.822 S_n=+2.328 cost=2.0bp turn=3.45
+
+Saved → results_r128_overlay_sweep.json
+
+=== SUMMARY (sorted by ΔSharpe) ===
+  A1.kelly_thr0.3_scale0.5                 S_n=+2.350 Δ=+0.171  Δret=+0.441 ★
+  A1+A3 kelly+cooldown                     S_n=+2.328 Δ=+0.149  Δret=+0.357 ★
+  A1.kelly_thr0.5_scale0.5                 S_n=+2.283 Δ=+0.104  Δret=+0.295 ★
+  A1.kelly_thr0.2_scale0.5                 S_n=+2.262 Δ=+0.083  Δret=+0.396 ★
+  A3.cooldown_-2pct_skip1                  S_n=+2.234 Δ=+0.055  Δret=+0.003 ★
+  A1.kelly_thr0.3_scale0.3                 S_n=+2.210 Δ=+0.031  Δret=+0.708
+  BASELINE (no overlay)                    S_n=+2.179 Δ=+0.000  Δret=+0.000
+  A2.funding_long10bp_short5bp             S_n=+2.082 Δ=-0.097  Δret=-0.152
+  A1+A2 kelly+funding                      S_n=+2.082 Δ=-0.097  Δret=+0.120
+  A3.cooldown_-3pct_skip2                  S_n=+1.987 Δ=-0.192  Δret=-0.155
+  A3.cooldown_-5pct_skip3                  S_n=+1.853 Δ=-0.326  Δret=-0.247
+  A2.funding_long5bp_short3bp              S_n=+1.851 Δ=-0.328  Δret=-0.287
+  A2.funding_long3bp_short3bp              S_n=+1.846 Δ=-0.334  Δret=-0.303

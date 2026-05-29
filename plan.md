@@ -1,96 +1,188 @@
-# R110–R112 Plan: Neutralization + Spillover + Factor-Mimicking
+# R105–R108 — Funding Rate Arbitrage: План и Результаты
 
-## Статус: 8 апреля 2026 — В РАБОТЕ
+## Статус: 8 апреля 2026 — ЗАВЕРШЕНО, НЕ ДЕПЛОИМ
 
 ---
 
 ## Контекст
 
-R68 (directional ML, 4L/2S continuous WF, Sharpe=3.777) — единственная production стратегия.
-R105-R108 (funding arb) — FAIL/UNPRACTICAL. R109 (macro features) — FAIL (IC < 0.03).
-Цель: найти либо Sharpe uplift, либо Calmar/DD uplift без деградации Sharpe.
+R68 (directional ML, Sharpe=3.777) — единственная production стратегия. R93 (4h ML) не улучшает R68 при комбинации (R99-R104 все REJECTED). Исследуем новое ортогональное направление: **market-neutral funding arbitrage**.
 
-## Общие инварианты (как R68)
-- Canonical loader/sim: те же universe, costs, funding, trend filter, rebalance schedule
-- Continuous WF как в R68
-- Никаких новых lookahead: все фичи/факторы строго shift1 относительно таргета
-- Для каждого R11X сохранять:
-  - results/r11X_summary.json
-  - results/r11X_equity.csv
-  - results/r11X_monthly.csv
-  - results/r11X_bootstrap.json (если сравниваем с R68)
-  - results/r11X_params.csv / grid.csv
+**Суть**: short perp + long spot = hedge price risk → зарабатываем funding payments.
+**Отличие от R91**: R91 использовал FR как ценовой предиктор (провалился). Funding arb **не предсказывает цену** — собирает funding как carry.
 
-## Acceptance (единое)
-- **PASS-A (alpha)**: Sharpe >= R68 + 0.05 и bootstrap P(Sharpe better) > 0.80
-- **PASS-B (risk)**: Sharpe >= R68 - 0.05 и Calmar >= R68 + 5% и bootstrap P(Calmar better) > 0.80
+**Данные**: Binance 8h funding rates (294K rows, 50 символов, 2020-01 → 2026-03), Binance premium index (496K rows, 48 sym, 2021-12 → 2026-03), OKX funding (14.9K rows, cross-validation).
+**Комиссии**: spot taker 0.05%, perp taker 0.03%, round-trip = 0.16%.
+**Капитал**: $100 ($50 spot + $50 perp, 1x leverage).
 
 ---
 
-## R110 — Partial Neutralization Sweep (Numerai-style) поверх R68
+## R105 — Historical Analysis ✅ PASS
 
-### Идея
-Уменьшить нежелательные экспозиции prediction-скоринга к "режим/риск" драйверам, не меняя модель.
+**Файл**: `_research_r105_funding_analysis.py`
 
-### R110.1 Выбор экспозиций (3 набора)
-- **SET1** (минимальный): beta_to_btc_60, ret_48h
-- **SET2** (risk+liquidity): SET1 + rel_volume_cs, rvol_20
-- **SET3** (derivs regime): SET2 + cum_funding_24h, oi_velocity
+### Top-5 carry coins (annualized)
+| Symbol | Mean FR | Ann Carry | % positive | % >0.02% |
+|---|---:|---:|---:|---:|
+| FTM/USDT | 0.0169% | 18.5% | 88.0% | 14.6% |
+| XRP/USDT | 0.0144% | 15.8% | 81.8% | 14.9% |
+| LTC/USDT | 0.0144% | 15.8% | 83.1% | 14.3% |
+| AAVE/USDT | 0.0141% | 15.4% | 86.2% | 10.8% |
+| MKR/USDT | 0.0138% | 15.1% | 88.0% | 12.0% |
 
-### R110.2 Нейтрализация (cross-sectional ridge per timestamp)
-b = (X'X + lambda*I)^{-1} X' p ; p_neut = p - X b
-Grid lambda: {0, 1e-3, 1e-2, 1e-1}
+### Opportunity frequency
+| Threshold | Opps/mo | Coin-opps/mo | % periods with opp | Avg coins |
+|---:|---:|---:|---:|---:|
+| 0.01% | 45 | 643 | 26.8% | 14.3 |
+| 0.03% | 37 | 462 | 19.6% | 12.4 |
+| 0.05% | 33 | 357 | 14.1% | 10.9 |
+| 0.10% | 22 | 206 | 6.4% | 9.4 |
 
-### R110.3 Смешивание
-p_mix = (1-a)*p + a*p_neut, a in {0, 0.25, 0.5, 0.75, 1.0}
+### FR Persistence
+- AC(lag1=8h) = **0.711** — highly persistent
+- AC(lag3=24h) = 0.574
+- AC(lag6=48h) = 0.490
+- AC(lag12=96h) = 0.412
 
-### R110.4 Портфель — строго R68 (4L/2S, trend filter, costs)
+### Regime stability по годам
+| Year | Mean FR | Ann Carry | % >0.02% |
+|---:|---:|---:|---:|
+| 2020 | 0.0108% | 11.8% | 23.4% |
+| **2021** | **0.0335%** | **36.7%** | **35.4%** |
+| **2022** | **-0.0027%** | **-2.9%** | **0.0%** |
+| 2023 | 0.0057% | 6.2% | 5.8% |
+| 2024 | 0.0112% | 12.3% | 13.1% |
+| **2025** | **0.0017%** | **1.9%** | **0.1%** |
+| **2026** | **-0.0148%** | **-16.3%** | **0.6%** |
 
-### R110.5 Метрики — Sharpe/MaxDD/Return/Calmar, turnover, corr(p_mix, p)
+### Theoretical carry (entry > threshold, hold N periods, pay 0.16% RT)
+| Threshold | Hold | Net carry% | Win% | Entries/mo |
+|---:|---:|---:|---:|---:|
+| 0.05% | 24h | +0.145% | 77.6% | 138 |
+| 0.05% | 48h | +0.404% | 93.7% | 138 |
+| 0.08% | 24h | +0.251% | 93.7% | 75 |
+| 0.08% | 96h | +1.171% | 97.9% | 75 |
 
-### R110.6 Bootstrap — Block bootstrap B=10, N=1000
-
-Deliverable: results/r110_grid.csv
-
----
-
-## R111 — Spillover-head (межмонетные лаги + market factors) как новые фичи
-
-### R111.1 Market factors (shift1)
-- mkt_ret_12h = mean_cs(ret_12h)
-- btc_ret_12h, eth_ret_12h (лидер-лаги)
-- dispersion = std_cs(ret_12h) (market stress)
-- pc1_ret (PCA на cs-ретёрнах, 1st component)
-
-### R111.2 Per-coin spillover фичи
-- beta_i = cov(ret_i, btc_ret)/var(btc_ret) на W=60, shift1
-- spill_btc = beta_i * btc_ret_{t-1}
-- spill_mkt = corr_i_to_mkt * mkt_ret_{t-1}
-
-### R111.3 IC scan gate — |IC| >= 0.03, stability >= 2/3
-
-### R111.4 Add-only WF (если IC pass)
-
-Deliverable: results/r111_ic_report.csv, results/r111_ablation.csv
-
----
-
-## R112 — Factor-Mimicking Portfolios (FMP)
-
-### R112.1 Универсальная функция FMP
-For each t: normalize z по cs, weights w = z_norm / sum|z_norm|, f_{t+1} = sum(w * r)
-
-### R112.2 FMP-фичи (all lag1)
-- fmp_level, fmp_z120, fmp_mom (3-period sum), fmp_tail (>q95 flag)
-
-### R112.3 Прогон на имеющихся proxy (cum_funding_24h, oi_velocity, rel_volume_cs)
-
-### R112.4 Подключение CryptoQuant позже
-
-Deliverable: results/r112_fmp_factors.csv, results/r112_ablation.csv
+Cross-validation Binance↔OKX: correlation=0.679.
+**VERDICT: PASS** — 37 opps/month at 0.03% (criterion: ≥5).
 
 ---
 
-## Execution order
-Day 1: R110 (neutralization grid + bootstrap) + R111 (spillover build + IC gate)
-Day 2: R111 add-only WF + R112 (FMP pipeline + sanity + add-only)
+## R106 — Backtest (без basis risk) ✅ PASS
+
+**Файл**: `_research_r106_funding_arb_backtest.py`
+
+Grid: 5 entry × 3 exit × 4 hold × 3 positions = 156 valid configs.
+
+### Top-5 by Sharpe
+| Entry | Exit | Hold | Pos | Sharpe | Ret% | DD% | Win% | Trades |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.080% | 0.005% | 24 | 3 | **6.638** | +14.7% | -0.8% | 66.7% | 147 |
+| 0.050% | 0.010% | 24 | 3 | 6.586 | +15.2% | -1.1% | 65.2% | 204 |
+| 0.050% | 0.005% | 24 | 3 | 6.537 | +15.2% | -1.0% | 66.2% | 201 |
+| 0.080% | 0.010% | 24 | 3 | 6.378 | +14.3% | -0.8% | 65.3% | 150 |
+| 0.050% | 0.010% | 24 | 2 | 5.885 | +15.3% | -1.5% | 61.7% | 149 |
+
+Best: entry=0.080%, exit=0.005%, hold=24×8h=192h, max_positions=3.
+Funding earned=$22.57, Costs=$7.84, **Hedge P&L=$0.00** (идеальный хедж, basis risk не учтён).
+
+⚠️ Sharpe 6.6 завышен — volatility ≈0 потому что hedge_pnl моделируется как идеальный (spot_pnl + perp_pnl = 0 математически). Нужен R107.
+
+**VERDICT: PASS** — Sharpe=6.638 ≥ 1.0 (criterion).
+
+---
+
+## R107 — Hedge Quality & Basis Risk ✅ PASS
+
+**Файл**: `_research_r107_hedge_quality.py`
+
+### Basis distribution (ΔBasis = изменение premium за 8h)
+| Symbol | Basis µ% | ΔBasis σ% | |ΔBasis| µ% |
+|---|---:|---:|---:|
+| BTC/USDT | -0.029 | 0.023 | 0.014 |
+| ETH/USDT | -0.028 | 0.030 | 0.018 |
+| ADA/USDT | -0.026 | 0.037 | 0.026 |
+| XRP/USDT | -0.027 | 0.037 | 0.022 |
+
+### Worst-case basis moves
+| Hold | Mean |Δ|% | σ% | P1/P99% | Worst% |
+|---:|---:|---:|---:|---:|
+| 8h | 0.027 | 0.054 | -0.10/+0.10 | -11.4 |
+| 24h | 0.029 | 0.066 | -0.11/+0.11 | -11.2 |
+| 192h | 0.033 | 0.154 | -0.11/+0.11 | -21.3 |
+
+### Basis risk vs funding income — КЛЮЧЕВАЯ ТАБЛИЦА
+| Filter | Mean FR% | Basis σ% | Net PnL% | Ratio σ/FR | Ann Sharpe | Win% |
+|---|---:|---:|---:|---:|---:|---:|
+| All FR>0 | 0.011 | 0.043 | +0.013 | 4.0x | 9.16 | 65% |
+| FR>0.03% | 0.049 | 0.063 | +0.054 | **1.3x** | 26.53 | 85% |
+| FR>0.05% | 0.066 | 0.077 | +0.079 | **1.2x** | 31.61 | 91% |
+| FR>0.08% | 0.098 | 0.127 | +0.150 | **1.3x** | 37.28 | 99% |
+
+→ При high FR (>0.05%) basis risk составляет ~1.2-1.3x от FR, но net PnL остаётся положительным.
+
+### Revised R106 backtest (С basis risk)
+| Config | Sharpe | Return% | MaxDD% | Vol% | Trades |
+|---|---:|---:|---:|---:|---:|
+| Best (entry=0.08%, hold=24) | **2.421** | +1.47% | -0.13% | 0.24% | 12 |
+| Alt (entry=0.05%, hold=24) | **2.625** | +2.14% | -0.19% | 0.32% | — |
+| Conservative (hold=6) | 0.657 | +0.49% | -0.15% | 0.30% | — |
+
+Sharpe упал с 6.64 → **2.42** (basis risk добавляет реальную volatility).
+Всего **12 trades за 4+ года**. Yearly: 2022=0%, 2023=+0.09%, 2024=**+1.36%**, 2025=0%, 2026=0%.
+
+**VERDICT: PASS** — revised Sharpe=2.421 ≥ 1.0, basis_ratio=1.3x < 2x (criterion).
+
+---
+
+## R108 — Paper Trading ❌ FAIL
+
+**Файл**: `_research_r108_funding_arb_paper.py`
+
+### Результат: ZERO opportunities за последние 30 дней
+
+| Config | Entries | Closed Trades | Return |
+|---|---:|---:|---:|
+| R106_best (entry>0.08%) | **0** | 0 | 0.000% |
+| R106_alt (entry>0.05%) | **0** | 0 | 0.000% |
+
+Причина: 2026 FR ≈ -0.015% (mean). Рынок bear/flat → лонги не платят funding → стратегия неактивна.
+Deviation from backtest: **-100%** (ожидалось >0, получено 0).
+
+**VERDICT: FAIL** — paper 100% deviation (criterion: kill >50%).
+
+---
+
+## Сводная таблица
+
+| Step | Criterion | Result | Verdict |
+|---|---|---|---|
+| R105 | ≥5 opps/month | 37 opps/month | ✅ PASS |
+| R106 | Sharpe ≥ 1.0 | Sharpe=6.64 (без basis) | ✅ PASS |
+| R107 | basis < 2× FR | ratio=1.3x, revised Sharpe=2.42 | ✅ PASS |
+| R108 | ≤30% deviation from backtest | **-100% deviation** (0 trades) | ❌ FAIL |
+
+---
+
+## Заключение
+
+Funding rate arbitrage **теоретически работает** в bull/neutral market:
+- 2020-2021, 2024: positive FR, 12-37% annualized gross carry
+- Sharpe 2.4 после учёта basis risk
+- Market-neutral, ортогонально R68
+
+Но **практически бесполезна сейчас**:
+- 2022, 2025-2026: FR ≈ 0 или negative
+- **0 opportunities** за последние 30 дней
+- 12 trades за 4 года при high threshold — слишком редко
+- $1-2/year net на $100 капитала — micro-scale
+
+### Решение: **НЕ ДЕПЛОИТЬ**
+
+R68 остаётся единственной production стратегией. Скрипты сохранены для мониторинга — если bull market вернёт positive FR, можно пересмотреть.
+
+Следующие направления для исследования:
+1. Новые data sources (CryptoQuant exchange flows — $49/mo)
+2. Улучшение feature engineering в R68
+3. Другие market-neutral подходы (statistical arbitrage, cross-exchange)
+

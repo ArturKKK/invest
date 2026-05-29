@@ -27,6 +27,7 @@ def sim(path, label):
         "label": label,
         "sharpe": r130.sharpe(r),
         "sortino": r130.sortino(r),
+        "ret": float(r.sum()),
         "maxDD": r130.max_drawdown(r),
         "cvar5": r131.cvar_5pct(r),
         "n": len(port),
@@ -46,11 +47,11 @@ def main():
         sim("cache/r134_fresh_preds.parquet",     "R134 cutoff 2026-03-15 (3 d old) "),
     ]
 
-    print(f"\n  {'Model':<38s}  {'Sharpe':>8s} {'Sortino':>9s} {'maxDD':>8s} {'CVaR5%':>9s} {'n_act':>6s}")
+    print(f"\n  {'Model':<38s}  {'Sharpe':>8s} {'Sortino':>9s} {'Ret%':>8s} {'maxDD':>8s} {'CVaR5%':>9s} {'n_act':>6s}")
     print("  " + "─" * 90)
     for r in rows:
         print(f"  {r['label']:<38s}  {r['sharpe']:+8.3f} {r['sortino']:+9.3f} "
-              f"{r['maxDD']*100:+7.2f}% {r['cvar5']*1e4:+8.1f}bp {r['n_act']:>6d}")
+              f"{r['ret']*100:+7.2f}% {r['maxDD']*100:+7.2f}% {r['cvar5']*1e4:+8.1f}bp {r['n_act']:>6d}")
     print()
 
     # Deltas vs R128 baseline
@@ -58,6 +59,9 @@ def main():
     print("  Delta vs R128 (oldest):")
     for r in rows[1:]:
         print(f"    {r['label']}: ΔS = {r['sharpe'] - base:+.3f}")
+
+    if all(r["sharpe"] <= 0 or r["ret"] <= 0 for r in rows):
+        print("\n  ABSOLUTE GUARD: all variants have negative OOS Sharpe/return. Treat deltas as relative damage control, not a deploy signal.")
 
 
 if __name__ == "__main__":

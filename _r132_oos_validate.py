@@ -8,10 +8,9 @@ Compares:
   A1 always-on (frozen 0.25/0.60)
   Gated A1 (L=720, q=0.20, expanding-quantile threshold)
 
-Critic gates (from R130 review):
-  OOS ΔSharpe > 0   → deploy
-  OOS ΔSharpe ≈ 0   → deploy carefully
-  OOS ΔSharpe < -0.3 → DO NOT DEPLOY
+Critic gates:
+    Absolute OOS Sharpe <= 0 or Ret <= 0 -> DO NOT DEPLOY
+    Otherwise, use relative OOS ΔSharpe as a secondary tie-breaker.
 """
 from __future__ import annotations
 
@@ -50,16 +49,17 @@ def report(label: str, port: pd.DataFrame, base: pd.DataFrame | None = None):
     so = r130.sortino(r)
     dd = r130.max_drawdown(r)
     cvar = r131.cvar_5pct(r)
+    ret = float(r.sum())
     n = len(port)
     n_active = int((~port["risk_off"]).sum())
     n_gate = int(port["gate_on"].sum())
     delta = ""
     if base is not None and not base.empty:
         delta = f"  ΔS={s - r130.sharpe(base['net_ret'].values):+.3f}"
-    print(f"  {label:<24s} S={s:+.3f}{delta}  Sortino={so:+.3f}  maxDD={dd*100:+.2f}%  "
+        print(f"  {label:<24s} S={s:+.3f}{delta}  Sortino={so:+.3f}  Ret={ret*100:+.2f}%  maxDD={dd*100:+.2f}%  "
           f"CVaR5%={cvar*1e4:+.1f}bp  n={n} act={n_active} gate={n_gate}")
     return {"sharpe": s, "sortino": so, "maxDD": dd, "cvar5": cvar,
-            "n": n, "n_active": n_active, "n_gate": n_gate}
+            "ret": ret, "n": n, "n_active": n_active, "n_gate": n_gate}
 
 
 def main():
@@ -136,9 +136,12 @@ def main():
     print(f"  OOS ΔSharpe (always vs base): {a1_delta:+.3f}")
     print(f"  OOS maxDD  (gated/base): {gated_m['maxDD']*100:+.2f}%  /  {base_m['maxDD']*100:+.2f}%")
     print(f"  OOS Sharpe (gated/base): {gated_m['sharpe']:+.3f}  /  {base_m['sharpe']:+.3f}")
+    print(f"  OOS Ret    (gated/base): {gated_m['ret']*100:+.2f}%  /  {base_m['ret']*100:+.2f}%")
     print(f"  Active periods OOS: {gated_m['n_active']}/{gated_m['n']}  gate fires: {gated_m['n_gate']}")
 
-    if delta > 0:
+    if gated_m["sharpe"] <= 0 or gated_m["ret"] <= 0:
+        verdict = "❌ DO NOT DEPLOY  (absolute OOS Sharpe/Ret <= 0; positive Δ only means less bad)"
+    elif delta > 0:
         verdict = "✅ DEPLOY  (ΔSharpe > 0)"
     elif delta >= -0.3:
         verdict = "⚠ DEPLOY CAREFULLY  (-0.3 ≤ ΔSharpe ≤ 0)"

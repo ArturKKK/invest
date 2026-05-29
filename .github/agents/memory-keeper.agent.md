@@ -1,4 +1,63 @@
----
+# R132 — OOS forward-test results: запрос на ревью
+
+## Контекст
+Проект: long/short crypto perpetuals, 35 символов, 12h rebalance, walk-forward
+ensemble (LGB+XGB, 5 seeds: 0,7,13,42,99). Все predictions out-of-fold (train_end
+< test_start). Persistence-gate overlay (R129) прошёл in-sample; критик R130
+требовал OOS forward-test перед деплоем.
+
+## Что сделано
+- Обновили данные до 2026-04-25 23:00 UTC (OHLCV + sentiment + futures).
+- Тренировка ансамбля на одном окне:
+    train_end=2026-01-01, val=2026-01-01..2026-03-15,
+    test=2026-03-18..2026-04-25 (39 дней, 77 12h-периодов, 30,129 preds).
+- 31 фичей (champion R68 + R35), 5 seeds × (LGB+XGB), early-stop по val.
+- Симуляция в проде-движке (R131 simulate_prod) — три прогона:
+    1) baseline — без overlay
+    2) A1 always-on — overlay всегда активен (look-ahead reference)
+    3) Gated A1 — frozen R129 (L=720, q=0.20, trend_thr=0.25, weak_scale=0.60)
+- Bootstrap (iid + block) для разности Sharpe gated vs base.
+
+## Результаты OOS (2026-03-18 → 2026-04-25, 77 периодов)
+
+| Стратегия       | Sharpe | ΔSharpe | Sortino | maxDD  | CVaR5%   | gate fires |
+|-----------------|--------|---------|---------|--------|----------|------------|
+| baseline        | +1.926 |    —    | +2.812  | -6.88% | -157.6bp |  0/77      |
+| A1 always-on    | +3.036 | +1.110  | +4.245  | -7.33% | -189.8bp | 77/77      |
+| Gated A1 frozen | +1.668 | -0.258  | +2.201  | -7.33% | -194.2bp | 31/77      |
+
+Bootstrap (gated vs base):
+  - iid:    P(Δ>0)=0.417, CI95=[-2.069, +1.846]
+  - block:  P(Δ>0)=0.461, CI95=[-0.934, +1.171]
+
+## Критик R130
+"Если OOS ΔSharpe > 0: деплоить. ≈0: осторожно. <-0.3: НЕ деплоить."
+Полученное Δ = -0.258 → зона **DEPLOY CAREFULLY** (-0.3 ≤ Δ ≤ 0).
+
+## Версии (preflight проходит)
+numpy 2.4.3 / pandas 2.3.3 / scipy 1.17.1 / lightgbm 4.6.0 /
+xgboost 3.2.0 / scikit-learn 1.8.0 — pin как в requirements.txt.
+
+## Вопросы к ревью
+
+1) Gated overlay на OOS дал -0.258 ΔSharpe vs baseline, но CVaR5% и maxDD
+   слегка хуже — это ухудшение значимо при n=77 (CI95=[-0.93,+1.17])?
+2) A1 always-on показывает +1.110 ΔSharpe, но это in-sample look-ahead
+   (overlay был выбран по всей истории). Какие тесты добавить чтобы отличить
+   реальный сигнал от p-hacking?
+3) Persistence-gate срабатывает 31/77 (40%). Это значит trigger calibration
+   (q=0.20) сместился на новом режиме. Как пере-калибровать без data-leakage?
+4) Baseline (no overlay) дал лучший OOS Sharpe (+1.926). Безопаснее ли
+   деплоить голый baseline и забыть про overlay? Или это переусиление
+   negative result на одной точке?
+5) Sample size 77 12h-периодов / 39 дней — какой минимум нужен для
+   надёжной оценки ΔSharpe с power 0.8?
+
+## Артефакты
+- _r132_oos_train.py: train+save preds (commit XXX)
+- _r132_oos_validate.py: 3 sims + bootstrap + critic
+- cache/r132_oos_preds.parquet: 30,129 rows, 33 symbols
+- /memories/repo/r132_oos_results.md: полный отчёт---
 name: Memory Keeper
 description: >
   AI coding assistant with enforced memory discipline.

@@ -205,6 +205,8 @@ def print_table(regime: pd.DataFrame) -> None:
     base = rows[0]["sharpe"]
     for row in rows[1:]:
         print(f"DELTA_VS_R128 {row['label']} {row['sharpe'] - base:+.3f}")
+    if all(row["sharpe"] <= 0 or row["ret"] <= 0 for row in rows):
+        print("ABSOLUTE_GUARD all variants have negative OOS Sharpe/return; deltas are not a deploy signal")
 
 
 def main() -> None:
