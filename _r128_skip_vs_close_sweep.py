@@ -98,7 +98,8 @@ def train_ensemble(df, feats, windows, seeds=SEEDS, cs_rank_exclude=None):
             m = lgb.train(p_lgb, dt, num_boost_round=N_ROUNDS, valid_sets=[dv], callbacks=[lgb.early_stopping(EARLY_STOP, verbose=False), lgb.log_evaluation(-1)])
             p = m.predict(te[avail])
             rec = te[["timestamp", "symbol"]].copy()
-            rec["pred_lgb"], rec = p, rec.merge(fwd, on=["timestamp", "symbol"], how="inner")
+            rec["pred_lgb"] = p
+            rec = rec.merge(fwd, on=["timestamp", "symbol"], how="inner")
             rec["window"], rec["seed"] = w["name"], seed
             all_lgb.append(rec)
 
@@ -107,7 +108,8 @@ def train_ensemble(df, feats, windows, seeds=SEEDS, cs_rank_exclude=None):
             m_x = xgb.train(p_xgb, dt_x, num_boost_round=N_ROUNDS, evals=[(dv_x, "val")], early_stopping_rounds=EARLY_STOP, verbose_eval=False)
             p_x = m_x.predict(xgb.DMatrix(te[avail]))
             rec2 = te[["timestamp", "symbol"]].copy()
-            rec2["pred_xgb"], rec2 = p_x, rec2.merge(fwd, on=["timestamp", "symbol"], how="inner")
+            rec2["pred_xgb"] = p_x
+            rec2 = rec2.merge(fwd, on=["timestamp", "symbol"], how="inner")
             rec2["window"], rec2["seed"] = w["name"], seed
             all_xgb.append(rec2)
 
