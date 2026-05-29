@@ -236,9 +236,14 @@ def build_features_minimal(ohlcv, derivs):
     ) + 1e-10
     df["premium_zscore"] = (df["premium_index"] - pi_mean) / pi_std
 
-    # ── Clean inf from pct_change on zero denominators ─────────
-    for col in df.select_dtypes(include=[np.number]).columns:
-        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+    # NOTE (R127, 2026-04-23): previous "Fix#1" did `replace([inf,-inf], nan)`
+    # here to guard against OI/volume pct_change dividing by zero on illiquid
+    # hours. Ablation (F10_F20 vs F11_F20) showed this costs 0.55 Sharpe.
+    # On historical 2022-2026 data no inf actually appears; VPS prod runs
+    # WITHOUT this cleanup (commit ccb3bc2) and matches backtest 3.777.
+    # If LIVE ever produces inf from new illiquid symbols, add a safety net
+    # in run_trading.py inference path (model.predict → fillna(0)) instead
+    # of here. See PROGRESS.md R127.
 
     # ── Forward returns (targets) ───────────────────────────────
     for h in HORIZONS:

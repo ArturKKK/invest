@@ -74,14 +74,13 @@ MARKET_LEVEL_FEATURES = {
     "mkt_funding_dispersion",
     "mkt_oi_chg_sum",
     "mkt_oi_extreme_pct",
-    # ── Same value for all symbols at each timestamp ──
-    # Without this, cs_rank makes them constant 0.0 (all tied → rank 0.5 - 0.5 = 0)
-    "pct_coins_up_12h",
-    "pct_coins_up_1h",
-    "hour_sin",
-    "hour_cos",
-    "dow_sin",
-    "dow_cos",
+    # NOTE (R127, 2026-04-23): pct_coins_up_*, hour/dow_sin/cos were added here
+    # as "Fix#2" (commit b325afc). Ablation proved this costs −1.64 Sharpe:
+    # passing them raw lets the model overfit seasonal/breadth patterns.
+    # When they go through CS-rank (ranked against self across symbols), they
+    # become 0.0 for all symbols (all tied), acting as a harmless dead slot.
+    # Counter-intuitively: dead slot > raw info for market-wide constants.
+    # DO NOT re-add these to MARKET_LEVEL_FEATURES. See PROGRESS.md R127.
 }
 
 
