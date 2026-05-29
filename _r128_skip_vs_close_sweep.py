@@ -159,7 +159,26 @@ def simulate(merged, regime_df, n_long, n_short, cfg):
                     all_rets.append({"timestamp": ts, "gross_ret": 0.0, "net_ret": 0.0, "cost": 0.0, "n_long": 0, "n_short": 0, "turnover": 0})
                 prev_longs, prev_shorts = set(), set()
             elif risk_off_mode == "skip":
-                pass
+                # SKIP (prod): don't rebalance, KEEP holding previous positions,
+                # record their fwd_ret this period. No turnover cost (we didn't trade),
+                # only holding/funding cost. prev_longs/prev_shorts stay unchanged.
+                if prev_longs or prev_shorts:
+                    gh = grouped[ts]
+                    held_l = gh[gh["symbol"].isin(prev_longs)]
+                    held_s = gh[gh["symbol"].isin(prev_shorts)]
+                    lr = held_l["fwd_ret"].mean() if len(held_l) > 0 else 0
+                    sr = held_s["fwd_ret"].mean() if len(held_s) > 0 else 0
+                    nl_h, ns_h = len(prev_longs), len(prev_shorts)
+                    if nl_h > 0 and ns_h > 0:
+                        gr = 0.5 * lr - 0.5 * sr
+                    elif ns_h > 0:
+                        gr = -sr
+                    else:
+                        gr = lr
+                    holding_cost = funding_per_12h * (rebal_hours / 12)
+                    all_rets.append({"timestamp": ts, "gross_ret": gr, "net_ret": gr - holding_cost, "cost": holding_cost, "n_long": nl_h, "n_short": ns_h, "turnover": 0})
+                else:
+                    all_rets.append({"timestamp": ts, "gross_ret": 0.0, "net_ret": 0.0, "cost": 0.0, "n_long": 0, "n_short": 0, "turnover": 0})
             continue
 
         grp = grouped[ts].copy()
