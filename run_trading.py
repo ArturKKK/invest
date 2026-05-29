@@ -1839,10 +1839,31 @@ def execute(exchange, positions, dry_run=True, leverage=1):
                     pass
 
             amount = _usd_to_contracts(okx_sym, pos['usd'])
+            base_params = {'tdMode': 'isolated', 'posSide': 'net'}
+
+            # MAKER-FIRST for TIER1 symbols (BTC, ETH, SOL, BNB, XRP)
+            if pos['symbol'] in _TIER1_SYMS and not is_retry:
+                try:
+                    ticker = None
+                    if exchange:
+                        ticker = exchange.fetch_ticker(okx_sym)
+                    order = _maker_first_limit(
+                        exchange, pos['symbol'], okx_sym, side, amount, ticker, base_params
+                    )
+                    if order:
+                        tag = "💎"  # maker fill
+                        print(f"      {tag} {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} ({amount} cts) → {order['id']} [MAKER]")
+                        results.append({**pos, 'status': 'filled', 'order_id': order['id']})
+                        return True
+                except Exception as e:
+                    # Fall through to market fallback
+                    print(f"      ⚠️  Maker-first failed for {pos['symbol']}: {str(e)[:60]} — falling back to market")
+
+            # MARKET order (fallback or for TIER2/3)
             order = exchange.create_order(
                 symbol=okx_sym, type='market', side=side,
                 amount=amount,
-                params={'tdMode': 'isolated', 'posSide': 'net'},
+                params=base_params,
             )
             tag = "🔄" if is_retry else "✅"
             print(f"      {tag} {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} ({amount} cts) → {order['id']}")
@@ -1983,20 +2004,23 @@ def _log_execution(symbol, okx_sym, side, tier, attempt, order_type,
         log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trading_logs')
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, 'execution_log.csv')
-        write_header = not os.path.exists(log_path)
+        # Header written if file is missing OR empty (recover from header-only state)
+        write_header = (not os.path.exists(log_path)) or os.path.getsize(log_path) == 0
+        limit_px_str = f"{limit_px:.8g}" if limit_px else ''
         with open(log_path, 'a') as f:
             if write_header:
                 f.write(EXEC_LOG_HEADER)
             f.write(
                 f"{datetime.now(timezone.utc).isoformat()},"
                 f"{symbol},{okx_sym},{tier},{side},{order_type},{attempt},"
-                f"{bid:.8g},{ask:.8g},{mid:.8g},{limit_px:.8g if limit_px else ''},"
+                f"{bid:.8g},{ask:.8g},{mid:.8g},{limit_px_str},"
                 f"{fill_price:.8g},{spread_bps:.2f},{slippage_bps:.2f},"
                 f"{effective_bps:.2f},{filled_qty},{cost_usd:.4f},"
                 f"{fill_time_s:.1f},{1 if was_maker else 0}\n"
             )
-    except Exception:
-        pass
+    except Exception as e:
+        # R127.8: don't silently swallow — at least print to stderr so we know
+        print(f"   ⚠️  _log_execution failed: {e}", flush=True)
 
 
 def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, params):
