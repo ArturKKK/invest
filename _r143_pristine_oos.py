@@ -52,19 +52,55 @@ def _ts(x):
     return pd.Timestamp(x, tz="UTC")
 
 
-def rank_ic(preds, lo, hi):
+def _ic_series(preds, lo, hi):
     sub = preds[(preds["timestamp"] >= _ts(lo)) & (preds["timestamp"] <= _ts(hi))]
-    ics = []
+    out = []
     for ts, g in sub.groupby("timestamp"):
         if g["pred"].nunique() > 2 and g["fwd_ret"].nunique() > 2:
             ic = spearmanr(g["pred"], g["fwd_ret"]).correlation
             if not np.isnan(ic):
-                ics.append(ic)
-    ics = np.array(ics)
-    if len(ics) < 3:
-        return np.nan, np.nan, len(ics)
-    t = ics.mean() / (ics.std(ddof=1) / np.sqrt(len(ics)) + 1e-12)
-    return ics.mean(), t, len(ics)
+                out.append((ts, ic))
+    return pd.Series(dict(out)).sort_index()
+
+
+def _nw_tstat(x, lags):
+    """Newey-West (Bartlett) t-stat of the mean for an autocorrelated series."""
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    if n < 5:
+        return np.nan
+    d = x - x.mean()
+    var = d @ d / n
+    for k in range(1, min(lags, n - 1) + 1):
+        w = 1.0 - k / (lags + 1.0)
+        var += 2.0 * w * (d[:-k] @ d[k:]) / n
+    se = np.sqrt(max(var, 1e-18) / n)
+    return x.mean() / (se + 1e-18)
+
+
+def rank_ic(preds, lo, hi):
+    """Returns (mean_ic, t_naive_hourly, n_hourly, t_nw12, t_grid12, n_grid).
+
+    fwd_ret is 12h while preds are hourly -> adjacent hourly ICs overlap and
+    the naive t is inflated. t_nw12 = Newey-West(12 lags) on the hourly series;
+    t_grid12 = plain t on the non-overlapping every-12th-hour grid (worst case,
+    averaged over the 12 possible grid offsets).
+    """
+    s = _ic_series(preds, lo, hi)
+    if len(s) < 5:
+        return np.nan, np.nan, len(s), np.nan, np.nan, 0
+    mean_ic = s.mean()
+    t_naive = mean_ic / (s.std(ddof=1) / np.sqrt(len(s)) + 1e-12)
+    t_nw = _nw_tstat(s.values, lags=12)
+    grid_ts, grid_ns = [], []
+    for off in range(12):
+        g = s.values[off::12]
+        if len(g) >= 5:
+            grid_ts.append(np.mean(g) / (np.std(g, ddof=1) / np.sqrt(len(g)) + 1e-12))
+            grid_ns.append(len(g))
+    t_grid = float(np.mean(grid_ts)) if grid_ts else np.nan
+    n_grid = int(np.mean(grid_ns)) if grid_ns else 0
+    return mean_ic, t_naive, len(s), t_nw, t_grid, n_grid
 
 
 def sharpe_window(preds, lo, hi):
@@ -108,18 +144,22 @@ for v in VARIANTS:
     if preds is None or len(preds) == 0:
         print(f"\n{v['name']}: NO PREDS")
         continue
-    pic, pt, pn = rank_ic(preds, *PRISTINE)
+    cache_path = f"cache/r143_{v['name']}_{FEATURESET}_preds.parquet"
+    preds.to_parquet(cache_path, index=False)
+    pic, pt, pn, pt_nw, pt_grid, png = rank_ic(preds, *PRISTINE)
     psh, pnp, pret = sharpe_window(preds, *PRISTINE)
     line = (f"\n{v['name']} (train_end {v['train_end']}, val {v['val_start']}..{v['val_end']}):\n"
-            f"  PRISTINE  rankIC={pic:+.4f} t={pt:+.2f} (n_ts={pn})  "
-            f"Sharpe={psh:+.3f} Ret={pret:+.1f}% (n={pnp})")
+            f"  PRISTINE  rankIC={pic:+.4f}  t_naive={pt:+.2f} (n={pn})  "
+            f"t_NW12={pt_nw:+.2f}  t_grid12={pt_grid:+.2f} (n={png})\n"
+            f"            Sharpe={psh:+.3f} Ret={pret:+.1f}% (n={pnp})   [saved {cache_path}]")
     if v["test_start"] == "2026-03-18":
-        aic, at, an = rank_ic(preds, *OLD_APRIL)
+        aic, at, an, at_nw, at_grid, ang = rank_ic(preds, *OLD_APRIL)
         ash, anp, aret = sharpe_window(preds, *OLD_APRIL)
-        line += (f"\n  OLD-APRIL rankIC={aic:+.4f} t={at:+.2f} (n_ts={an})  "
-                 f"Sharpe={ash:+.3f} Ret={aret:+.1f}% (n={anp})  [continuity vs Apr: V1~-0.27 V2~+1.93]")
+        line += (f"\n  OLD-APRIL rankIC={aic:+.4f} t_NW12={at_nw:+.2f} t_grid12={at_grid:+.2f}  "
+                 f"Sharpe={ash:+.3f} Ret={aret:+.1f}% (n={anp})  [Apr 31f refs: V1~-0.27 V2~+1.93]")
     print(line)
     rows.append({"variant": v["name"], "pristine_ic": pic, "pristine_ic_t": pt,
+                 "pristine_ic_t_nw": pt_nw, "pristine_ic_t_grid": pt_grid,
                  "pristine_sharpe": psh, "pristine_ret": pret})
 
 print("\n" + "=" * 96)
@@ -128,9 +168,12 @@ print("=" * 96)
 res = pd.DataFrame(rows)
 if len(res):
     print(res.to_string(index=False))
-    best = res.sort_values("pristine_ic_t", ascending=False).iloc[0]
-    gate = (best["pristine_ret"] > 0) and (best["pristine_ic_t"] > 2)
-    print(f"\n  BEST by rank-IC t-stat: {best['variant']} (IC t={best['pristine_ic_t']:+.2f}, "
-          f"Ret={best['pristine_ret']:+.1f}%)")
-    print(f"  RESTART GATE: {'PASS' if gate else 'FAIL'} "
-          f"(need Ret>0 AND IC t>2; got Ret={best['pristine_ret']:+.1f}%, t={best['pristine_ic_t']:+.2f})")
+    # Gate on the OVERLAP-HONEST t (Newey-West 12 lags) — naive hourly t is
+    # inflated by the 12h-horizon overlap and must not decide the gate.
+    best = res.sort_values("pristine_ic_t_nw", ascending=False).iloc[0]
+    gate = (best["pristine_ret"] > 0) and (best["pristine_ic_t_nw"] > 2)
+    print(f"\n  BEST by NW t-stat: {best['variant']} (t_NW12={best['pristine_ic_t_nw']:+.2f}, "
+          f"t_grid12={best['pristine_ic_t_grid']:+.2f}, Ret={best['pristine_ret']:+.1f}%)")
+    print(f"  RESTART GATE (overlap-honest): {'PASS' if gate else 'FAIL'} "
+          f"(need Ret>0 AND t_NW12>2; got Ret={best['pristine_ret']:+.1f}%, "
+          f"t_NW12={best['pristine_ic_t_nw']:+.2f})")
