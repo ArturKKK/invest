@@ -2848,7 +2848,7 @@ F_interact (+6f)       0.802    28.6   -19.5    1.47   -2.029   0.006
 
 **Гипотеза**: Снижение комиссий OKX (referral cashback, VIP tier, maker-first execution) увеличит net Sharpe без изменения модели.
 
-**Метод**: Один раз обучить baseline ensemble (31 feature, 3 WF окна × 3 seeds), затем прогнать 8 стоимостных сценариев через тот же набор predictions. Меняется только cost function в `simulate_r121()`.
+**Метод**: Один раз обучить baseline ensemble (31 feature, 3 WF окна × 5 seeds), затем прогнать 8 стоимостных сценариев через тот же набор predictions. Меняется только cost function в `simulate_r121()`.
 
 **Параметрическая cost function**:
 ```
@@ -2906,7 +2906,7 @@ DD не меняется (-10.9%) → risk_off экзогенный (BTC trend),
 1. Пере-scoring всех 954K новостей FinBERT на H100 80GB GPU (~5 мин)
 2. Score = weighted sum: Σ(w_c × P(c|title)), w_pos=+1, w_neg=-1, w_neu=0
 3. Rebuild features (per-coin 8 + market 2 + interactions 4 = 14 features)
-4. Те же 6 экспериментов A-F что в R123 (WF 3 окна × 3 seeds, S6 costs)
+4. Те же 6 экспериментов A-F что в R123 (WF 3 окна × 5 seeds, S6 costs)
 
 **FinBERT scoring stats** (954,551 items, torch 2.5.1+cu121, fp16):
 - Positive (>0.1): 44.8%, Negative (<-0.1): 24.6%, Neutral: 30.6%
@@ -3031,7 +3031,7 @@ REF20 (maker + 20% referral) = 3.780 — верхняя планка при те
 
 **Файлы**: `_research_r126_review_fixes.py`, `_research_r124b_taker_baseline.py`, результаты: `results/r126_review_fixes.json`, `results/r124b_taker_baseline.json`
 
-### Закрытые направления (финальная карта, после R126)
+### Закрытые направления (финальная карта, после R137 — июнь 2026)
 
 ```
 CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
@@ -3047,13 +3047,33 @@ CLOSED: Features (31), Models (LGB+XGB), Portfolio base (4L/2S),
           - IC scan bug: те же 4 фичи, тот же вывод
           - Lookahead bias: LAG1=-0.34, LAG2=-1.90 → per-coin новости нечистые
           - Per-coin only: G=-1.05, H=-0.56, I=-1.75 → все варианты хуже
+        News direction (ВСЯ ветка, incl. LLM-filtered) — CLOSED per AI_AUDIT
+          May2026 Priority #6: lookahead bias structural, "НЕ ПОВТОРЯТЬ".
+          LLM-filtered (GPT/Claude API) ранее числилось OPEN — закрыто
+          вместе с остальным news-направлением (тот же lag-риск).
+        Cutoff / hysteresis tuning — R137 CLOSED: state-machine grid
+          cutoff_on {0.90,0.95,1.00} × cutoff_off {-0.05,-0.10}, 4L/2S, S6.
+          Ни одна ячейка не бьёт baseline 0.90/0.80 при P>=0.80; высокие
+          cutoff ухудшают DD. May-29 "0.95 wins" = артефакт (single threshold,
+          6L/3S, lenient costs). → keep 0.90/0.80.
+        SKIP risk-off mode — R136 CLOSED: honest include-flat (1013 periods)
+          даёт -2.06 Sharpe. Старое skip-accounting (drop periods) льстило.
+        G2 vol-weighting overlay — R136 CLOSED: LOOKAHEAD LEAK в оригинале;
+          honest (leak-fixed) = -0.05..-0.09 → dead.
 
-OPEN:
+OPEN / в работе:
   1. CryptoQuant exchange flows (external data, untested)
   2. Extend maker-first execution to Tier2/Tier3 (R121: +0.32 Sharpe potential)
   3. OKX referral cashback 20% — R124 POSITIVE (+0.068 Sharpe) → DEPLOY now
   4. Maker-first execution (если прод taker-only) — R124b: worth +0.227 Sharpe_active → PRIORITY #1
-  5. LLM-filtered news (GPT/Claude API) — возможно чисто, но lookahead риск тот же
+  5. cg_taker_imb ablation — CoinGlass подписка DEAD (frozen 2026-05-06),
+     1 из 31 фич заморожена; оценить зависимость модели (in progress, MLC VM).
+
+PROMISING, pending OOS:
+  • GATED_A1 (persistence gate L=720, q=0.20 + A1 asymmetric kelly) —
+    R136 honest S6: +0.268 Net Sharpe → 3.099, bootstrap P(improve)=0.90 на
+    canonical cache. Единственный overlay из R128, переживший honest retest.
+    Pristine OOS (окно 2026-04-26→06-08) — in progress на MLC VM. Без OOS не деплоить.
 ```
 
 ---

@@ -1,7 +1,53 @@
 # Project Progress — AI Crypto Trading System
 
-**Последнее обновление:** 2026-04-23  
-**Статус:** Phase 5 — LIVE trading. Ridge α=1000 (R7, EMA=2, 14 features) deployed on VPS. R9+R9B: LightGBM EMA=None = Sh=4.21 (+0.62) strong candidate for R10 deployment. Quick win: deploy `pred_shrinkage=0.05`.
+**Последнее обновление:** 2026-06-11  
+**Статус:** Phase 5 — LIVE trading. Honest S6 retest cycle (R136/R137) complete: canonical baseline Net Sharpe **2.831** (S6 prod_blended costs, include-flat 1013-period accounting). Only **GATED_A1** overlay survives honest retest (+0.268 → 3.099, bootstrap P=0.90) — pending pristine OOS confirmation. Ridge α=1000 (R7) still the deployed VPS model.
+
+---
+
+## R128–R137 (June 2026) — Honest S6 Retest of R128 Overlays + Hysteresis Cutoff Grid
+
+> **Why this section exists**: R128 overlays (A1 asymmetric-kelly, G2 vol-weighting, persistence gate) were originally measured with the **LENIENT pre-R121 cost model** (Tier1 −0.36bp rebate) **AND** the old skip-mode period accounting (drop risk-off periods instead of holding flat). Both inflated the headline numbers. R136/R137 re-ran everything on the canonical cache under **S6 prod_blended costs** with **include-flat 1013-period accounting**. Most overlays collapsed.
+
+### R128 — Original overlay sweep (⚠️ measured with LENIENT costs + old skip accounting → INFLATED)
+- Three overlays proposed: **A1** asymmetric-Kelly (size longs/shorts differently), **G2** volatility-weighting of positions, **persistence/hysteresis gate** (require a signal to persist L hours, quantile q).
+- Original headline gains were positive but **not trustworthy**: the Tier1 −0.36bp maker rebate (pre-R121) and the SKIP risk-off accounting (which dropped risk-off periods entirely rather than holding the prior book flat and recording fwd_ret) both biased the Sharpe upward. Treated as candidates pending an honest retest.
+
+### R136 — Honest S6 retest on canonical cache (commit ~`9ad3755`)
+- **Setup**: S6 prod_blended per-trade costs (Tier1 2.4bp / Tier2 5.5bp / Tier3 10bp), include-flat **1013-period** accounting (risk-off periods held flat, fwd_ret recorded), bootstrap P(improve) vs baseline.
+- **Baseline Net Sharpe = 2.831.**
+
+| Overlay | Net Sharpe | Δ vs base | Bootstrap P(improve) | Verdict |
+|---|---:|---:|---:|---|
+| Baseline (no overlay) | 2.831 | — | — | reference |
+| **GATED_A1** (persistence L=720, q=0.20 + A1 kelly) | **3.099** | **+0.268** | **0.90** | ✅ **survives** |
+| A1 plain (asymmetric kelly, no gate) | ~2.83 | ~0 | <0.80 | ❌ not significant |
+| G2 vol-weighting (as originally coded) | (inflated) | — | — | ⚠️ **LOOKAHEAD LEAK** |
+| G2 vol-weighting (honest, leak fixed) | ~2.74–2.78 | −0.05..−0.09 | — | ❌ dead |
+| SKIP risk-off mode | ~0.77 | **−2.06** | — | ❌ **dead** |
+
+- **GATED_A1** (persistence gate L=720, q=0.20 combined with A1 asymmetric kelly) is the **only** overlay that survives: +0.268 Net Sharpe → **3.099**, bootstrap **P(improve)=0.90**.
+- **SKIP risk-off mode is DEAD**: −2.06 Sharpe under honest include-flat accounting. The old skip behavior (dropping risk-off periods) had silently flattered it.
+- **G2 vol-weighting had a LOOKAHEAD LEAK** in the original implementation. Honest (leak-fixed) version is **−0.05..−0.09** → dead.
+- **Plain A1** (asymmetric kelly without the persistence gate) is **not significant** — the gate is what carries GATED_A1.
+
+### R137 — Hysteresis cutoff grid (proper state-machine test)
+- **Motive**: the May-29 working tree claimed "0.95 cutoff wins" for the trend filter. R137 tested this honestly as a **state machine** with separate on/off thresholds (`cutoff_on` to enter risk-off, `cutoff_off` to exit), not a single threshold.
+- **Grid**: `cutoff_on ∈ {0.90, 0.95, 1.00}` × `cutoff_off ∈ {−0.05, −0.10}`, portfolio 4L/2S, S6 prod_blended costs.
+- **Result**: **NO cell beats the baseline 0.90/0.80 at P(improve) ≥ 0.80.** Higher `cutoff_on` values (0.95, 1.00) **worsen drawdown** without a compensating Sharpe gain.
+- **VERDICT**: **keep 0.90/0.80.** The May-29 "0.95 wins" was a **methodology artifact** — it used a single threshold (not a hysteresis state machine), a 6L/3S book (not 4L/2S), and the lenient pre-R121 cost model. Under the honest setup the effect disappears. **Cutoff tuning CLOSED.**
+
+### Data refresh (state as of 2026-06-10/11)
+- OHLCV / futures / funding / premium / dvol / fng all current through **2026-06-10**; macro through **2026-06-09**.
+- ⚠️ **CoinGlass subscription DEAD** ("Upgrade plan" response). `cg_taker_imb` — the **only** CoinGlass-derived feature (1 of 31) — is **frozen at 2026-05-06**. All other 30 features remain live.
+
+### In progress (MLC VM)
+- **Pristine OOS test** on the held-out window **2026-04-26 → 2026-06-08** (data never seen during R128–R137 tuning), to confirm whether GATED_A1's +0.268 / P=0.90 holds out of sample.
+- **`cg_taker_imb` ablation**: quantify the model's dependence on the now-frozen CoinGlass feature (drop it, retrain, compare) given the subscription is dead.
+
+### Net verdicts (R128–R137)
+- ❌ **CLOSED**: cutoff/hysteresis tuning (keep 0.90/0.80, R137); SKIP risk-off mode (−2.06, dead); G2 vol-weighting (lookahead leak; honest = dead).
+- 🟡 **PROMISING, pending OOS**: **GATED_A1** (L=720, q=0.20) — +0.268 → 3.099, P=0.90 on the canonical cache; awaiting pristine-OOS confirmation before any deploy.
 
 ---
 
