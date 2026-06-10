@@ -21,7 +21,11 @@ from _research_r121_realistic_costs import R114B_CFG
 from src.costs import cost_prod_blended
 from _r136_s6_retest import simulate_r136
 
-SEEDS10 = [0, 7, 13, 42, 99, 1, 8, 14, 43, 100]
+import sys
+N = int(sys.argv[1]) if len(sys.argv) > 1 else 10
+ALL = [0, 7, 13, 42, 99, 1, 8, 14, 43, 100, 2, 9, 15, 44, 101, 3, 10, 16, 45, 102]
+SEEDS10 = ALL[:N]
+print(f"SEEDS({N}): {SEEDS10}")
 
 df, regime_df = load_data()
 if "timestamp" in regime_df.columns:
@@ -39,7 +43,7 @@ port = simulate_r136(
 ns = sharpe(port["net_ret"])
 ret = ((1 + port["net_ret"]).prod() - 1) * 100
 dd = ((1 + port["net_ret"]).cumprod() / (1 + port["net_ret"]).cumprod().cummax() - 1).min() * 100
-print(f"\nR150 10-SEED 30f: Net={ns:+.3f}  Ret={ret:+.1f}%  DD={dd:+.1f}%  n={len(port)}")
+print(f"\nR150 {len(SEEDS10)}-SEED 30f: Net={ns:+.3f}  Ret={ret:+.1f}%  DD={dd:+.1f}%  n={len(port)}")
 print(f"  vs 5-seed std 2.2605: {ns-2.2605:+.3f} | vs 5-seed alt 2.305: {ns-2.305:+.3f}")
-preds.to_parquet("cache/r150_seeds10_preds.parquet", index=False)
+preds.to_parquet(f"cache/r150_seeds{len(SEEDS10)}_preds.parquet", index=False)
 print("R150 done.")
