@@ -107,8 +107,16 @@ for i in range(1, len(equity_history)):
     cycle_pnls.append(round(delta, 2))
 state["cycle_pnls"] = cycle_pnls[-200:]
 
-with open(state_path, "w") as f:
+# Atomic write (same semantics as run_trading.save_state): a truncating
+# open(path,'w') here was the exact corruption vector of April 2026.
+_tmp = state_path + ".tmp"
+with open(_tmp, "w") as f:
     json.dump(state, f, indent=2, default=str)
+    f.flush()
+    os.fsync(f.fileno())
+if os.path.exists(state_path):
+    os.replace(state_path, state_path + ".bak")
+os.replace(_tmp, state_path)
 
 print(f"\n✅ State restored!")
 print(f"   Equity history: {len(state['equity_history'])} points")

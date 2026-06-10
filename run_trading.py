@@ -2572,9 +2572,20 @@ def load_state(path):
                 if isinstance(data, dict):
                     if label:
                         print(f"   ♻️  Recovered state from {p}")
+                        # Rewrite main NOW: otherwise the next save_state would
+                        # rotate the corrupt main over this good .bak.
+                        try:
+                            tmp = path + '.tmp'
+                            with open(tmp, 'w') as g:
+                                json.dump(data, g, indent=2, default=str)
+                                g.flush()
+                                os.fsync(g.fileno())
+                            os.replace(tmp, path)
+                        except OSError:
+                            pass
                     return data
-            except (json.JSONDecodeError, ValueError):
-                print(f"   ⚠️  Corrupt state file {p}{label}")
+            except (json.JSONDecodeError, ValueError, OSError):
+                print(f"   ⚠️  Corrupt/unreadable state file {p}{label}")
     print("   ⚠️  No usable state file, starting fresh")
     return {}
 
@@ -2593,9 +2604,14 @@ def save_state(state, path):
             os.replace(path, path + '.bak')   # previous good state survives
         os.replace(tmp_path, path)
     except Exception as e:
-        print(f"   ⚠️  save_state failed: {e} (previous state left intact)")
+        print(f"   ⚠️  save_state failed: {e}")
+        # If rotation already moved main->.bak but the final replace failed,
+        # promote tmp so a state file always exists; else just drop tmp.
         try:
-            os.remove(tmp_path)
+            if not os.path.exists(path) and os.path.exists(tmp_path):
+                os.replace(tmp_path, path)
+            else:
+                os.remove(tmp_path)
         except Exception:
             pass
 
@@ -3094,14 +3110,21 @@ def main():
         # Fresh state — placeholders only; real equity/peak come from the
         # exchange bootstrap below. Seeding peak=args.capital here caused the
         # April-2026 false DD-stops (peak $80 vs real equity $28 → "-65% DD").
+        # _peak_placeholder persists until a successful bootstrap so a failed
+        # first fetch (or a restart in between) cannot freeze the fake peak.
         state['equity'] = args.capital
         state['peak'] = args.capital
+        state['_peak_placeholder'] = True
         state['recent_rets'] = []
         state['initial_capital'] = args.capital
     if 'initial_capital' not in state:
         state['initial_capital'] = args.capital
     if 'prev_equity' not in state:
         state['prev_equity'] = state.get('equity', args.capital)
+    if 'peak' not in state:
+        # Hand-restored / partial state: never let downstream .get() default
+        # peak to args.capital — anchor to known equity instead.
+        state['peak'] = state.get('equity', args.capital)
 
     # Backfill dashboard trades from trades.csv (recover history)
     _load_csv_trades_into_state(state, root)
@@ -3132,10 +3155,15 @@ def main():
             live_equity = total_usdt + upnl
             if live_equity > 1:  # sanity: not empty account
                 state['equity'] = round(live_equity, 4)
-                # Fresh state: peak = live equity (CLI capital is NOT a peak —
-                # max() here kept an inflated $80 peak vs $28 real equity and
-                # tripped DD-stop on every restart in April 2026).
-                state['peak'] = (round(live_equity, 4) if fresh_state
+                # Placeholder peak (fresh state, persisted-but-never-bootstrapped
+                # state, or peak still equal to CLI capital): anchor to live
+                # equity. max() here kept an inflated $80 peak vs $28 real
+                # equity and tripped DD-stop on every restart in April 2026.
+                placeholder = (fresh_state
+                               or state.get('_peak_placeholder', False)
+                               or state.get('peak') == args.capital)
+                state.pop('_peak_placeholder', None)  # bootstrap done either way
+                state['peak'] = (round(live_equity, 4) if placeholder
                                  else max(state.get('peak', live_equity), live_equity))
                 state['prev_equity'] = round(live_equity, 4)
                 print(f"   📊 Bootstrap equity from exchange: ${live_equity:.2f} "
@@ -3300,7 +3328,13 @@ def main():
                            for p in exch_pos if float(p.get('contracts', 0)) > 0)
                 trading_capital = total_usdt + upnl
                 state['equity'] = trading_capital
-                state['peak'] = max(state.get('peak', args.capital), trading_capital)
+                if state.pop('_peak_placeholder', False):
+                    # Startup bootstrap never succeeded — peak is still the CLI
+                    # placeholder, not a real high-water mark. Reset from live.
+                    state['peak'] = trading_capital
+                    print(f"   ♻️  Peak re-anchored from live equity: ${trading_capital:.2f}")
+                else:
+                    state['peak'] = max(state.get('peak', args.capital), trading_capital)
             except Exception as e:
                 print(f"   ⚠️  Balance refresh failed: {e}")
 
