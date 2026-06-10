@@ -49,8 +49,8 @@ del df
 if "timestamp" in regime_df.columns:
     regime_df = regime_df.set_index("timestamp")
 regime_aug = r129.add_persistence(regime_df, lookback=L_FROZEN)
-persist_col = f"persist_{L_FROZEN}"
-thr = r129.expanding_quantile_threshold(regime_aug[persist_col], Q_FROZEN, min_history=L_FROZEN)
+persist_col = f"td_persist_{L_FROZEN}h"
+thr = r129.expanding_quantile_threshold(regime_aug[persist_col], Q_FROZEN, min_periods=720)
 gate_series = (regime_aug[persist_col] < thr)
 print(f"  gate_on fraction: {gate_series.mean()*100:.1f}%")
 
