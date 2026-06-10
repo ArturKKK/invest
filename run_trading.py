@@ -2564,30 +2564,38 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
 # ============================================================
 
 def load_state(path):
-    if os.path.exists(path):
-        try:
-            with open(path) as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, ValueError):
-            print(f"   ⚠️  Corrupt state file {path}, starting fresh")
+    for p, label in ((path, ''), (path + '.bak', ' (.bak fallback)')):
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    if label:
+                        print(f"   ♻️  Recovered state from {p}")
+                    return data
+            except (json.JSONDecodeError, ValueError):
+                print(f"   ⚠️  Corrupt state file {p}{label}")
+    print("   ⚠️  No usable state file, starting fresh")
     return {}
 
 
 def save_state(state, path):
-    # Atomic write: write to tmp, then rename (prevents corruption + partial writes)
+    # Atomic write: tmp + fsync, keep previous good state as .bak, then rename.
+    # NO direct-write fallback: a truncating open() on failure is exactly how
+    # the live state file got corrupted (April 2026, 51-restart incident).
     tmp_path = path + '.tmp'
     try:
         with open(tmp_path, 'w') as f:
             json.dump(state, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.path.exists(path):
+            os.replace(path, path + '.bak')   # previous good state survives
         os.replace(tmp_path, path)
     except Exception as e:
-        print(f"   ⚠️  save_state failed: {e}")
-        # Try direct write as fallback
+        print(f"   ⚠️  save_state failed: {e} (previous state left intact)")
         try:
-            with open(path, 'w') as f:
-                json.dump(state, f, indent=2, default=str)
+            os.remove(tmp_path)
         except Exception:
             pass
 
@@ -3081,8 +3089,11 @@ def main():
     # Load trading state
     state_path = os.path.join(log_dir, 'trading_state.json')
     state = load_state(state_path)
-    if 'equity' not in state:
-        # Fresh state — bootstrap equity from exchange if possible
+    fresh_state = 'equity' not in state
+    if fresh_state:
+        # Fresh state — placeholders only; real equity/peak come from the
+        # exchange bootstrap below. Seeding peak=args.capital here caused the
+        # April-2026 false DD-stops (peak $80 vs real equity $28 → "-65% DD").
         state['equity'] = args.capital
         state['peak'] = args.capital
         state['recent_rets'] = []
@@ -3111,7 +3122,7 @@ def main():
         exchange = init_exchange(args.mode)
 
     # Bootstrap equity from exchange on fresh state
-    if exchange and state.get('equity', args.capital) == args.capital:
+    if exchange and (fresh_state or state.get('equity', args.capital) == args.capital):
         try:
             bal = exchange.fetch_balance()
             total_usdt = float(bal.get('USDT', {}).get('total', 0))
@@ -3121,10 +3132,14 @@ def main():
             live_equity = total_usdt + upnl
             if live_equity > 1:  # sanity: not empty account
                 state['equity'] = round(live_equity, 4)
-                state['peak'] = max(state.get('peak', args.capital), live_equity)
+                # Fresh state: peak = live equity (CLI capital is NOT a peak —
+                # max() here kept an inflated $80 peak vs $28 real equity and
+                # tripped DD-stop on every restart in April 2026).
+                state['peak'] = (round(live_equity, 4) if fresh_state
+                                 else max(state.get('peak', live_equity), live_equity))
                 state['prev_equity'] = round(live_equity, 4)
                 print(f"   📊 Bootstrap equity from exchange: ${live_equity:.2f} "
-                      f"(CLI capital: ${args.capital})")
+                      f"peak=${state['peak']:.2f} (CLI capital: ${args.capital})")
         except Exception as e:
             print(f"   ⚠️  Bootstrap equity failed: {e}")
 
