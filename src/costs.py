@@ -130,6 +130,40 @@ def cost_prod_blended_v2(sym):
     return 0.50 * 0.0004 + 0.50 * 0.0007         # 5.5 bps blended
 
 
+# ---------------------------------------------------------------------------
+# REF20 — S6 with 20% OKX referral fee cashback (2026-06-11, TRACK C)
+# ---------------------------------------------------------------------------
+# Cashback applies to EXCHANGE FEES only; spread/impact components unchanged.
+# S6 fee/spread decomposition (per side):
+#   T1: 90% maker(2bp fee) + 10% taker(5bp fee + 1bp spread)
+#       -> ref20: 0.90*(0.8*2.0) + 0.10*(0.8*5.0 + 1.0)
+#                = 0.90*1.6 + 0.10*5.0 = 1.44 + 0.50 = 1.94bp  (S6: 2.4bp)
+#   T2: 50%(2bp fee + 2bp spread) + 50%(5bp fee + 2bp spread)
+#       -> ref20: 0.50*(0.8*2.0 + 2.0) + 0.50*(0.8*5.0 + 2.0)
+#                = 0.50*3.6 + 0.50*6.0 = 1.80 + 3.00 = 4.80bp  (S6: 5.5bp)
+#   T3: 5bp fee + 5bp spread
+#       -> ref20: 0.8*5.0 + 5.0 = 4.0 + 5.0 = 9.0bp            (S6: 10bp)
+# Funding is NOT a fee -> unchanged (0.00012 per 12h in COST_MODELS).
+# ---------------------------------------------------------------------------
+
+
+def cost_prod_blended_ref20(sym):
+    """S6 cost_prod_blended with 20% OKX referral cashback on FEE components.
+
+    Identical tiers/mix to cost_prod_blended; fee parts x0.8, spread parts
+    unchanged (cashback rebates exchange fees, not market impact):
+      Tier1 2.4 -> 1.94bp | Tier2 5.5 -> 4.8bp | Tier3 10 -> 9.0bp per side.
+    See decomposition block above. Funding unchanged.
+    """
+    if sym in TIER1_SYMS:
+        return 0.90 * (0.8 * 0.0002) + 0.10 * (0.8 * 0.0005 + 0.0001)  # 1.94 bps
+    elif sym in TIER3_SYMS:
+        return 0.8 * 0.0005 + 0.0005                                    # 9.0 bps
+    else:
+        return (0.50 * (0.8 * 0.0002 + 0.0002)
+                + 0.50 * (0.8 * 0.0005 + 0.0002))                       # 4.8 bps
+
+
 def cost_okx_taker(sym):
     """OKX Futures Lv1, 100% market orders."""
     if sym in TIER1_SYMS:
@@ -157,6 +191,7 @@ COST_MODELS = {
     "pessimistic":  (cost_pessimistic,  0.00015),
     "prod_blended": (cost_prod_blended, 0.00012),   # S6 — THE default
     "prod_blended_v2": (cost_prod_blended_v2, 0.00012),  # D6-recalibrated re-tier (POINT 6, not yet backtested)
+    "prod_blended_ref20": (cost_prod_blended_ref20, 0.00012),  # S6 + 20% OKX referral cashback on fees
 }
 
 # Default for new research code
