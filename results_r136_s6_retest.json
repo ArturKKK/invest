@@ -1,0 +1,388 @@
+[
+  {
+    "cost_model": "lenient_r68",
+    "label": "BASE_CLOSE",
+    "net_sharpe": 3.262,
+    "delta_vs_base": 0.0,
+    "gross_sharpe": 3.703,
+    "total_ret_pct": 199.3,
+    "max_dd_pct": -10.8,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": null
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "BASE_SKIP",
+    "net_sharpe": 1.067,
+    "delta_vs_base": -2.195,
+    "gross_sharpe": 1.41,
+    "total_ret_pct": 55.4,
+    "max_dd_pct": -26.9,
+    "total_cost_pct": 17.22,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": -2.149393727999142,
+      "p_pos": 0.003,
+      "ci_low": -3.8342046474861937,
+      "ci_high": -0.6793639018463938
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "A1 t0.25 s0.50",
+    "net_sharpe": 3.259,
+    "delta_vs_base": -0.003,
+    "gross_sharpe": 3.627,
+    "total_ret_pct": 268.6,
+    "max_dd_pct": -13.0,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.042769043133921034,
+      "p_pos": 0.537,
+      "ci_low": -0.8210427311986431,
+      "ci_high": 0.9779077546424114
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "A1 t0.25 s0.60 (frozen)",
+    "net_sharpe": 3.354,
+    "delta_vs_base": 0.092,
+    "gross_sharpe": 3.749,
+    "total_ret_pct": 251.1,
+    "max_dd_pct": -12.5,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.1253673208369658,
+      "p_pos": 0.622,
+      "ci_low": -0.5571371828549418,
+      "ci_high": 0.8699139886296371
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "GATED_A1 L720 q0.20",
+    "net_sharpe": 3.518,
+    "delta_vs_base": 0.256,
+    "gross_sharpe": 3.947,
+    "total_ret_pct": 237.2,
+    "max_dd_pct": -11.0,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.2644710391283906,
+      "p_pos": 0.89,
+      "ci_low": -0.14284377097584056,
+      "ci_high": 0.7210387821411266
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "G2 lb14 LEGACY(leak)",
+    "net_sharpe": 3.648,
+    "delta_vs_base": 0.386,
+    "gross_sharpe": 4.134,
+    "total_ret_pct": 207.1,
+    "max_dd_pct": -9.9,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.42292431424982113,
+      "p_pos": 0.907,
+      "ci_low": -0.24849516240539452,
+      "ci_high": 1.0845086338659065
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "G2 lb14 HONEST",
+    "net_sharpe": 3.169,
+    "delta_vs_base": -0.093,
+    "gross_sharpe": 3.606,
+    "total_ret_pct": 192.8,
+    "max_dd_pct": -10.5,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": -0.06500188695371922,
+      "p_pos": 0.374,
+      "ci_low": -0.46540207550336227,
+      "ci_high": 0.3484686928314745
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "G2 lb28 LEGACY(leak)",
+    "net_sharpe": 3.604,
+    "delta_vs_base": 0.342,
+    "gross_sharpe": 4.072,
+    "total_ret_pct": 214.8,
+    "max_dd_pct": -9.9,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.37675884272063404,
+      "p_pos": 0.896,
+      "ci_low": -0.1905566514217156,
+      "ci_high": 1.0023427065055712
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "G2 lb28 HONEST",
+    "net_sharpe": 3.209,
+    "delta_vs_base": -0.053,
+    "gross_sharpe": 3.645,
+    "total_ret_pct": 197.2,
+    "max_dd_pct": -12.0,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": -0.018177567316775514,
+      "p_pos": 0.457,
+      "ci_low": -0.5171255204211512,
+      "ci_high": 0.5403107499820898
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "A1+G2 lb28 LEGACY(leak)",
+    "net_sharpe": 3.594,
+    "delta_vs_base": 0.332,
+    "gross_sharpe": 3.985,
+    "total_ret_pct": 289.3,
+    "max_dd_pct": -11.1,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.4020125981555855,
+      "p_pos": 0.764,
+      "ci_low": -0.6394751841636277,
+      "ci_high": 1.4730559422865563
+    }
+  },
+  {
+    "cost_model": "lenient_r68",
+    "label": "A1+G2 lb28 HONEST",
+    "net_sharpe": 3.259,
+    "delta_vs_base": -0.003,
+    "gross_sharpe": 3.628,
+    "total_ret_pct": 267.4,
+    "max_dd_pct": -13.4,
+    "total_cost_pct": 15.51,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.06493857472709395,
+      "p_pos": 0.535,
+      "ci_low": -0.9705512059917147,
+      "ci_high": 1.1218414759787632
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "BASE_CLOSE",
+    "net_sharpe": 2.831,
+    "delta_vs_base": 0.0,
+    "gross_sharpe": 3.703,
+    "total_ret_pct": 157.3,
+    "max_dd_pct": -10.9,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": null
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "BASE_SKIP",
+    "net_sharpe": 0.775,
+    "delta_vs_base": -2.056,
+    "gross_sharpe": 1.41,
+    "total_ret_pct": 34.3,
+    "max_dd_pct": -27.3,
+    "total_cost_pct": 31.78,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": -2.012611565266597,
+      "p_pos": 0.005,
+      "ci_low": -3.668235463391866,
+      "ci_high": -0.5821077532841088
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "A1 t0.25 s0.50",
+    "net_sharpe": 2.9,
+    "delta_vs_base": 0.069,
+    "gross_sharpe": 3.627,
+    "total_ret_pct": 216.9,
+    "max_dd_pct": -13.1,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.11629100826042048,
+      "p_pos": 0.592,
+      "ci_low": -0.7442476260246069,
+      "ci_high": 1.0621257528156904
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "A1 t0.25 s0.60 (frozen)",
+    "net_sharpe": 2.968,
+    "delta_vs_base": 0.137,
+    "gross_sharpe": 3.749,
+    "total_ret_pct": 201.9,
+    "max_dd_pct": -12.6,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.17241372800130217,
+      "p_pos": 0.674,
+      "ci_low": -0.5176616343096918,
+      "ci_high": 0.8999831894170833
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "GATED_A1 L720 q0.20",
+    "net_sharpe": 3.099,
+    "delta_vs_base": 0.268,
+    "gross_sharpe": 3.947,
+    "total_ret_pct": 189.9,
+    "max_dd_pct": -11.7,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.2762979138998669,
+      "p_pos": 0.903,
+      "ci_low": -0.1244421863406649,
+      "ci_high": 0.7307069911208351
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "G2 lb14 LEGACY(leak)",
+    "net_sharpe": 3.174,
+    "delta_vs_base": 0.343,
+    "gross_sharpe": 4.134,
+    "total_ret_pct": 164.0,
+    "max_dd_pct": -10.9,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.37914038088412033,
+      "p_pos": 0.883,
+      "ci_low": -0.2848031575411313,
+      "ci_high": 1.034328565910771
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "G2 lb14 HONEST",
+    "net_sharpe": 2.742,
+    "delta_vs_base": -0.089,
+    "gross_sharpe": 3.606,
+    "total_ret_pct": 151.7,
+    "max_dd_pct": -11.3,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": -0.061958220743247215,
+      "p_pos": 0.379,
+      "ci_low": -0.46091934996815265,
+      "ci_high": 0.3488210554620481
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "G2 lb28 LEGACY(leak)",
+    "net_sharpe": 3.146,
+    "delta_vs_base": 0.315,
+    "gross_sharpe": 4.072,
+    "total_ret_pct": 170.7,
+    "max_dd_pct": -10.7,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.349065885978352,
+      "p_pos": 0.881,
+      "ci_low": -0.19817785845643388,
+      "ci_high": 0.9574136549603258
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "G2 lb28 HONEST",
+    "net_sharpe": 2.783,
+    "delta_vs_base": -0.048,
+    "gross_sharpe": 3.645,
+    "total_ret_pct": 155.5,
+    "max_dd_pct": -13.1,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": -0.014900541385242253,
+      "p_pos": 0.463,
+      "ci_low": -0.4991236319901695,
+      "ci_high": 0.5312053348132707
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "A1+G2 lb28 LEGACY(leak)",
+    "net_sharpe": 3.211,
+    "delta_vs_base": 0.38,
+    "gross_sharpe": 3.985,
+    "total_ret_pct": 234.7,
+    "max_dd_pct": -11.9,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.45113932839529297,
+      "p_pos": 0.789,
+      "ci_low": -0.567224385663972,
+      "ci_high": 1.507252478522252
+    }
+  },
+  {
+    "cost_model": "prod_blended",
+    "label": "A1+G2 lb28 HONEST",
+    "net_sharpe": 2.899,
+    "delta_vs_base": 0.068,
+    "gross_sharpe": 3.628,
+    "total_ret_pct": 215.9,
+    "max_dd_pct": -13.6,
+    "total_cost_pct": 30.63,
+    "n_periods": 1013,
+    "n_flat": 371,
+    "boot": {
+      "mean_delta": 0.13653364641210936,
+      "p_pos": 0.59,
+      "ci_low": -0.8776516949461273,
+      "ci_high": 1.1669141223893957
+    }
+  }
+]
