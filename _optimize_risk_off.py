@@ -259,67 +259,6 @@ def simulate(merged, regime_df, n_long, n_short, cfg=PROD_CFG):
     return pd.DataFrame(all_rets)
 
 
-def simulate_skip(merged, regime_df, n_long, n_short, cfg=PROD_CFG):
-    """SKIP mode: just skip trading during risk-off, don't close positions"""
-    trend_cutoff = cfg["trend_cutoff"]
-    rebal_hours = cfg["rebal_hours"]
-
-    all_rets = []
-    prev_longs: Set[str] = set()
-    prev_shorts: Set[str] = set()
-
-    timestamps_sorted = sorted(merged["timestamp"].unique())
-    grouped = {ts: grp for ts, grp in merged.groupby("timestamp")}
-    rebal_timestamps = timestamps_sorted[::rebal_hours]
-
-    for ts in rebal_timestamps:
-        if ts not in regime_df.index or ts not in grouped: continue
-        row = regime_df.loc[ts]
-        trend_str = row.get("trend_strength", 0)
-
-        # SKIP ONLY: don't open new positions, don't close existing ones
-        if trend_str > trend_cutoff:
-            continue
-
-        grp = grouped[ts].copy()
-        n = len(grp)
-
-        nl = min(n_long, n // 3)
-        ns = min(n_short, n // 3)
-        if nl == 0 and ns == 0: continue
-
-        exposure = 1.0
-        dyn_threshold = cfg.get("dyn_threshold", 0.5)
-        if dyn_threshold is not None and trend_str > dyn_threshold:
-            exposure = max(0.1, 1.0 - (trend_str - dyn_threshold) / (trend_cutoff - dyn_threshold) * 0.9)
-
-        grp = grp.sort_values("pred", ascending=False).reset_index(drop=True)
-        longs = list(grp.head(int(nl)).index)
-        shorts = list(grp.tail(int(ns)).index)
-        longs_names = set(grp.loc[longs, "symbol"].values)
-        shorts_names = set(grp.loc[shorts, "symbol"].values)
-
-        long_rets = grp.loc[longs, "fwd_ret"].mean() if len(longs) > 0 else 0
-        short_rets = -grp.loc[shorts, "fwd_ret"].mean() if len(shorts) > 0 else 0
-        gross_ret = 0.5 * long_rets + 0.5 * short_rets
-        gross_ret *= exposure
-
-        turnover = len((longs_names | shorts_names) ^ (prev_longs | prev_shorts))
-        cost = turnover * 0.0003
-        net_ret = gross_ret - cost
-
-        all_rets.append({
-            "timestamp": ts, "gross_ret": gross_ret, "net_ret": net_ret,
-            "cost": cost, "n_long": len(longs), "n_short": len(shorts),
-            "turnover": turnover,
-        })
-
-        prev_longs, prev_shorts = longs_names, shorts_names
-
-    if not all_rets: return pd.DataFrame()
-    return pd.DataFrame(all_rets)
-
-
 def compute_sharpe(rets):
     if len(rets) == 0 or rets.std() == 0: return 0
     return (rets.sum() / rets.std()) / np.sqrt(len(rets)) * np.sqrt(730)
@@ -337,36 +276,24 @@ if __name__ == "__main__":
     results = []
 
     print("\n" + "=" * 90)
-    print("  MODE 1: CLOSE (d9019ea, pay commission on risk-off close)")
+    print("  MODE 1: CLOSE (current d9019ea, pay commission on risk-off close)")
     print("=" * 90)
     for cutoff in [0.8, 0.85, 0.9, 0.95, 1.0]:
         cfg = PROD_CFG.copy()
         cfg['trend_cutoff'] = cutoff
-        port = simulate(merged, regime_df, 6, 3, cfg)
+        port = simulate(merged, regime_df, 4, 2, cfg)
         if len(port) == 0: continue
         sh = compute_sharpe(port['net_ret'].values)
-        results.append({'mode': 'CLOSE', 'cutoff': cutoff, 'sharpe': sh, 'periods': len(port), 'return': port['net_ret'].sum() * 100})
-        print(f"  cutoff={cutoff:.2f}: Sharpe={sh:.3f}, periods={len(port)}, return={port['net_ret'].sum()*100:.1f}%")
-
-    print("\n" + "=" * 90)
-    print("  MODE 2: SKIP (production: don't open new positions during risk-off)")
-    print("=" * 90)
-    for cutoff in [0.8, 0.85, 0.9, 0.95, 1.0]:
-        cfg = PROD_CFG.copy()
-        cfg['trend_cutoff'] = cutoff
-        port = simulate_skip(merged, regime_df, 6, 3, cfg)
-        if len(port) == 0: continue
-        sh = compute_sharpe(port['net_ret'].values)
-        results.append({'mode': 'SKIP', 'cutoff': cutoff, 'sharpe': sh, 'periods': len(port), 'return': port['net_ret'].sum() * 100})
-        print(f"  cutoff={cutoff:.2f}: Sharpe={sh:.3f}, periods={len(port)}, return={port['net_ret'].sum()*100:.1f}%")
+        results.append({'mode': 'CLOSE', 'cutoff': cutoff, 'sharpe': sh, 'periods': len(port)})
+        print(f"  cutoff={cutoff}: Sharpe={sh:.3f}, periods={len(port)}")
 
     df_res = pd.DataFrame(results).sort_values('sharpe', ascending=False)
     print("\n" + "=" * 90)
     print("  RESULTS (sorted by Sharpe)")
     print("=" * 90)
-    print(df_res[['mode', 'cutoff', 'sharpe', 'periods', 'return']].to_string(index=False))
+    print(df_res.to_string(index=False))
 
     best = df_res.iloc[0]
     print(f"\n✅ BEST: {best['mode']} cutoff={best['cutoff']:.2f} → Sharpe {best['sharpe']:.3f}")
-    print("\nSaved: results_risk_off_comparison.csv")
-    df_res[['mode', 'cutoff', 'sharpe', 'periods', 'return']].to_csv('results_risk_off_comparison.csv', index=False)
+    print("\nSaved: /data/datasets/results_risk_off_opt.csv")
+    df_res.to_csv('/data/datasets/results_risk_off_opt.csv', index=False)
