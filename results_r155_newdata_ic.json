@@ -1,0 +1,130 @@
+[
+  {
+    "feature": "okx_binance_basis_z168",
+    "ic": 0.0221,
+    "t_nw12": 10.21,
+    "n": 16550,
+    "thirds": "3/3",
+    "verdict": "STRONG"
+  },
+  {
+    "feature": "okx_binance_basis_mom24",
+    "ic": 0.0193,
+    "t_nw12": 9.91,
+    "n": 16609,
+    "thirds": "3/3",
+    "verdict": "STRONG"
+  },
+  {
+    "feature": "coinbase_premium_mom24",
+    "ic": 0.0141,
+    "t_nw12": 8.17,
+    "n": 16599,
+    "thirds": "3/3",
+    "verdict": "STRONG"
+  },
+  {
+    "feature": "coinbase_premium_z168",
+    "ic": 0.0194,
+    "t_nw12": 6.91,
+    "n": 16545,
+    "thirds": "3/3",
+    "verdict": "STRONG"
+  },
+  {
+    "feature": "basis_level",
+    "ic": -0.0095,
+    "t_nw12": -5.97,
+    "n": 51665,
+    "thirds": "2/3",
+    "verdict": "WEAK"
+  },
+  {
+    "feature": "basis_range_z168",
+    "ic": -0.0079,
+    "t_nw12": -5.1,
+    "n": 51582,
+    "thirds": "3/3",
+    "verdict": "STRONG"
+  },
+  {
+    "feature": "markindex_gap_z168",
+    "ic": -0.0051,
+    "t_nw12": -3.35,
+    "n": 51652,
+    "thirds": "2/3",
+    "verdict": "WEAK"
+  },
+  {
+    "feature": "okx_taker_imb_z30d",
+    "ic": -0.0098,
+    "t_nw12": -2.7,
+    "n": 19929,
+    "thirds": "2/3",
+    "verdict": "WEAK"
+  },
+  {
+    "feature": "okx_oi_chg5d",
+    "ic": -0.0075,
+    "t_nw12": -2.03,
+    "n": 20145,
+    "thirds": "3/3",
+    "verdict": "WEAK"
+  },
+  {
+    "feature": "markindex_gap_mom24",
+    "ic": -0.0027,
+    "t_nw12": -1.96,
+    "n": 51687,
+    "thirds": "2/3",
+    "verdict": "DEAD"
+  },
+  {
+    "feature": "basis_z168",
+    "ic": -0.0027,
+    "t_nw12": -1.89,
+    "n": 51582,
+    "thirds": "2/3",
+    "verdict": "DEAD"
+  },
+  {
+    "feature": "okx_oi_z30d",
+    "ic": -0.0049,
+    "t_nw12": -1.33,
+    "n": 19929,
+    "thirds": "3/3",
+    "verdict": "DEAD"
+  },
+  {
+    "feature": "okx_ls_acct_z30d",
+    "ic": 0.0045,
+    "t_nw12": 1.21,
+    "n": 19929,
+    "thirds": "2/3",
+    "verdict": "DEAD"
+  },
+  {
+    "feature": "okx_taker_imb_1d",
+    "ic": -0.0041,
+    "t_nw12": -1.14,
+    "n": 20265,
+    "thirds": "3/3",
+    "verdict": "DEAD"
+  },
+  {
+    "feature": "okx_ls_pos_top_z30d",
+    "ic": -0.0029,
+    "t_nw12": -0.78,
+    "n": 17985,
+    "thirds": "2/3",
+    "verdict": "DEAD"
+  },
+  {
+    "feature": "basis_mom24",
+    "ic": -0.0006,
+    "t_nw12": -0.52,
+    "n": 51641,
+    "thirds": "2/3",
+    "verdict": "DEAD"
+  }
+]
