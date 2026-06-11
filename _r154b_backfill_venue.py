@@ -55,6 +55,9 @@ def okx_backfill():
                   f"{pd.Timestamp(int(rows[-1]['ts']), unit='ms', tz='UTC')}", flush=True)
     new = pd.concat(out, ignore_index=True)
     new["ts"] = new["ts"].astype(str)
+    for c in ["open", "high", "low", "close", "vol", "vol_ccy"]:
+        if c in new.columns:
+            new[c] = pd.to_numeric(new[c], errors="coerce")
     new = new.drop_duplicates(subset=["instId", "ts"])
     new.to_parquet(path, index=False)
     print(f"okx candles total: {len(new):,}")
@@ -97,6 +100,9 @@ def cb_backfill():
             print(f"  cb {prod}: +{len(rows)} rows back to "
                   f"{pd.Timestamp(min(r2['ts'] for r2 in rows), unit='s', tz='UTC')}", flush=True)
     new = pd.concat(out, ignore_index=True)
+    for c in ["low", "high", "open", "close", "volume"]:
+        new[c] = pd.to_numeric(new[c], errors="coerce")
+    new["ts"] = pd.to_numeric(new["ts"], errors="coerce")
     new = new.drop_duplicates(subset=["product", "ts"])
     new.to_parquet(path, index=False)
     print(f"coinbase candles total: {len(new):,}")
