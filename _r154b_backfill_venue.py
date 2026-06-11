@@ -99,11 +99,21 @@ def cb_backfill():
             out.append(pd.DataFrame(rows))
             print(f"  cb {prod}: +{len(rows)} rows back to "
                   f"{pd.Timestamp(min(r2['ts'] for r2 in rows), unit='s', tz='UTC')}", flush=True)
-    new = pd.concat(out, ignore_index=True)
-    for c in ["low", "high", "open", "close", "volume"]:
-        new[c] = pd.to_numeric(new[c], errors="coerce")
-    new["ts"] = pd.to_numeric(new["ts"], errors="coerce")
-    new = new.drop_duplicates(subset=["product", "ts"])
+    # Normalize BOTH old and new frames to identical dtypes before concat
+    norm = []
+    for fr in out:
+        fr = fr.copy()
+        tsn = pd.to_numeric(fr["ts"], errors="coerce")
+        if tsn.notna().mean() < 0.9:  # ISO strings
+            tsn = pd.to_datetime(fr["ts"], utc=True, errors="coerce").astype("int64") // 10**9
+        fr["ts"] = tsn.astype("int64")
+        for c in ["low", "high", "open", "close", "volume"]:
+            fr[c] = pd.to_numeric(fr[c], errors="coerce")
+        fr = fr[["product", "ts", "low", "high", "open", "close", "volume"]]
+        norm.append(fr)
+    new = pd.concat(norm, ignore_index=True)
+    new = new.drop_duplicates(subset=["product", "ts"]).sort_values(["product", "ts"])
+    new["datetime"] = pd.to_datetime(new["ts"], unit="s", utc=True).astype(str)
     new.to_parquet(path, index=False)
     print(f"coinbase candles total: {len(new):,}")
 
