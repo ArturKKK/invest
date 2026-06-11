@@ -194,20 +194,6 @@ MAKER_TTL_SECONDS = 90        # wait per attempt for post-only fill
 MAKER_MAX_RETRIES = 3         # attempts before market fallback
 MAKER_MID_OFFSET = 0.00005   # 0.5bp inside mid for initial placement
 MAKER_AGGR_STEP = 0.00010    # widen 1bp per retry toward spread
-
-# R158: maker-first extended to ALL tiers (upper bound +0.316 Sharpe on honest
-# sim, R121/R136-verified). Thinner books get longer TTLs. Disable without
-# redeploy via MAKER_ALL_TIERS=0 in .env.
-MAKER_ALL_TIERS = os.getenv('MAKER_ALL_TIERS', '1').lower() not in ('0', 'false')
-_MAKER_TTL_BY_TIER = {'T1': 90, 'T2': 120, 'T3': 180}
-
-
-def _sym_tier(sym):
-    if sym in _TIER1_SYMS:
-        return 'T1'
-    if sym in _TIER3_SYMS:
-        return 'T3'
-    return 'T2'
 EXEC_LOG_PATH = 'trading_logs/execution_log.csv'
 EXEC_LOG_HEADER = (
     'timestamp,symbol,okx_sym,tier,side,order_type,attempt,'
@@ -1855,9 +1841,8 @@ def execute(exchange, positions, dry_run=True, leverage=1):
             amount = _usd_to_contracts(okx_sym, pos['usd'])
             base_params = {'tdMode': 'isolated', 'posSide': 'net'}
 
-            # MAKER-FIRST: TIER1 always; ALL tiers when MAKER_ALL_TIERS (R158,
-            # upper bound +0.316 Sharpe; per-tier TTLs handle thinner books)
-            if (MAKER_ALL_TIERS or pos['symbol'] in _TIER1_SYMS) and not is_retry:
+            # MAKER-FIRST for TIER1 symbols (BTC, ETH, SOL, BNB, XRP)
+            if pos['symbol'] in _TIER1_SYMS and not is_retry:
                 try:
                     ticker = None
                     if exchange:
@@ -2053,8 +2038,7 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
     """
     import time as _time
 
-    tier = _sym_tier(symbol)
-    ttl = _MAKER_TTL_BY_TIER.get(tier, MAKER_TTL_SECONDS)
+    tier = 'T1'
 
     if ticker_info is None:
         result = exchange.create_order(symbol=okx_sym, type='market', side=side,
@@ -2109,9 +2093,9 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
             print(f"         [MAKER] Attempt {attempt} failed for {symbol}: {str(e)[:80]}")
             break
 
-        # Poll for fill up to the tier TTL
+        # Poll for fill up to MAKER_TTL_SECONDS
         filled = False
-        while _time.time() - t0 < ttl:
+        while _time.time() - t0 < MAKER_TTL_SECONDS:
             _time.sleep(2)
             try:
                 check = exchange.fetch_order(order_id, okx_sym)
@@ -2138,7 +2122,7 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
                 exchange.cancel_order(order_id, okx_sym)
             except Exception:
                 pass
-            # Check fill state after cancel (race win or PARTIAL fill)
+            # Check if filled during cancel race
             try:
                 check = exchange.fetch_order(order_id, okx_sym)
                 if check['status'] == 'closed':
@@ -2147,18 +2131,6 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
                                    ticker_info, limit_px, check, fill_time_s, True)
                     _log_fill(okx_sym, side, check, ticker_info, 'limit')
                     return check
-                # Partial fill: only the REMAINDER may be re-ordered, otherwise
-                # the next attempt/market fallback would double-execute.
-                part = float(check.get('filled') or 0)
-                if part > 0:
-                    amount = max(amount - part, 0)
-                    print(f"         [MAKER] Partial fill {part} cts on attempt {attempt} "
-                          f"for {symbol}; remainder {amount} cts")
-                    _log_fill(okx_sym, side, check, ticker_info, 'limit_partial')
-                    if amount < 1:  # remainder below 1 contract — done
-                        _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_partial_done',
-                                       ticker_info, limit_px, check, _time.time() - t0, True)
-                        return check
             except Exception:
                 pass
 
