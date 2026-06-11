@@ -100,7 +100,7 @@ results = []
 
 # ── A. UM premium-index basis ────────────────────────────────────────────
 try:
-    pr = pd.read_parquet("data/raw/basis/um_premium.parquet")
+    pr = pd.read_parquet("data/raw/basis/premium_index_klines_1h.parquet")
     pr["timestamp"] = pd.to_datetime(pr["timestamp"], utc=True)
     lvl = pr.pivot_table(index="timestamp", columns="symbol", values="close", aggfunc="first")
     rng = (pr.pivot_table(index="timestamp", columns="symbol", values="high", aggfunc="first")
@@ -115,8 +115,8 @@ except Exception as e:
 
 # ── B. mark vs index gap ─────────────────────────────────────────────────
 try:
-    mk = pd.read_parquet("data/raw/basis/um_mark.parquet")
-    ix = pd.read_parquet("data/raw/basis/um_index.parquet")
+    mk = pd.read_parquet("data/raw/basis/mark_price_klines_1h.parquet")
+    ix = pd.read_parquet("data/raw/basis/index_price_klines_1h.parquet")
     for d in (mk, ix):
         d["timestamp"] = pd.to_datetime(d["timestamp"], utc=True)
     mkp = mk.pivot_table(index="timestamp", columns="symbol", values="close", aggfunc="first")
@@ -232,7 +232,7 @@ except Exception as e:
 # ── F. CM vs UM premium divergence ───────────────────────────────────────
 try:
     cm = pd.read_parquet("data/raw/basis/cm_premium.parquet")
-    um = pd.read_parquet("data/raw/basis/um_premium.parquet")
+    um = pd.read_parquet("data/raw/basis/premium_index_klines_1h.parquet")
     for d in (cm, um):
         d["timestamp"] = pd.to_datetime(d["timestamp"], utc=True)
     cm["symu"] = cm["symbol"].str.replace("USD_PERP", "USDT", regex=False)
