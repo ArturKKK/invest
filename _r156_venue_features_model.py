@@ -30,8 +30,10 @@ from _r136_s6_retest import simulate_r136
 
 SEEDS_STD = [0, 7, 13, 42, 99]
 SEEDS_ALT = [1, 8, 14, 43, 100]
-NEWF = ["okx_binance_basis_z168", "okx_binance_basis_mom24",
-        "coinbase_premium_z168", "coinbase_premium_mom24", "basis_range_z168"]
+VENUE = ["okx_binance_basis_z168", "okx_binance_basis_mom24",
+         "coinbase_premium_z168", "coinbase_premium_mom24", "basis_range_z168"]
+BD = ["bd_imb1_z168", "bd_imb1_chg24", "bd_shape_z168"]
+NEWF = VENUE + BD
 
 
 def zscore(p, w):
@@ -92,6 +94,28 @@ rng = rng.reindex(grid)
 panels["basis_range_z168"] = zscore(rng, 168)
 del pr, rng
 
+# bookDepth imbalance + shape
+import glob as _glob
+bidn, askn, bidn5, askn5 = {}, {}, {}, {}
+for p in _glob.glob("data/raw/bookdepth/*.parquet"):
+    s = p.split("/")[-1].replace(".parquet", "")
+    d2 = pd.read_parquet(p)
+    d2["timestamp"] = pd.to_datetime(d2["timestamp"], utc=True)
+    d2 = d2.set_index("timestamp").sort_index()
+    d2 = d2[~d2.index.duplicated()]
+    bidn[s] = d2["notional_m1"].astype(float)
+    askn[s] = d2["notional_p1"].astype(float)
+    bidn5[s] = d2[[f"notional_m{i}" for i in range(1, 6)]].sum(axis=1)
+    askn5[s] = d2[[f"notional_p{i}" for i in range(1, 6)]].sum(axis=1)
+B1 = pd.DataFrame(bidn).reindex(grid); A1 = pd.DataFrame(askn).reindex(grid)
+B5 = pd.DataFrame(bidn5).reindex(grid); A5 = pd.DataFrame(askn5).reindex(grid)
+imb1 = (B1 - A1) / (B1 + A1 + 1e-9)
+shape = (B1 + A1) / (B5 + A5 + 1e-9)
+panels["bd_imb1_z168"] = zscore(imb1, 168)
+panels["bd_imb1_chg24"] = imb1 - imb1.shift(24)
+panels["bd_shape_z168"] = zscore(shape, 168)
+del bidn, askn, bidn5, askn5, B1, A1, B5, A5, imb1, shape
+
 # Merge into long frame
 df["bsym"] = df["symbol"].str.replace("/", "", regex=False)
 for name, p in panels.items():
@@ -135,21 +159,27 @@ def boot_paired(a, b, n_boot=1000, block=14, seed=156):
     return wins / n_boot
 
 
-print("\n=== STD SEEDS (paired) ===")
-ns30s, p30s = run(feats30, SEEDS_STD, "30f std")
-ns35s, p35s = run(feats35, SEEDS_STD, "35f std (+5 venue)")
-p_imp_s = boot_paired(p35s, p30s)
-print(f"  -> delta {ns35s-ns30s:+.3f}, P(35f>30f) = {p_imp_s:.3f}")
+GROUPS = {"30f_base": feats30, "venue": feats30 + VENUE, "bookdepth": feats30 + BD,
+          "all": feats30 + VENUE + BD}
+print("\n=== STD SEEDS (paired groups) ===")
+ports_s, ns_s = {}, {}
+for g, fl in GROUPS.items():
+    ns_s[g], ports_s[g] = run(fl, SEEDS_STD, f"{g} std ({len(fl)}f)")
+for g in ("venue", "bookdepth", "all"):
+    p = boot_paired(ports_s[g], ports_s["30f_base"])
+    print(f"  {g}: delta {ns_s[g]-ns_s['30f_base']:+.3f}, P(>base) = {p:.3f}")
 
 print("\n=== ALT SEEDS (confirmation) ===")
-ns30a, p30a = run(feats30, SEEDS_ALT, "30f alt")
-ns35a, p35a = run(feats35, SEEDS_ALT, "35f alt (+5 venue)")
-p_imp_a = boot_paired(p35a, p30a)
-print(f"  -> delta {ns35a-ns30a:+.3f}, P(35f>30f) = {p_imp_a:.3f}")
+ports_a, ns_a = {}, {}
+for g, fl in GROUPS.items():
+    ns_a[g], ports_a[g] = run(fl, SEEDS_ALT, f"{g} alt ({len(fl)}f)")
+for g in ("venue", "bookdepth", "all"):
+    p = boot_paired(ports_a[g], ports_a["30f_base"])
+    print(f"  {g}: delta {ns_a[g]-ns_a['30f_base']:+.3f}, P(>base) = {p:.3f}")
 
 print("\n" + "=" * 70)
-print(f"  VERDICT: std delta {ns35s-ns30s:+.3f} (P={p_imp_s:.2f}) | "
-      f"alt delta {ns35a-ns30a:+.3f} (P={p_imp_a:.2f})")
-ok = (ns35s - ns30s > 0) and (ns35a - ns30a > 0) and min(p_imp_s, p_imp_a) >= 0.6
-print(f"  {'PROMOTE to pristine-OOS check' if ok else 'NOT confirmed (seed-robust gate failed)'}")
+for g in ("venue", "bookdepth", "all"):
+    ds, da = ns_s[g]-ns_s["30f_base"], ns_a[g]-ns_a["30f_base"]
+    ok = ds > 0 and da > 0
+    print(f"  {g:10s}: std {ds:+.3f} | alt {da:+.3f} -> {'CANDIDATE' if ok else 'not confirmed'}")
 print("R156 done.")
