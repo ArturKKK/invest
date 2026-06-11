@@ -4,7 +4,8 @@
 2. Merge as a SEPARATE step (re-runnable without re-download).
 Mixed ts units handled per-value; datetime recomputed with errors='coerce'.
 """
-import os, sys, time
+import os, socket, sys, time
+socket.setdefaulttimeout(30)  # covers proxy CONNECT hangs that requests timeout misses
 import pandas as pd
 import requests
 sys.path.insert(0, ".")
