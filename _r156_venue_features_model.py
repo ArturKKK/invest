@@ -41,9 +41,10 @@ def zscore(p, w):
 
 
 def to_long(panel, name):
-    out = panel.reset_index().melt(id_vars="index", var_name="bsym", value_name=name)
-    out = out.rename(columns={"index": "timestamp"})
-    return out
+    out = panel.reset_index()
+    idcol = out.columns[0]
+    out = out.melt(id_vars=idcol, var_name="bsym", value_name=name)
+    return out.rename(columns={idcol: "timestamp"})
 
 
 print("Loading frame...")
