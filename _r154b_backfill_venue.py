@@ -29,15 +29,20 @@ def okx_backfill():
         oldest = int(pd.to_numeric(sub["ts"]).min())
         if pd.Timestamp(oldest, unit="ms", tz="UTC") <= TARGET:
             continue
-        rows, after = [], oldest
+        rows, after, fails = [], oldest, 0
         while True:
             try:
                 r = requests.get("https://www.okx.com/api/v5/market/history-candles",
                                  params={"instId": inst, "bar": "1H", "after": str(after), "limit": "300"},
                                  timeout=30)
                 data = r.json().get("data", [])
+                fails = 0
             except Exception:
-                time.sleep(2)
+                fails += 1
+                if fails > 5:
+                    print(f"  okx {inst}: giving up after 5 fails at {after}", flush=True)
+                    break
+                time.sleep(2 * fails)
                 continue
             if not data:
                 break
@@ -76,6 +81,7 @@ def cb_backfill():
             continue
         rows = []
         end = oldest
+        fails = 0
         while end > TARGET:
             start = max(end - pd.Timedelta(hours=300), TARGET)
             try:
@@ -84,8 +90,13 @@ def cb_backfill():
                                          "start": start.isoformat(), "end": end.isoformat()},
                                  timeout=30)
                 data = r.json() if r.status_code == 200 else []
+                fails = 0
             except Exception:
-                time.sleep(2)
+                fails += 1
+                if fails > 5:
+                    print(f"  cb {prod}: giving up after 5 fails at {end}", flush=True)
+                    break
+                time.sleep(2 * fails)
                 continue
             if not isinstance(data, list) or not data:
                 break
