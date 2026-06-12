@@ -189,11 +189,41 @@ _TIER3_SYMS = {
     'GALA/USDT', 'S/USDT', 'MATIC/USDT',
 }
 
-# Maker-first parameters (R49.1)
-MAKER_TTL_SECONDS = 90        # wait per attempt for post-only fill
+# Maker-first parameters (R49.1; ladder reworked in R171)
+MAKER_TTL_SECONDS = 90        # wait per attempt for post-only fill (T1)
 MAKER_MAX_RETRIES = 3         # attempts before market fallback
-MAKER_MID_OFFSET = 0.00005   # 0.5bp inside mid for initial placement
-MAKER_AGGR_STEP = 0.00010    # widen 1bp per retry toward spread
+MAKER_MID_OFFSET = 0.00005   # legacy (R49.1), kept for log compatibility
+MAKER_AGGR_STEP = 0.00010    # legacy (R49.1), kept for log compatibility
+
+# R171 — maker-first for ALL tiers (sim R167: stack 3.08 → 3.26-3.33).
+# Off by default; enable via systemd EnvironmentFile MAKER_ALL_TIERS=1.
+MAKER_ALL_TIERS = os.environ.get('MAKER_ALL_TIERS', '0') == '1'
+MAKER_TTL_BY_TIER = {'T1': 90, 'T2': 100, 'T3': 120}  # bounded: rebalance is SERIAL
+MAKER_TOUCH_INSIDE = 0.0001   # final attempt: 1bp inside the far touch
+MAKER_REBALANCE_BUDGET_S = 900  # ladder budget per rebalance; past it → fast path
+                                # (the minute-DD monitor only runs between cycles,
+                                # so a rebalance must not stretch unbounded)
+
+
+class _MakerUnknownState(Exception):
+    """Order state unknowable after retries — the order may be live on the
+    exchange, so callers must NOT re-order (over-fill is the catastrophe;
+    under-fill self-heals from fetch_positions next cycle)."""
+
+
+def _tier_of(sym):
+    if sym in _TIER1_SYMS:
+        return 'T1'
+    if sym in _TIER3_SYMS:
+        return 'T3'
+    return 'T2'
+
+
+def _use_maker_first(sym):
+    """Maker-first applies to T1 always; to T2/T3 only behind MAKER_ALL_TIERS."""
+    return sym in _TIER1_SYMS or MAKER_ALL_TIERS
+
+
 EXEC_LOG_PATH = 'trading_logs/execution_log.csv'
 EXEC_LOG_HEADER = (
     'timestamp,symbol,okx_sym,tier,side,order_type,attempt,'
@@ -1842,7 +1872,7 @@ def execute(exchange, positions, dry_run=True, leverage=1):
             base_params = {'tdMode': 'isolated', 'posSide': 'net'}
 
             # MAKER-FIRST for TIER1 symbols (BTC, ETH, SOL, BNB, XRP)
-            if pos['symbol'] in _TIER1_SYMS and not is_retry:
+            if _use_maker_first(pos['symbol']) and not is_retry:
                 try:
                     ticker = None
                     if exchange:
@@ -1850,11 +1880,18 @@ def execute(exchange, positions, dry_run=True, leverage=1):
                     order = _maker_first_limit(
                         exchange, pos['symbol'], okx_sym, side, amount, ticker, base_params
                     )
-                    if order:
+                    if _is_order_filled(order):
                         tag = "💎"  # maker fill
-                        print(f"      {tag} {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} ({amount} cts) → {order['id']} [MAKER]")
-                        results.append({**pos, 'status': 'filled', 'order_id': order['id']})
+                        print(f"      {tag} {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} ({amount} cts) → {order.get('id', '?')} [MAKER]")
+                        results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
                         return True
+                except _MakerUnknownState as e:
+                    # R171: order may still be live on the exchange — a market
+                    # re-order here is exactly the reverted 2x-position bug.
+                    print(f"      ⚠️  Maker unknown-state for {pos['symbol']} — NOT re-ordering: {str(e)[:60]}")
+                    results.append({**pos, 'status': 'error',
+                                    'error': f'maker unknown-state: {str(e)[:100]}'})
+                    return True
                 except Exception as e:
                     # Fall through to market fallback
                     print(f"      ⚠️  Maker-first failed for {pos['symbol']}: {str(e)[:60]} — falling back to market")
@@ -1980,6 +2017,25 @@ def _is_order_filled(order):
             and filled is not None and float(filled) > 0)
 
 
+def _fill_grade(order):
+    """'full' | 'partial' | 'none' vs the originally requested amount.
+
+    R171: _maker_first_limit returns filled = CUMULATIVE qty and amount =
+    originally requested qty. A partial must neither be re-ordered (over-fill)
+    nor finalized as a complete close/open (books would silently drift).
+    Orders without a usable 'amount' grade as 'full' (pre-R171 contract).
+    """
+    if not _is_order_filled(order):
+        return 'none'
+    try:
+        req = float(order.get('amount'))
+    except (TypeError, ValueError):
+        return 'full'
+    if req <= 0:
+        return 'full'
+    return 'full' if float(order.get('filled') or 0) >= req * 0.999 else 'partial'
+
+
 def _log_execution(symbol, okx_sym, side, tier, attempt, order_type,
                    ticker_info, limit_px, order, fill_time_s, was_maker):
     """Write per-trade execution metrics to EXEC_LOG_PATH for R49 pilot analysis."""
@@ -2023,22 +2079,31 @@ def _log_execution(symbol, okx_sym, side, tier, attempt, order_type,
         print(f"   ⚠️  _log_execution failed: {e}", flush=True)
 
 
-def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, params):
+def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, params,
+                       tier=None):
     """
-    R49.1 — Post-only maker-first limit order for TIER1 symbols.
+    R49.1/R171 — Post-only maker-first limit order (all tiers behind flag).
 
-    Strategy:
-      - Attempt 1: post-only limit at mid +/- MAKER_MID_OFFSET (0.5bp inside spread)
-      - Attempt 2: post-only limit at mid +/- (MAKER_MID_OFFSET + MAKER_AGGR_STEP)
-      - Attempt 3: aggressive limit at bid/ask (like _limit_with_fallback)
-      - Final: market fallback
+    R171 rework (per the adversarial review that reverted v1):
+      - escalation moves TOWARD the far touch (join touch → mid → 1bp inside
+        the far touch); v1 walked AWAY from it and clamped behind the touch;
+      - order book re-fetched before every attempt (v1 froze the entry ticker
+        for the whole ladder, up to ~4.5 min stale);
+      - partial fills accumulate across attempts; every retry and the market
+        fallback order only the lot-rounded REMAINDER;
+      - if anything filled and a later step fails, returns a synthetic
+        'closed' order carrying filled-so-far so callers never re-order the
+        full size (under-fill self-heals from fetch_positions next cycle;
+        over-fill does not);
+      - per-tier TTL from MAKER_TTL_BY_TIER (T1 90s / T2 100s / T3 120s).
 
-    Logs: effective_bps, was_maker, fill_time_s to trading_logs/execution_log.csv
-    Returns: order dict (filled) or None on failure
+    Returns: order dict with status 'closed' and filled = CUMULATIVE quantity.
+    Raises only on clean zero-fill failures (keeps callers' 51008 sweeps safe).
     """
     import time as _time
 
-    tier = 'T1'
+    tier = tier or _tier_of(symbol)
+    ttl = MAKER_TTL_BY_TIER.get(tier, MAKER_TTL_SECONDS)
 
     if ticker_info is None:
         result = exchange.create_order(symbol=okx_sym, type='market', side=side,
@@ -2049,39 +2114,88 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
         _log_fill(okx_sym, side, result, ticker_info, 'market')
         return result
 
+    # Market metadata for lot-rounding remainders (lookup by exchange id).
+    mkt = None
+    try:
+        mkt = exchange.market(okx_sym)
+    except Exception:
+        mkt = next((m for m in (getattr(exchange, 'markets', None) or {}).values()
+                    if m.get('id') == okx_sym), None)
+    lot = (mkt or {}).get('precision', {}).get('amount', 0)
+    min_amt = (((mkt or {}).get('limits', {}) or {}).get('amount', {}) or {}).get('min')
+    if not isinstance(min_amt, (int, float)) or min_amt <= 0:
+        min_amt = lot if isinstance(lot, (int, float)) and lot > 0 else 0
+
+    def _lot_floor(qty):
+        if isinstance(lot, (int, float)) and lot > 0:
+            return round(int(qty / lot) * lot, 10)
+        return int(qty)
+
     bid = float(ticker_info['bid'])
     ask = float(ticker_info['ask'])
-    mid = (bid + ask) / 2
 
-    # Three maker attempts: increasingly aggressive toward taker
-    # Attempt 1: deep inside spread (true post-only)
-    # Attempt 2: mid (neutral)
-    # Attempt 3: just inside bid/ask (near-taker, may still get maker fill)
-    offsets = [
-        MAKER_MID_OFFSET,
-        MAKER_MID_OFFSET + MAKER_AGGR_STEP,
-        MAKER_MID_OFFSET + 2 * MAKER_AGGR_STEP,
-    ]
+    total_filled = 0.0
+    cum_cost = 0.0
+    last_avg = 0.0
+    remaining = amount
 
-    for attempt, offset in enumerate(offsets, start=1):
+    def _partial_result(order_id):
+        px = (cum_cost / total_filled) if (cum_cost > 0 and total_filled > 0) else (
+            last_avg if last_avg > 0 else (bid + ask) / 2)
+        return {'id': order_id, 'status': 'closed', 'average': px,
+                'filled': total_filled, 'cost': px * total_filled,
+                'amount': amount,
+                'info': {'r171_partial_synthetic': True}}
+
+    def _note_fill(check):
+        nonlocal total_filled, cum_cost, last_avg, remaining
+        got = float(check.get('filled') or 0)
+        if got > 0:
+            total_filled += got
+            avg = float(check.get('average') or 0)
+            if avg > 0:
+                last_avg = avg
+                cum_cost += got * avg
+            remaining = _lot_floor(max(amount - total_filled, 0.0))
+
+    for attempt in range(1, MAKER_MAX_RETRIES + 1):
+        if remaining <= 0 or (min_amt and remaining < min_amt):
+            break
+
+        # Fresh book each attempt; keep last known on fetch failure.
+        try:
+            t = exchange.fetch_ticker(okx_sym)
+            if t and t.get('bid') and t.get('ask'):
+                bid, ask = float(t['bid']), float(t['ask'])
+        except Exception:
+            pass
+        if bid <= 0 or ask <= 0:
+            break
+        mid = (bid + ask) / 2
+        book = {'bid': bid, 'ask': ask}
+
+        # Escalate TOWARD the far touch: join touch → mid → 1bp inside far touch.
+        # Final rung is clamped to never be LESS aggressive than joining the
+        # touch — on sub-1bp spreads ask*(1-1bp) would sit BEHIND the bid.
         if side == 'buy':
-            limit_px = round(mid - offset * mid, 8)  # below mid
+            ladder = [bid, mid, max(ask * (1 - MAKER_TOUCH_INSIDE), bid)]
         else:
-            limit_px = round(mid + offset * mid, 8)  # above mid
+            ladder = [ask, mid, min(bid * (1 + MAKER_TOUCH_INSIDE), ask)]
+        limit_px = ladder[min(attempt, len(ladder)) - 1]
+        try:
+            limit_px = float(exchange.price_to_precision(okx_sym, limit_px))
+        except Exception:
+            limit_px = round(limit_px, 8)
 
-        # Clamp to not cross spread (would become taker)
-        if side == 'buy':
-            limit_px = min(limit_px, bid * 0.9999)  # stay below ask
-        else:
-            limit_px = max(limit_px, ask * 1.0001)  # stay above bid
-
-        maker_params = {**params, 'execType': 'post_only'}
+        # R171: 'execType' was a no-op in ccxt 4.5.42 (orders were plain limits);
+        # 'postOnly' is the real ccxt flag → okx ordType='post_only'.
+        maker_params = {**params, 'postOnly': True}
         t0 = _time.time()
         order_id = None
         try:
             order = exchange.create_order(
                 symbol=okx_sym, type='limit', side=side,
-                amount=amount, price=limit_px, params=maker_params
+                amount=remaining, price=limit_px, params=maker_params
             )
             order_id = order['id']
         except Exception as e:
@@ -2089,64 +2203,128 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
             if 'post_only' in str(e).lower() or '51119' in str(e):
                 print(f"         [MAKER] Attempt {attempt} post_only rejected for {symbol} → retry")
                 continue
-            # Other error → fall through to market
             print(f"         [MAKER] Attempt {attempt} failed for {symbol}: {str(e)[:80]}")
             break
 
-        # Poll for fill up to MAKER_TTL_SECONDS
-        filled = False
-        while _time.time() - t0 < MAKER_TTL_SECONDS:
+        # Poll for fill up to per-tier TTL
+        while _time.time() - t0 < ttl:
             _time.sleep(2)
             try:
                 check = exchange.fetch_order(order_id, okx_sym)
-                if check['status'] == 'closed':
-                    fill_time_s = _time.time() - t0
-                    # Determine if maker fill (fee negative or very low)
-                    fee_rate = abs(float(check.get('fee', {}).get('cost', 0) or 0)) / max(float(check.get('cost', 1e-10) or 1e-10), 1e-10)
-                    was_maker = fee_rate < 0.0003  # taker fee ~0.05%, maker ~0% or rebate
-                    _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_limit',
-                                   ticker_info, limit_px, check, fill_time_s, was_maker)
-                    _log_fill(okx_sym, side, check, ticker_info, 'limit')
-                    print(f"         [MAKER] {'✅' if was_maker else '🟡'} "
-                          f"{'MAKER' if was_maker else 'TAKER'} fill {symbol} "
-                          f"attempt={attempt} t={fill_time_s:.0f}s eff_bps≈{(-1 if was_maker else 5):.0f}")
-                    return check
-                if check['status'] == 'canceled':
-                    break
             except Exception:
-                pass
+                continue
+            if check['status'] == 'closed':
+                _note_fill(check)
+                fill_time_s = _time.time() - t0
+                # Determine if maker fill (fee negative or very low);
+                # fee can be None on okx → never let this raise on a filled order
+                fee = check.get('fee') or {}
+                fee_rate = abs(float(fee.get('cost', 0) or 0)) / max(float(check.get('cost', 1e-10) or 1e-10), 1e-10)
+                was_maker = fee_rate < 0.0003  # taker fee ~0.05%, maker ~0% or rebate
+                _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_limit',
+                               book, limit_px, check, fill_time_s, was_maker)
+                _log_fill(okx_sym, side, check, book, 'limit')
+                print(f"         [MAKER] {'✅' if was_maker else '🟡'} "
+                      f"{'MAKER' if was_maker else 'TAKER'} fill {symbol} "
+                      f"attempt={attempt} t={fill_time_s:.0f}s eff_bps≈{(-1 if was_maker else 5):.0f}")
+                out = dict(check)
+                out['filled'] = total_filled
+                out['amount'] = amount
+                if cum_cost > 0 and total_filled > 0:
+                    out['average'] = cum_cost / total_filled
+                    out['cost'] = cum_cost
+                return out
+            if check['status'] == 'canceled':
+                break  # final state read once below, after cancel block
 
-        # Cancel and try next attempt
+        # TTL expired (or externally canceled) → cancel, then read final state
+        # ROBUSTLY: a single silent try/except here was how v1 lost partials.
         if order_id:
             try:
                 exchange.cancel_order(order_id, okx_sym)
             except Exception:
-                pass
-            # Check if filled during cancel race
-            try:
-                check = exchange.fetch_order(order_id, okx_sym)
-                if check['status'] == 'closed':
-                    fill_time_s = _time.time() - t0
-                    _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_limit_racewin',
-                                   ticker_info, limit_px, check, fill_time_s, True)
-                    _log_fill(okx_sym, side, check, ticker_info, 'limit')
-                    return check
-            except Exception:
-                pass
+                pass  # already filled/canceled
+            final = None
+            for _ in range(3):
+                try:
+                    final = exchange.fetch_order(order_id, okx_sym)
+                    break
+                except Exception:
+                    _time.sleep(0.7)
+            if final is None:
+                # Unknown state: assuming zero fill could double-execute.
+                if total_filled > 0:
+                    return _partial_result(order_id)
+                raise _MakerUnknownState(
+                    f"maker order {order_id} state unknown after cancel for {symbol}")
+            if final['status'] == 'closed':
+                _note_fill(final)
+                _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_limit_racewin',
+                               book, limit_px, final, _time.time() - t0, True)
+                _log_fill(okx_sym, side, final, book, 'limit')
+                out = dict(final)
+                out['filled'] = total_filled
+                out['amount'] = amount
+                if cum_cost > 0 and total_filled > 0:
+                    out['average'] = cum_cost / total_filled
+                    out['cost'] = cum_cost
+                return out
+            before = total_filled
+            _note_fill(final)  # accumulate partial; next attempt orders remainder
+            if total_filled > before:
+                _log_execution(symbol, okx_sym, side, tier, attempt, 'maker_partial',
+                               book, limit_px, final, _time.time() - t0, True)
 
-        print(f"         [MAKER] Attempt {attempt} unfilled for {symbol} → {'retry' if attempt < len(offsets) else 'market fallback'}")
+        print(f"         [MAKER] Attempt {attempt} unfilled for {symbol} "
+              f"(cum {total_filled}/{amount}) → "
+              f"{'retry' if attempt < MAKER_MAX_RETRIES else 'market fallback'}")
 
-    # All maker attempts exhausted → market fallback
+    # Ladder exhausted → market fallback for the lot-rounded remainder only
+    remaining = _lot_floor(max(amount - total_filled, 0.0))
+    if remaining <= 0 or (min_amt and remaining < min_amt):
+        return _partial_result(None)  # effectively done (dust remainder)
+    book = {'bid': bid, 'ask': ask}
     t0 = _time.time()
-    result = exchange.create_order(symbol=okx_sym, type='market', side=side,
-                                   amount=amount, params=params)
-    result = _settle_order(exchange, result, okx_sym)
+    fallback_type = 'market_fallback'
+    try:
+        result = exchange.create_order(symbol=okx_sym, type='market', side=side,
+                                       amount=remaining, params=params)
+        result = _settle_order(exchange, result, okx_sym)
+        if result.get('status') != 'closed' or not result.get('average'):
+            # Ack received but settle unconfirmed: the order EXISTS on the
+            # exchange. Reporting failure would make callers re-order full
+            # size. Telemetry is tagged 'market_unconfirmed' (price below is
+            # an approximation) so execution analysis can exclude these rows.
+            fallback_type = 'market_unconfirmed'
+            px = last_avg if last_avg > 0 else (bid + ask) / 2
+            result = {'id': result.get('id'), 'status': 'closed', 'average': px,
+                      'filled': remaining, 'cost': px * remaining,
+                      'info': {'r171_unconfirmed_market': True}}
+    except Exception as e:
+        if total_filled > 0:
+            return _partial_result(None)  # never let callers re-order full size
+        import ccxt as _ccxt
+        if isinstance(e, _ccxt.NetworkError):
+            # Order may have been accepted — callers must not re-order.
+            raise _MakerUnknownState(
+                f"market fallback state unknown for {symbol}: {str(e)[:80]}") from e
+        raise
     fill_time_s = _time.time() - t0
-    _log_execution(symbol, okx_sym, side, tier, len(offsets) + 1, 'market_fallback',
-                   ticker_info, None, result, fill_time_s, False)
-    _log_fill(okx_sym, side, result, ticker_info, 'market_fallback')
-    print(f"         [MAKER] ⏩ Market fallback for {symbol}")
-    return result
+    _log_execution(symbol, okx_sym, side, tier, MAKER_MAX_RETRIES + 1, fallback_type,
+                   book, None, result, fill_time_s, False)
+    _log_fill(okx_sym, side, result, book, fallback_type)
+    print(f"         [MAKER] ⏩ Market fallback for {symbol} ({remaining} cts)")
+    out = dict(result)
+    mfill = float(result.get('filled') or 0)
+    mavg = float(result.get('average') or 0)
+    if mfill > 0 and mavg > 0:
+        cum_cost += mfill * mavg
+    out['filled'] = total_filled + mfill
+    out['amount'] = amount
+    if cum_cost > 0 and out['filled'] > 0:
+        out['average'] = cum_cost / out['filled']
+        out['cost'] = cum_cost
+    return out
 
 
 def _log_fill(symbol, side, order, ticker_info, order_type):
@@ -2308,6 +2486,31 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
         print(f"      ⚠️  load_markets: {e}")
     markets = exchange.markets
 
+    # ── 1b. Cancel orphaned resting orders (R171) ──
+    # A crash/restart mid-rebalance leaves post-only orders on the book; left
+    # alone they fill later into positions the diff below never chose. All our
+    # own placement is synchronous, so anything resting here is an orphan.
+    try:
+        stale = exchange.fetch_open_orders()
+        for o in stale:
+            try:
+                exchange.cancel_order(o['id'], o.get('symbol'))
+            except Exception:
+                pass
+        if stale:
+            print(f"      🧹 Canceled {len(stale)} orphaned resting orders")
+    except Exception as e:
+        print(f"      ⚠️  Open-orders sweep failed: {str(e)[:80]}")
+
+    # R171: maker ladders are allowed only inside this execution budget; past
+    # it everything takes the fast path so the cycle finishes and the
+    # between-cycles DD monitor can run again.
+    _exec_t0 = _time.time()
+
+    def _maker_ok(s):
+        return (_use_maker_first(s) and use_limit
+                and (_time.time() - _exec_t0) < MAKER_REBALANCE_BUDGET_S)
+
     live_map = {}  # (our_symbol, side) -> {notional, contracts, upnl}
     pnl_snapshot = {}  # (clean_symbol, side) -> upnl  (for dashboard)
     try:
@@ -2392,7 +2595,7 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
             continue
         try:
             _, ticker_info = _convert_usd_to_contracts(exchange, markets, okx_sym, 0)
-            if sym in _TIER1_SYMS:
+            if _maker_ok(sym):
                 order = _maker_first_limit(
                     exchange, sym, okx_sym, close_side, live_info['contracts'],
                     ticker_info,
@@ -2404,11 +2607,20 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                     params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True},
                     use_limit=use_limit
                 )
-            if _is_order_filled(order):
+            grade = _fill_grade(order)
+            if grade == 'full':
                 print(f"      ✅ Closed {side} {sym} → {order.get('id', '?')}")
                 actions['closed'].add(key)
                 results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
                                 'status': 'closed', 'order_id': order.get('id')})
+            elif grade == 'partial':
+                # R171: remainder is still live — do NOT finalize the close
+                # (kept out of actions['closed'] so ledger/dash PnL isn't
+                # booked); the next cycle's diff re-closes it. Never re-order.
+                print(f"      🟡 Close {sym} PARTIAL "
+                      f"({order.get('filled')}/{order.get('amount')}) — rest next cycle")
+                results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
+                                'status': 'closed_partial', 'order_id': order.get('id')})
             else:
                 print(f"      ⚠️  Close {sym} NOT FILLED (id={order.get('id', '?')})")
                 results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
@@ -2452,11 +2664,18 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
             order = _maker_first_limit(
                 exchange, sym, okx_sym, order_side, contracts_delta,
                 ticker_info, params=params
-            ) if sym in _TIER1_SYMS else _limit_with_fallback(
+            ) if _maker_ok(sym) else _limit_with_fallback(
                 exchange, okx_sym, order_side, contracts_delta, ticker_info,
                 params=params, use_limit=use_limit
             )
-            if _is_order_filled(order):
+            grade = _fill_grade(order)
+            if grade == 'partial':
+                # R171: position moved but not to target — treat as kept (the
+                # next cycle re-diffs); never re-order the delta.
+                print(f"      🟡 Resize {sym} PARTIAL "
+                      f"({order.get('filled')}/{order.get('amount')}) — kept, re-diff next cycle")
+                actions['kept'].add(key)
+            elif grade == 'full':
                 print(f"      ✅ {tag} {side} {sym}: ${abs_delta:.0f} ({contracts_delta} cts) → {order.get('id', '?')}")
                 actions['resized'].add(key)
                 actions['resize_details'].append({
@@ -2493,16 +2712,24 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
             order = _maker_first_limit(
                 exchange, pos['symbol'], okx_sym, order_side, contracts,
                 ticker_info, params={'tdMode': 'isolated', 'posSide': 'net'}
-            ) if pos['symbol'] in _TIER1_SYMS else _limit_with_fallback(
+            ) if _maker_ok(pos['symbol']) else _limit_with_fallback(
                 exchange, okx_sym, order_side, contracts, ticker_info,
                 params={'tdMode': 'isolated', 'posSide': 'net'},
                 use_limit=use_limit
             )
-            if _is_order_filled(order):
-                print(f"      ✅ {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
-                      f"({contracts} cts) → {order.get('id', '?')}")
+            grade = _fill_grade(order)
+            if grade != 'none':
+                # R171: 'partial' counts as opened — the position EXISTS, so a
+                # full-size retry sweep would stack on top of it. Next cycle's
+                # resize tops it up to target.
+                flag = '✅' if grade == 'full' else '🟡'
+                print(f"      {flag} {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
+                      f"({contracts} cts) → {order.get('id', '?')}"
+                      f"{' [PARTIAL]' if grade == 'partial' else ''}")
                 actions['opened'].add((pos['symbol'], pos['side']))
-                results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+                results.append({**pos,
+                                'status': 'filled' if grade == 'full' else 'filled_partial',
+                                'order_id': order.get('id')})
             else:
                 print(f"      ⚠️  {order_side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} "
                       f"NOT FILLED (id={order.get('id', '?')})")
@@ -2527,10 +2754,10 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
             try:
                 contracts, ticker_info = _convert_usd_to_contracts(
                     exchange, markets, okx_sym, pos['usd'])
-                order = _maker_first_limit(
-                    exchange, pos['symbol'], okx_sym, order_side, contracts,
-                    ticker_info, params={'tdMode': 'isolated', 'posSide': 'net'}
-                ) if pos['symbol'] in _TIER1_SYMS else _limit_with_fallback(
+                # R171: margin-retry sweep skips the maker ladder (mirrors
+                # execute()'s is_retry semantics) — margin windows are short,
+                # speed matters more than the fee here.
+                order = _limit_with_fallback(
                     exchange, okx_sym, order_side, contracts, ticker_info,
                     params={'tdMode': 'isolated', 'posSide': 'net'},
                     use_limit=use_limit
@@ -3413,7 +3640,9 @@ def main():
             print(f"\n🛑 DD stop: closing all positions...")
             results, actions = rebalance_positions(
                 exchange, [], leverage=risk_cfg['leverage'],
-                dry_run=False, use_limit=True
+                # R171: emergency flattens go straight to market — never let a
+                # risk-off exit crawl through the maker ladder.
+                dry_run=False, use_limit=False
             )
             pnl_snapshot = actions.get('pnl_snapshot', {})
             # Mark closed dash_trades with PnL
@@ -3431,7 +3660,9 @@ def main():
             print(f"\n🔴 Trend risk-off: closing all positions to match sim behavior...")
             results, actions = rebalance_positions(
                 exchange, [], leverage=risk_cfg['leverage'],
-                dry_run=False, use_limit=True
+                # R171: emergency flattens go straight to market — never let a
+                # risk-off exit crawl through the maker ladder.
+                dry_run=False, use_limit=False
             )
             pnl_snapshot = actions.get('pnl_snapshot', {})
             dash_trades = state.get('dash_trades', [])
