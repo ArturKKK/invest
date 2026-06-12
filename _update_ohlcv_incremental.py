@@ -21,18 +21,25 @@ LIMIT = 1000
 
 
 def fetch_incremental(exchange, symbol: str, since_ts: int) -> pd.DataFrame:
-    """Fetch all candles from since_ts to now, paginating."""
+    """Fetch all candles from since_ts to now, paginating. Retries are BOUNDED
+    (the unbounded loop once parked the updater on one symbol for hours)."""
     import ccxt
     rows = []
     cur = since_ts
+    errors = 0
     while True:
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, TIMEFRAME, since=cur, limit=LIMIT)
+            errors = 0
         except ccxt.BadSymbol:
             print(f"  ⚠ {symbol}: BadSymbol on Binance, skip")
             return pd.DataFrame()
         except Exception as e:
-            print(f"  ⚠ {symbol}: error {e}, retrying in 5s")
+            errors += 1
+            if errors >= 5:
+                print(f"  ⚠ {symbol}: 5 consecutive errors, keeping what we have ({len(rows)} bars)")
+                break
+            print(f"  ⚠ {symbol}: error {e}, retry {errors}/5 in 5s")
             time.sleep(5)
             continue
         if not ohlcv:
@@ -59,7 +66,12 @@ def main():
         print("  No existing _1h.parquet files in data/raw/")
         sys.exit(1)
 
-    exchange = ccxt.binance({"enableRateLimit": True, "options": {"defaultType": "spot"}})
+    exchange = ccxt.binance({"enableRateLimit": True, "timeout": 90000,
+                             "options": {"defaultType": "spot"}})
+    # ccxt 4.x ignores env HTTP(S)_PROXY — must set explicitly (one attr only)
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    if proxy:
+        exchange.httpsProxy = proxy
     exchange.session.verify = False
 
     print(f"  Updating {len(files)} OHLCV files...")
