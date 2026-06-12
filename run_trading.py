@@ -176,6 +176,9 @@ DEFAULT_RISK = {
     # → notional sized by the int exchange leverage (legacy behavior).
     'vt_enabled': False,
     'net_leverage': None,
+    # R185: GATED_A1 gate threshold (frozen expanding-q0.20 of td_persist_720h,
+    # recomputed at every retrain and shipped via --config). None = overlay off.
+    'a1_gate_thr': None,
 }
 
 # ── Partial rebalance settings ──
@@ -994,6 +997,23 @@ def generate_signal_cls(df, root):
             'trend_direction': trend_direction,
         }
         print(f"   📊 BTC regime: 7d={btc_ret_7d*100:+.1f}%, trend_str={trend_strength:.2f}")
+        # R185: trend-direction persistence for GATED_A1 (_r129 add_persistence:
+        # td.shift(1) rolling(720, min_periods=360) |mean|/std on the HOURLY
+        # trend-direction series). Needs >=528h of closes for the first value;
+        # with the default 800h window the rolling window is partial — same
+        # min_periods semantics the research series used at its start.
+        if len(btc_data) >= 168 + 360:
+            closes_s = btc_data.set_index('timestamp')['close']
+            ret168 = closes_s / closes_s.shift(168) - 1
+            hvol = closes_s.pct_change().rolling(168).std()
+            td_series = ret168 / (hvol * np.sqrt(168) + 1e-10)
+            td_lag = td_series.shift(1)
+            rmean = td_lag.rolling(720, min_periods=360).mean()
+            rstd = td_lag.rolling(720, min_periods=360).std()
+            persist = (rmean.abs() / (rstd + 1e-9)).iloc[-1]
+            if np.isfinite(persist):
+                regime_data['td_persist_720h'] = float(persist)
+                print(f"   📊 td_persist_720h = {persist:.3f}")
 
     result = latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
         'score', ascending=False).reset_index(drop=True)
@@ -1832,6 +1852,25 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
 
     long_half = total_alloc * long_alloc_frac
     short_half = total_alloc * (1 - long_alloc_frac)
+
+    # R185: GATED_A1 (A1_FROZEN, R131/R136 — the only surviving S6 overlay).
+    # In LOW-persistence regimes (gate on) the COUNTER-TREND side is scaled
+    # to 0.60 (sim _r136:289-293): trend up → shorts ×0.6; trend down →
+    # longs ×0.6. Gate threshold is FROZEN at deploy from the research
+    # expanding quantile (risk_cfg['a1_gate_thr']); None → overlay off.
+    if (cls_mode and regime_data and n_long > 0 and n_short > 0
+            and risk_cfg.get('a1_gate_thr') is not None):
+        _persist = regime_data.get('td_persist_720h')
+        _tdir = regime_data.get('trend_direction', 0.0)
+        if _persist is not None and _persist < risk_cfg['a1_gate_thr']:
+            if _tdir > 0.25:
+                short_half *= 0.60
+                print(f"   🧷 GATED_A1: persist={_persist:.2f} < "
+                      f"{risk_cfg['a1_gate_thr']:.2f}, trend↑ → shorts ×0.60")
+            elif _tdir < -0.25:
+                long_half *= 0.60
+                print(f"   🧷 GATED_A1: persist={_persist:.2f} < "
+                      f"{risk_cfg['a1_gate_thr']:.2f}, trend↓ → longs ×0.60")
 
     # Adaptive n_long/n_short: reduce if per-position size < min order ($5)
     MIN_ORDER = 5.0
