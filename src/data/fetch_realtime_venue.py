@@ -54,6 +54,22 @@ def _get(url, params=None, retries=2, timeout=15):
     return None
 
 
+def _atomic_save(df, path):
+    """tmp + os.replace: a kill mid-write must never truncate the parquet
+    (a corrupt venue file silently disables the specialist leg)."""
+    tmp = path + '.tmp'
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
+def _warn_gap(name, last_ts_utc):
+    """Single-page fetchers can't heal gaps older than ~300h — say so."""
+    age_h = (datetime.now(timezone.utc) - last_ts_utc).total_seconds() / 3600
+    if age_h > 290:
+        print(f"      🚨 {name}: parquet is {age_h:.0f}h stale — beyond one fetch "
+              f"page; run the backfill script, live patching cannot heal this gap")
+
+
 def _floor_hour_utc():
     now = datetime.now(timezone.utc)
     return now.replace(minute=0, second=0, microsecond=0)
@@ -66,6 +82,7 @@ def _patch_okx(root, verbose):
     existing = pd.read_parquet(path)
     inst_ids = sorted(existing['instId'].unique())
     ts_num = pd.to_numeric(existing['ts'], errors='coerce')
+    _warn_gap('okx', pd.Timestamp(int(ts_num.max()), unit='ms', tz='UTC'))
     cutoff_ms = int(_floor_hour_utc().timestamp() * 1000)  # exclude current hour
     new_rows = []
     for inst in inst_ids:
@@ -89,7 +106,7 @@ def _patch_okx(root, verbose):
     combined = (combined.drop_duplicates(['instId', '_tsn'], keep='last')
                 .sort_values(['instId', '_tsn']).drop(columns=['_tsn'])
                 .reset_index(drop=True))
-    combined.to_parquet(path, index=False)
+    _atomic_save(combined, path)
     if verbose:
         print(f"      ✅ okx: +{len(new_rows)} bars ({len(inst_ids)} inst)")
     return len(new_rows)
@@ -101,6 +118,7 @@ def _patch_coinbase(root, verbose):
         return 0
     existing = pd.read_parquet(path)
     products = sorted(existing['product'].unique())
+    _warn_gap('coinbase', pd.Timestamp(int(existing['ts'].max()), unit='s', tz='UTC'))
     cutoff_s = int(_floor_hour_utc().timestamp())
     new_rows = []
     for product in products:
@@ -122,7 +140,7 @@ def _patch_coinbase(root, verbose):
     combined = pd.concat([existing, pd.DataFrame(new_rows)], ignore_index=True)
     combined = (combined.drop_duplicates(['product', 'ts'], keep='last')
                 .sort_values(['product', 'ts']).reset_index(drop=True))
-    combined.to_parquet(path, index=False)
+    _atomic_save(combined, path)
     if verbose:
         print(f"      ✅ coinbase: +{len(new_rows)} bars ({len(products)} prod)")
     return len(new_rows)
@@ -136,6 +154,7 @@ def _patch_premium(root, verbose):
     # stored tz-naive UTC (matches backfill; research applies utc=True on read)
     ex_ts = pd.to_datetime(existing['timestamp'])
     symbols = sorted(existing['symbol'].unique())
+    _warn_gap('premium', ex_ts.max().tz_localize('UTC'))
     cutoff = _floor_hour_utc().replace(tzinfo=None)
     new_rows = []
     for sym in symbols:
@@ -155,7 +174,7 @@ def _patch_premium(root, verbose):
     combined = pd.concat([existing, pd.DataFrame(new_rows)], ignore_index=True)
     combined = (combined.drop_duplicates(['symbol', 'timestamp'], keep='last')
                 .sort_values(['symbol', 'timestamp']).reset_index(drop=True))
-    combined.to_parquet(path, index=False)
+    _atomic_save(combined, path)
     if verbose:
         print(f"      ✅ premium: +{len(new_rows)} bars ({len(symbols)} syms)")
     return len(new_rows)

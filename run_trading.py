@@ -209,6 +209,7 @@ MAKER_ALL_TIERS = os.environ.get('MAKER_ALL_TIERS', '0') == '1'
 MAKER_TTL_BY_TIER = {'T1': 90, 'T2': 100, 'T3': 120}  # bounded: rebalance is SERIAL
 MAKER_TOUCH_INSIDE = 0.0001   # final attempt: 1bp inside the far touch
 MAKER_REBALANCE_BUDGET_S = 900  # ladder budget per rebalance; past it → fast path
+MAKER_IN_DEGRADED_FALLBACK = False  # R188: execute() fallback = market-only (speed)
                                 # (the minute-DD monitor only runs between cycles,
                                 # so a rebalance must not stretch unbounded)
 
@@ -842,8 +843,12 @@ def add_venue_features(df, root):
             out = out.melt(id_vars=idc, var_name='_bsym', value_name=name
                            ).rename(columns={idc: 'timestamp'})
             df = df.merge(out, on=['timestamp', '_bsym'], how='left')
-        cov = df.groupby('symbol')['okx_binance_basis_z168'].transform(
-            lambda s: float(s.notna().any()))
+        # covered = ANY of the three venues has data for the symbol (R188:
+        # OKX-only flag missed Coinbase/premium-only coverage)
+        cov = None
+        for _vc in ('okx_binance_basis_z168', 'coinbase_premium_z168', 'basis_range_z168'):
+            c = df.groupby('symbol')[_vc].transform(lambda s: float(s.notna().any()))
+            cov = c if cov is None else np.maximum(cov, c)
         df['venue_covered'] = cov
         df = df.drop(columns=['_bsym'])
         n_cov = int(df.groupby('symbol')['venue_covered'].last().sum())
@@ -894,6 +899,13 @@ def _blend_specialist_leg(latest, champ_ensemble, root):
             print("   ⚠️  No venue coverage — spec leg neutral this cycle")
             return champ_ensemble
         X = latest[feats].fillna(0).values
+        # R187: hard guard — if venue features carry no cross-sectional info
+        # at the decision row (all-zero / all-equal), the leg is inert; skip
+        # LOUDLY instead of blending a constant (panel critical finding).
+        if np.allclose(X.std(axis=0), 0):
+            print("   🚨 Spec features have ZERO cross-sectional variance at the "
+                  "decision row — leg skipped (check venue data alignment!)")
+            return champ_ensemble
         lp = np.mean([m.predict(X) for m in lgb_models], axis=0)
         dm = xgb_lib.DMatrix(X, feature_names=feats)
         xp = np.mean([m.predict(dm) for m in xgb_models], axis=0)
@@ -985,11 +997,13 @@ def generate_signal_cls(df, root):
     # BTC regime data for trend_cutoff / dyn_threshold (R25 CFG uses trend_cutoff=0.9)
     btc_data = df[df['symbol'] == 'BTC/USDT'].sort_values('timestamp')
     regime_data = {}
-    if len(btc_data) >= 168:
+    if len(btc_data) >= 169:
         btc_close = btc_data['close'].values
-        btc_ret_7d = btc_close[-1] / btc_close[-168] - 1 if btc_close[-168] > 0 else 0
+        # R188: 168-step return (was 167) + ddof=1 — matches the research
+        # regime series (pandas pct_change(168) / rolling().std() semantics)
+        btc_ret_7d = btc_close[-1] / btc_close[-169] - 1 if btc_close[-169] > 0 else 0
         btc_hourly_rets = np.diff(btc_close[-169:]) / (btc_close[-169:-1] + 1e-10)
-        btc_vol_7d = float(np.std(btc_hourly_rets))
+        btc_vol_7d = float(np.std(btc_hourly_rets, ddof=1))
         trend_strength = abs(btc_ret_7d) / (btc_vol_7d * np.sqrt(168) + 1e-10)
         trend_direction = btc_ret_7d / (btc_vol_7d * np.sqrt(168) + 1e-10)
         regime_data = {
@@ -1008,12 +1022,14 @@ def generate_signal_cls(df, root):
             hvol = closes_s.pct_change().rolling(168).std()
             td_series = ret168 / (hvol * np.sqrt(168) + 1e-10)
             td_lag = td_series.shift(1)
+            n_valid = int(td_lag.iloc[-720:].notna().sum())
             rmean = td_lag.rolling(720, min_periods=360).mean()
             rstd = td_lag.rolling(720, min_periods=360).std()
             persist = (rmean.abs() / (rstd + 1e-9)).iloc[-1]
             if np.isfinite(persist):
                 regime_data['td_persist_720h'] = float(persist)
-                print(f"   📊 td_persist_720h = {persist:.3f}")
+                flag = '' if n_valid >= 720 else f' ⚠️ PARTIAL window ({n_valid}/720 obs — gate calibrated on full windows; raise --hours)'
+                print(f"   📊 td_persist_720h = {persist:.3f}{flag}")
 
     result = latest[['symbol', 'score', 'confidence', 'deriv_scale']].sort_values(
         'score', ascending=False).reset_index(drop=True)
@@ -1658,19 +1674,24 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         # median of the persisted vol history (expanding-median approx).
         # Disabled (scale 1.0) until 30 cycles of live history accumulate.
         vol_scale = 1.0
-        if risk_cfg.get('vt_enabled', False) and len(vol_history) >= 30:
-            cur_vol = float(np.std(vol_history[-30:]))
+        # R187: estimator runs on state['vt_rets'] — per-cycle returns with
+        # the applied sizing multiplier divided OUT (sim used unscaled,
+        # unlevered net_ret; recent_rets are levered+scaled and feed back).
+        vt_hist = state.get('vt_rets', [])
+        if risk_cfg.get('vt_enabled', False) and len(vt_hist) >= 30:
+            cur_vol = float(np.std(vt_hist[-30:]))
             vh = state.setdefault('vt_vol_hist', [])
-            if not risk_cfg.get('_shadow', False):
+            if np.isfinite(cur_vol) and not risk_cfg.get('_shadow', False):
                 vh.append(cur_vol)
                 if len(vh) > 1000:
                     del vh[:len(vh) - 1000]
-            if len(vh) >= 60 and cur_vol > 1e-12:
-                ref = float(np.median(vh))
-                vol_scale = float(np.clip(ref / cur_vol, 0.5, 1.0))
-                if vol_scale < 0.999:
-                    print(f"   📉 VT de-risk: vol30={cur_vol:.4f} ref={ref:.4f} "
-                          f"→ scale {vol_scale:.2f}")
+            if len(vh) >= 60 and np.isfinite(cur_vol) and cur_vol > 1e-12:
+                ref = float(np.median([v for v in vh if np.isfinite(v)]))
+                if np.isfinite(ref) and ref > 0:
+                    vol_scale = float(np.clip(ref / cur_vol, 0.5, 1.0))
+                    if vol_scale < 0.999:
+                        print(f"   📉 VT de-risk: vol30={cur_vol:.4f} ref={ref:.4f} "
+                              f"→ scale {vol_scale:.2f}")
     elif len(vol_history) >= 6:
         realized_vol = np.std(vol_history[-risk_cfg['vol_lookback']:]) + 1e-10
         vol_scale = np.clip(risk_cfg['vol_target'] / realized_vol, 0.5, 1.2)
@@ -1825,16 +1846,22 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     # Total allocation: capital × kelly × vol_scale × R7 factors × leverage
     # R184: ramped re-leverage after a DD stop — steps 0.25→0.5→1.0 across
     # clean cycles; any new stop resets it (set where 'stopped' flips True).
+    # R187: ramp is CONSUMED here; it advances in run_cycle only after a
+    # cycle that actually executed fills (failed execution must not eat it).
     relever = state.get('relever_ramp', 1.0)
     if relever < 1.0 and not risk_cfg.get('_shadow', False):
-        state['relever_ramp'] = min(1.0, relever * 2)
         print(f"   🐢 Re-leverage ramp: {relever:.2f} of full size this cycle")
 
     effective_kelly = kelly * vol_scale * r7_vol_scale * dyn_exposure * sm_scale * eq_boost * relever
     # R184: net_leverage (float, e.g. 3.5) sizes the NOTIONAL; the int
     # `leverage` stays what's sent to exchange.set_leverage / margin math.
-    net_lev = float(risk_cfg.get('net_leverage') or leverage)
+    _nl = risk_cfg.get('net_leverage')
+    net_lev = float(_nl) if _nl is not None else float(leverage)
     total_alloc = capital * effective_kelly * net_lev
+    if not risk_cfg.get('_shadow', False):
+        # R187: recorded so run_cycle can divide the realized cycle return
+        # back to the sim's unscaled units for the VT estimator
+        state['_last_size_mult'] = float(effective_kelly * net_lev)
 
     # L/S allocation split & position sizing
     if cls_mode:
@@ -1863,14 +1890,23 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         _persist = regime_data.get('td_persist_720h')
         _tdir = regime_data.get('trend_direction', 0.0)
         if _persist is not None and _persist < risk_cfg['a1_gate_thr']:
+            _wl, _ws = 1.0, 1.0
             if _tdir > 0.25:
-                short_half *= 0.60
-                print(f"   🧷 GATED_A1: persist={_persist:.2f} < "
-                      f"{risk_cfg['a1_gate_thr']:.2f}, trend↑ → shorts ×0.60")
+                _ws = 0.60
             elif _tdir < -0.25:
-                long_half *= 0.60
+                _wl = 0.60
+            if _wl != _ws:
+                # R187: renormalize to CONSTANT GROSS like the sim
+                # (_r136:294-296): 0.5/0.5 → 0.625/0.375 of full alloc,
+                # not 0.5/0.3 (which under-deployed 20% vs the backtest).
+                _gross = long_half + short_half
+                _tot = long_half * _wl + short_half * _ws
+                long_half = long_half * _wl * _gross / _tot
+                short_half = short_half * _ws * _gross / _tot
                 print(f"   🧷 GATED_A1: persist={_persist:.2f} < "
-                      f"{risk_cfg['a1_gate_thr']:.2f}, trend↓ → longs ×0.60")
+                      f"{risk_cfg['a1_gate_thr']:.2f}, "
+                      f"{'trend↑ → shorts' if _ws < 1 else 'trend↓ → longs'} "
+                      f"de-weighted (L={long_half/_gross:.3f}/S={short_half/_gross:.3f} of gross)")
 
     # Adaptive n_long/n_short: reduce if per-position size < min order ($5)
     MIN_ORDER = 5.0
@@ -1885,8 +1921,24 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
             print(f"   ⚠️  Adaptive sizing: {n_short}S → {max_short}S (${short_half:.0f} / ${MIN_ORDER})")
             n_short = max_short
 
+    # R187: neutrality guard — if the de-risk stack (VT × ramp × dyn) shrinks
+    # a side below the exchange minimum, stay FLAT rather than run a
+    # one-sided directional book the sim never had (panel finding).
+    if (risk_cfg.get('_cls_mode', False) and n_long > 0 and n_short > 0
+            and (long_half / n_long < MIN_ORDER or short_half / n_short < MIN_ORDER)):
+        print(f"   ⚠️  Side below min order after de-risk "
+              f"(L ${long_half:.0f}/{n_long}, S ${short_half:.0f}/{n_short}) — staying FLAT")
+        return []
+
     # Cap per position at 15% of leveraged capital for diversification
-    max_per_pos = capital * leverage * 0.15
+    # R187: in CLS mode the sim is EQUAL-WEIGHT 4L/2S with NO per-position
+    # cap — per-short is 25% of gross, so the legacy 15%-of-exchange-leverage
+    # cap silently chopped shorts and ran the book net-long (panel finding).
+    # Cap relative to actual gross with headroom for the 25% short weight.
+    if cls_mode:
+        max_per_pos = total_alloc * 0.26
+    else:
+        max_per_pos = capital * leverage * 0.15
 
     if cls_mode:
         # CLS: equal-weight positions (sim uses .mean() of returns = equal weight)
@@ -1984,6 +2036,17 @@ def close_all(exchange):
     """Close all open positions."""
     if not exchange:
         return
+    # R188: cancel resting orders FIRST — an emergency flatten must be
+    # self-contained (a live post-only could otherwise re-open exposure
+    # right after the flatten). Best-effort, never blocks the closes.
+    try:
+        for o in exchange.fetch_open_orders(params={'instType': 'SWAP'}):
+            try:
+                exchange.cancel_order(o['id'], o.get('symbol'))
+            except Exception:
+                pass
+    except Exception:
+        pass
     try:
         positions = exchange.fetch_positions()
         # Sort by notional ascending to free margin from small positions first
@@ -2087,18 +2150,25 @@ def execute(exchange, positions, dry_run=True, leverage=1):
             base_params = {'tdMode': 'isolated', 'posSide': 'net'}
 
             # MAKER-FIRST for TIER1 symbols (BTC, ETH, SOL, BNB, XRP)
-            if _use_maker_first(pos['symbol']) and not is_retry:
+            # R188: execute() with a real exchange runs ONLY as the
+            # fetch_positions-failure fallback — a degraded mode where speed
+            # beats fees. Maker ladder disabled there (panel recommendation).
+            if MAKER_IN_DEGRADED_FALLBACK and _use_maker_first(pos['symbol']) and not is_retry:
                 try:
                     ticker = None
                     if exchange:
                         ticker = exchange.fetch_ticker(okx_sym)
                     order = _maker_first_limit(
-                        exchange, pos['symbol'], okx_sym, side, amount, ticker, base_params
+                        exchange, pos['symbol'], okx_sym, side, amount, ticker, base_params,
+                        deadline=_time.time() + MAKER_REBALANCE_BUDGET_S
                     )
-                    if _is_order_filled(order):
-                        tag = "💎"  # maker fill
-                        print(f"      {tag} {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} ({amount} cts) → {order.get('id', '?')} [MAKER]")
-                        results.append({**pos, 'status': 'filled', 'order_id': order.get('id')})
+                    grade = _fill_grade(order)
+                    if grade != 'none':
+                        tag = "💎" if grade == 'full' else "🟡"
+                        print(f"      {tag} {side.upper():4s} ${pos['usd']:>7.0f} {okx_sym} ({amount} cts) → {order.get('id', '?')} [MAKER{'-PARTIAL' if grade == 'partial' else ''}]")
+                        results.append({**pos,
+                                        'status': 'filled' if grade == 'full' else 'filled_partial',
+                                        'order_id': order.get('id')})
                         return True
                 except _MakerUnknownState as e:
                     # R171: order may still be live on the exchange — a market
@@ -2295,7 +2365,7 @@ def _log_execution(symbol, okx_sym, side, tier, attempt, order_type,
 
 
 def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, params,
-                       tier=None):
+                       tier=None, deadline=None):
     """
     R49.1/R171 — Post-only maker-first limit order (all tiers behind flag).
 
@@ -2324,6 +2394,15 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
         result = exchange.create_order(symbol=okx_sym, type='market', side=side,
                                        amount=amount, params=params)
         result = _settle_order(exchange, result, okx_sym)
+        if result.get('status') != 'closed' or not result.get('average'):
+            # R188: same unconfirmed-settle hardening as the ladder fallback —
+            # the order EXISTS; reporting failure would re-order full size.
+            result = {'id': result.get('id'), 'status': 'closed', 'average': 0.001,
+                      'filled': amount, 'cost': 0.0, 'amount': amount,
+                      'info': {'r171_unconfirmed_market': True}}
+            _log_execution(symbol, okx_sym, side, tier, 0, 'market_unconfirmed',
+                           ticker_info, None, result, 0, False)
+            return result
         _log_execution(symbol, okx_sym, side, tier, 0, 'market_no_ticker',
                        ticker_info, None, result, 0, False)
         _log_fill(okx_sym, side, result, ticker_info, 'market')
@@ -2343,8 +2422,9 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
 
     def _lot_floor(qty):
         if isinstance(lot, (int, float)) and lot > 0:
-            return round(int(qty / lot) * lot, 10)
-        return int(qty)
+            # +1e-9: binary-float error must not eat a genuine full lot
+            return round(int(qty / lot + 1e-9) * lot, 10)
+        return int(qty + 1e-9)
 
     bid = float(ticker_info['bid'])
     ask = float(ticker_info['ask'])
@@ -2375,6 +2455,11 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
 
     for attempt in range(1, MAKER_MAX_RETRIES + 1):
         if remaining <= 0 or (min_amt and remaining < min_amt):
+            break
+        # R188: hard deadline — budget was admission-only before; one order
+        # admitted at budget-end could ladder ~6 extra minutes unbudgeted.
+        if deadline is not None and _time.time() >= deadline:
+            print(f"         [MAKER] Budget deadline hit for {symbol} → market fallback")
             break
 
         # Fresh book each attempt; keep last known on fetch failure.
@@ -2414,15 +2499,31 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
             )
             order_id = order['id']
         except Exception as e:
-            # post_only rejection (would cross spread) → skip to next attempt
-            if 'post_only' in str(e).lower() or '51119' in str(e):
+            # post_only rejection (would cross spread) → skip to next attempt.
+            # NB: OKX usually ACCEPTS crossing post-only orders and auto-cancels
+            # them (handled by the 'canceled' poll path); '51119' is
+            # insufficient-balance, NOT a post-only code (R188 panel).
+            if 'post_only' in str(e).lower():
                 print(f"         [MAKER] Attempt {attempt} post_only rejected for {symbol} → retry")
                 continue
+            import ccxt as _ccxt
+            if isinstance(e, _ccxt.NetworkError):
+                # R188 CRITICAL: timeout/disconnect AFTER the exchange may have
+                # ACCEPTED the order — a ghost post-only can rest on the book.
+                # Falling through to a full-remainder market order here is the
+                # 2x-position class. Never re-order on unknown placement state.
+                print(f"         [MAKER] Attempt {attempt} network-unknown for {symbol} "
+                      f"— NOT falling back to market: {str(e)[:60]}")
+                if total_filled > 0:
+                    return _partial_result(None)
+                raise _MakerUnknownState(
+                    f"placement state unknown for {symbol}: {str(e)[:80]}") from e
             print(f"         [MAKER] Attempt {attempt} failed for {symbol}: {str(e)[:80]}")
             break
 
-        # Poll for fill up to per-tier TTL
-        while _time.time() - t0 < ttl:
+        # Poll for fill up to per-tier TTL (clamped to the budget deadline)
+        _ttl_eff = ttl if deadline is None else max(4.0, min(ttl, deadline - _time.time()))
+        while _time.time() - t0 < _ttl_eff:
             _time.sleep(2)
             try:
                 check = exchange.fetch_order(order_id, okx_sym)
@@ -2484,6 +2585,16 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
                     out['average'] = cum_cost / total_filled
                     out['cost'] = cum_cost
                 return out
+            if final['status'] not in ('canceled', 'closed'):
+                # R188: order is NOT terminal (cancel failed / still live) —
+                # placing the next rung would risk two live orders. Stop here.
+                print(f"         [MAKER] Order {order_id} non-terminal "
+                      f"({final.get('status')}) — stopping ladder for {symbol}")
+                _note_fill(final)
+                if total_filled > 0:
+                    return _partial_result(order_id)
+                raise _MakerUnknownState(
+                    f"order {order_id} non-terminal after cancel for {symbol}")
             before = total_filled
             _note_fill(final)  # accumulate partial; next attempt orders remainder
             if total_filled > before:
@@ -2496,8 +2607,12 @@ def _maker_first_limit(exchange, symbol, okx_sym, side, amount, ticker_info, par
 
     # Ladder exhausted → market fallback for the lot-rounded remainder only
     remaining = _lot_floor(max(amount - total_filled, 0.0))
-    if remaining <= 0 or (min_amt and remaining < min_amt):
-        return _partial_result(None)  # effectively done (dust remainder)
+    if remaining <= 0:
+        return _partial_result(None)
+    if min_amt and remaining < min_amt and not params.get('reduceOnly'):
+        # dust remainder on an open/resize: done. reduceOnly dust falls
+        # through — OKX accepts residual reduceOnly closes (R188 panel).
+        return _partial_result(None)
     book = {'bid': bid, 'ask': ask}
     t0 = _time.time()
     fallback_type = 'market_fallback'
@@ -2706,7 +2821,15 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
     # alone they fill later into positions the diff below never chose. All our
     # own placement is synchronous, so anything resting here is an orphan.
     try:
-        stale = exchange.fetch_open_orders()
+        # R188: scope to SWAP + our universe — symbol=None returns ALL
+        # instrument types, and a manual spot order on the same account
+        # must not be swept (panel finding).
+        stale = exchange.fetch_open_orders(params={'instType': 'SWAP'})
+        _okx_ids = set(SYMBOLS_TO_OKX.values())
+        stale = [o for o in stale
+                 if (o.get('info', {}) or {}).get('instId') in _okx_ids
+                 or str(o.get('symbol', '')).replace('/USDT:USDT', '-USDT-SWAP')
+                    .replace('/', '-') in _okx_ids]
         for o in stale:
             try:
                 exchange.cancel_order(o['id'], o.get('symbol'))
@@ -2814,7 +2937,8 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 order = _maker_first_limit(
                     exchange, sym, okx_sym, close_side, live_info['contracts'],
                     ticker_info,
-                    params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True}
+                    params={'tdMode': 'isolated', 'posSide': 'net', 'reduceOnly': True},
+                    deadline=_exec_t0 + MAKER_REBALANCE_BUDGET_S
                 )
             else:
                 order = _limit_with_fallback(
@@ -2836,6 +2960,18 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                       f"({order.get('filled')}/{order.get('amount')}) — rest next cycle")
                 results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
                                 'status': 'closed_partial', 'order_id': order.get('id')})
+                # R188: book the notional change so dash/ledger track the
+                # partially-realized close instead of losing it entirely
+                try:
+                    _ffrac = float(order.get('filled') or 0) / float(order.get('amount') or 1)
+                except (TypeError, ZeroDivisionError):
+                    _ffrac = 0.0
+                actions['resize_details'].append({
+                    'symbol': sym.replace('/USDT', ''), 'side': side,
+                    'old_notional': live_info['notional'],
+                    'new_notional': live_info['notional'] * max(0.0, 1 - _ffrac),
+                    'upnl_before': live_info['upnl'],
+                })
             else:
                 print(f"      ⚠️  Close {sym} NOT FILLED (id={order.get('id', '?')})")
                 results.append({'symbol': sym, 'side': side, 'usd': live_info['notional'],
@@ -2878,7 +3014,8 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 tag = '↓'
             order = _maker_first_limit(
                 exchange, sym, okx_sym, order_side, contracts_delta,
-                ticker_info, params=params
+                ticker_info, params=params,
+                deadline=_exec_t0 + MAKER_REBALANCE_BUDGET_S
             ) if _maker_ok(sym) else _limit_with_fallback(
                 exchange, okx_sym, order_side, contracts_delta, ticker_info,
                 params=params, use_limit=use_limit
@@ -2926,7 +3063,8 @@ def rebalance_positions(exchange, target_positions, leverage=1, dry_run=True,
                 exchange, markets, okx_sym, pos['usd'])
             order = _maker_first_limit(
                 exchange, pos['symbol'], okx_sym, order_side, contracts,
-                ticker_info, params={'tdMode': 'isolated', 'posSide': 'net'}
+                ticker_info, params={'tdMode': 'isolated', 'posSide': 'net'},
+                deadline=_exec_t0 + MAKER_REBALANCE_BUDGET_S
             ) if _maker_ok(pos['symbol']) else _limit_with_fallback(
                 exchange, okx_sym, order_side, contracts, ticker_info,
                 params={'tdMode': 'isolated', 'posSide': 'net'},
@@ -3406,7 +3544,7 @@ def update_dashboard(exchange, positions, signals, state, results, root,
     dash_trades = state.get('dash_trades', [])
     if results:
         for r in results:
-            if r.get('status') in ('filled', 'dry_run'):
+            if r.get('status') in ('filled', 'filled_partial', 'dry_run'):
                 dash_trades.append({
                     'symbol': r.get('symbol', '?').replace('/USDT', ''),
                     'side': r.get('side', '?'),
@@ -3477,7 +3615,10 @@ def main():
     parser.add_argument('--mode', choices=['signal', 'paper', 'live'], default='signal')
     parser.add_argument('--capital', type=float, default=1000.0)
     parser.add_argument('--loop', action='store_true')
-    parser.add_argument('--hours', type=int, default=800, help='Hours of history')
+    # R188: default 800→1000 — td_persist_720h needs 168+720+1 closed bars for
+    # a FULL research window (frozen a1_gate_thr calibrated on full windows);
+    # ccxt caps one fetch at ~1000 bars, which is exactly enough.
+    parser.add_argument('--hours', type=int, default=1000, help='Hours of history')
     parser.add_argument('--vol-target', type=float, default=None)
     parser.add_argument('--kelly', type=float, default=None)
     parser.add_argument('--config', type=str, default=None, help='Path to risk config JSON')
@@ -3528,6 +3669,19 @@ def main():
             risk_cfg.update(loaded)
             print(f"   📋 Loaded risk config from {os.path.basename(cfg_path)}")
             break
+
+    # R187: validate config-sourced knobs (the --config channel bypassed the
+    # CLI guards — panel finding). Fail at startup, never at sizing time.
+    _nl_cfg = risk_cfg.get('net_leverage')
+    if _nl_cfg is not None:
+        if not isinstance(_nl_cfg, (int, float)) or not np.isfinite(_nl_cfg) or _nl_cfg <= 0:
+            print(f"   ❌ Invalid net_leverage in config: {_nl_cfg!r}")
+            sys.exit(1)
+    _thr_cfg = risk_cfg.get('a1_gate_thr')
+    if _thr_cfg is not None and (not isinstance(_thr_cfg, (int, float))
+                                 or not np.isfinite(_thr_cfg)):
+        print(f"   ❌ Invalid a1_gate_thr in config: {_thr_cfg!r}")
+        sys.exit(1)
 
     # CLI overrides
     if args.vol_target is not None:
@@ -3643,6 +3797,16 @@ def main():
         if df is None:
             print("   ❌ Data fetch failed")
             return
+        if args.cls:
+            # R187 (panel critical fix): drop the in-progress hour. Research
+            # decided on CLOSED bars; the partial bar also has NO venue data
+            # (parquets stop at the last closed hour), which silently zeroed
+            # the specialist leg at the decision row.
+            _floor = pd.Timestamp.now(tz='UTC').floor('h')
+            _before = len(df)
+            df = df[pd.to_datetime(df['timestamp'], utc=True) < _floor].copy()
+            if _before != len(df):
+                print(f"   ✂️  Dropped partial bar @ {_floor} ({_before - len(df)} rows)")
         print(f"   Shape: {df.shape}, Symbols: {df['symbol'].nunique()}")
 
         # 2. Build features
@@ -3984,13 +4148,36 @@ def main():
                 equity_now = base_equity + cycle_pnl
                 state['equity'] = round(equity_now, 4)
                 state['peak'] = max(state.get('peak', args.capital), equity_now)
+            # R187: advance the DD re-leverage ramp only after a cycle that
+            # actually EXECUTED something (failed-execution cycles must not
+            # consume the ramp — panel finding).
+            _ramp = state.get('relever_ramp', 1.0)
+            if _ramp < 1.0:
+                _had_fills = any(isinstance(r, dict) and r.get('status') in
+                                 ('filled', 'filled_partial', 'resized',
+                                  'closed', 'closed_partial')
+                                 for r in (results or []))
+                if _had_fills:
+                    state['relever_ramp'] = min(1.0, _ramp * 2)
+
             equity_prev = state.get('prev_equity', args.capital)
-            if equity_prev > 0:
+            if equity_prev > 0 and np.isfinite(equity_now):
                 cycle_ret = (equity_now - equity_prev) / equity_prev
                 recent_rets = state.get('recent_rets', [])
                 recent_rets.append(round(cycle_ret, 6))
                 recent_rets = recent_rets[-200:]
                 state['recent_rets'] = recent_rets
+                # R187: unscaled return proxy for the VT estimator — divide
+                # out the sizing multiplier applied this cycle (sim measured
+                # vol on UNLEVERED, UNSCALED net_ret). Flat cycles (no
+                # multiplier recorded / no positions) are excluded, matching
+                # the sim series which had no zero risk-off rows in vol.
+                _mult = state.pop('_last_size_mult', None)
+                if (_mult and np.isfinite(_mult) and _mult > 1e-9
+                        and np.isfinite(cycle_ret)):
+                    vt_rets = state.get('vt_rets', [])
+                    vt_rets.append(round(cycle_ret / _mult, 6))
+                    state['vt_rets'] = vt_rets[-200:]
             state['prev_equity'] = round(equity_now, 4)
 
             # R7: Track equity history for EQ-MOM Boost
