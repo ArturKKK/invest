@@ -116,6 +116,7 @@ EXCLUDE_COLS = {
 
 # Columns NOT to rank-normalize (market-level or binary)
 UNRANKED_COLS = {
+    'venue_covered',  # R183: coverage flag for the specialist leg, not a feature
     'btc_regime_24', 'btc_regime_72', 'btc_regime_168',
     'regime_btc_above_ma336', 'regime_btc_above_ma720',
     'regime_btc_ma720_slope', 'regime_btc_not_crashed',
@@ -764,6 +765,142 @@ def generate_signal_lgb_cs(df, root):
     return result
 
 
+VENUE_FEATURES = ['okx_binance_basis_z168', 'okx_binance_basis_mom24',
+                  'coinbase_premium_z168', 'coinbase_premium_mom24',
+                  'basis_range_z168']
+SPEC_BLEND_K = 0.5  # frozen: R163 validation + R167 k-grid peak
+
+
+def add_venue_features(df, root):
+    """R183: cross-venue dislocation features for the specialist leg.
+
+    Verbatim replication of the research construction (_r161): OKX/Binance
+    basis z168+mom24, Coinbase premium z168+mom24, premium-index intra-hour
+    range z168. Sources = venue parquets topped up by patch_venue_realtime.
+    Features flow through cross_sectional_rank like in training (the spec was
+    trained with cs_rank_exclude=[]). Adds 'venue_covered' flag (UNRANKED) so
+    the blend can zero uncovered symbols AFTER the global fillna(0).
+    """
+    def _z(p, w):
+        return (p - p.rolling(w, min_periods=w // 2).mean()) / (
+            p.rolling(w, min_periods=w // 2).std() + 1e-12)
+
+    try:
+        bclose = df.pivot_table(index='timestamp', columns='symbol',
+                                values='close', aggfunc='first')
+        bclose.columns = [c.replace('/', '') for c in bclose.columns]
+        grid = bclose.index
+        lo_ms = int((grid.min() - pd.Timedelta(hours=400)).timestamp() * 1000)
+        panels = {}
+
+        oc = pd.read_parquet(os.path.join(root, 'data/raw/okx/okx_candles_1h.parquet'),
+                             columns=['instId', 'ts', 'close'])
+        oc['tsn'] = pd.to_numeric(oc['ts'], errors='coerce')
+        oc = oc[oc['tsn'] >= lo_ms]
+        oc['sym'] = oc['instId'].str.replace('-USDT-SWAP', '', regex=False) + 'USDT'
+        oc['tsx'] = pd.to_datetime(oc['tsn'], unit='ms', utc=True)
+        okxp = oc.pivot_table(index='tsx', columns='sym', values='close',
+                              aggfunc='first').astype(float).reindex(grid)
+        com = [c for c in okxp.columns if c in bclose.columns]
+        vb = okxp[com] / bclose[com] - 1
+        panels['okx_binance_basis_z168'] = _z(vb, 168)
+        panels['okx_binance_basis_mom24'] = vb - vb.shift(24)
+
+        cb = pd.read_parquet(os.path.join(root, 'data/raw/coinbase/coinbase_candles_1h.parquet'),
+                             columns=['product', 'ts', 'close'])
+        cb = cb[pd.to_numeric(cb['ts'], errors='coerce') >= lo_ms // 1000]
+        cb['sym'] = cb['product'].str.replace('-USD', '', regex=False) + 'USDT'
+        cb['tsx'] = pd.to_datetime(pd.to_numeric(cb['ts'], errors='coerce'),
+                                   unit='s', utc=True)
+        cbp = cb.pivot_table(index='tsx', columns='sym', values='close',
+                             aggfunc='first').astype(float).reindex(grid)
+        com = [c for c in cbp.columns if c in bclose.columns]
+        prem = cbp[com] / bclose[com] - 1
+        panels['coinbase_premium_z168'] = _z(prem, 168)
+        panels['coinbase_premium_mom24'] = prem - prem.shift(24)
+
+        pr = pd.read_parquet(os.path.join(root, 'data/raw/basis/premium_index_klines_1h.parquet'),
+                             columns=['timestamp', 'symbol', 'high', 'low'])
+        pr['timestamp'] = pd.to_datetime(pr['timestamp'], utc=True)
+        pr = pr[pr['timestamp'] >= grid.min() - pd.Timedelta(hours=400)]
+        rng = (pr.pivot_table(index='timestamp', columns='symbol', values='high', aggfunc='first')
+               - pr.pivot_table(index='timestamp', columns='symbol', values='low', aggfunc='first')
+               ).reindex(grid)
+        panels['basis_range_z168'] = _z(rng, 168)
+
+        df['_bsym'] = df['symbol'].str.replace('/', '', regex=False)
+        for name, p in panels.items():
+            out = p.astype('float32').reset_index()
+            idc = out.columns[0]
+            out = out.melt(id_vars=idc, var_name='_bsym', value_name=name
+                           ).rename(columns={idc: 'timestamp'})
+            df = df.merge(out, on=['timestamp', '_bsym'], how='left')
+        cov = df.groupby('symbol')['okx_binance_basis_z168'].transform(
+            lambda s: float(s.notna().any()))
+        df['venue_covered'] = cov
+        df = df.drop(columns=['_bsym'])
+        n_cov = int(df.groupby('symbol')['venue_covered'].last().sum())
+        print(f"   ✅ Venue features: 5 added, {n_cov} symbols covered")
+    except Exception as e:
+        print(f"   ⚠️  add_venue_features failed: {str(e)[:120]} — spec leg neutral")
+        for c in VENUE_FEATURES:
+            if c not in df.columns:
+                df[c] = np.nan
+        df['venue_covered'] = 0.0
+    return df
+
+
+def _blend_specialist_leg(latest, champ_ensemble, root):
+    """R183: third-leg blend — final_rank = champ_rank + 0.5 * spec_rank.
+
+    Specialist = LGB+XGB on the 5 venue features (R161/R166 protocol),
+    artifacts in results_spec_prod/. Missing artifacts → champion unchanged.
+    Symbols without live venue coverage contribute exactly 0 (the sim's
+    fillna(0) neutral-when-missing contract).
+    """
+    import lightgbm as lgb_lib
+    import xgboost as xgb_lib
+    from scipy.stats import rankdata
+
+    spec_dir = os.path.join(root, 'results_spec_prod')
+    lgb_files = sorted(Path(spec_dir).glob('lgb_spec_seed_*.txt'))
+    xgb_files = sorted(Path(spec_dir).glob('xgb_spec_seed_*.json'))
+    if not lgb_files or not xgb_files:
+        print("   ℹ️  Specialist leg not deployed — champion-only signal")
+        return champ_ensemble
+    try:
+        lgb_models = [lgb_lib.Booster(model_file=str(f)) for f in lgb_files]
+        xgb_models = []
+        for f in xgb_files:
+            m = xgb_lib.Booster()
+            m.load_model(str(f))
+            xgb_models.append(m)
+        feats = lgb_models[0].feature_name()
+        missing = [f for f in feats if f not in latest.columns]
+        if missing:
+            print(f"   ⚠️  Spec features missing: {missing} — leg skipped")
+            return champ_ensemble
+        covered = (latest['venue_covered'].values > 0.5
+                   if 'venue_covered' in latest.columns
+                   else np.ones(len(latest), dtype=bool))
+        if not covered.any():
+            print("   ⚠️  No venue coverage — spec leg neutral this cycle")
+            return champ_ensemble
+        X = latest[feats].fillna(0).values
+        lp = np.mean([m.predict(X) for m in lgb_models], axis=0)
+        dm = xgb_lib.DMatrix(X, feature_names=feats)
+        xp = np.mean([m.predict(dm) for m in xgb_models], axis=0)
+        spec = (0.5 * (rankdata(lp) / len(lp) - 0.5)
+                + 0.5 * (rankdata(xp) / len(xp) - 0.5))
+        spec = np.where(covered, spec, 0.0)
+        print(f"   🧩 Specialist leg: {len(lgb_models)}L+{len(xgb_models)}X, "
+              f"{int(covered.sum())}/{len(covered)} covered, k={SPEC_BLEND_K}")
+        return champ_ensemble + SPEC_BLEND_K * spec
+    except Exception as e:
+        print(f"   ⚠️  Specialist leg failed ({str(e)[:80]}) — champion-only")
+        return champ_ensemble
+
+
 def generate_signal_cls(df, root):
     """
     Generate signal using LGB+XGB binary classification ensemble (R25).
@@ -818,6 +955,10 @@ def generate_signal_cls(df, root):
     lgb_ranked = rankdata(lgb_probs) / len(lgb_probs) - 0.5
     xgb_ranked = rankdata(xgb_probs) / len(xgb_probs) - 0.5
     ensemble = 0.5 * lgb_ranked + 0.5 * xgb_ranked
+
+    # R183: venue-specialist third leg (champ + 0.5*spec), BEFORE z-norm so
+    # the blend propagates to portfolio construction exactly as in the sim
+    ensemble = _blend_specialist_leg(latest, ensemble, root)
 
     # Z-normalize for portfolio construction
     std = np.std(ensemble)
@@ -3472,6 +3613,14 @@ def main():
         # CLS: add model-specific features BEFORE ranking (so they get ranked like in sim)
         if args.cls:
             df = add_cls_features(df, root)
+            # R183: top up venue parquets, then build specialist features
+            # (before the symbol filter and ranking, like every other feature)
+            try:
+                from src.data.fetch_realtime_venue import patch_venue_realtime
+                patch_venue_realtime(root)
+            except Exception as e:
+                print(f"   ⚠️  Venue patch failed: {str(e)[:100]}")
+            df = add_venue_features(df, root)
             # Filter to SYM_35 for CLS (sim used 35 symbols; ranking on 49 changes distribution)
             before_n = df['symbol'].nunique()
             df = df[df['symbol'].isin(CLS_SYMBOLS)].copy()
