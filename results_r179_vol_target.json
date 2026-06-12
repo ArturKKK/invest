@@ -1,0 +1,73 @@
+{
+  "base_1x": {
+    "sharpe": 2.475,
+    "total": 67.1,
+    "ann": 75.1,
+    "dd": -16.5,
+    "worst": -8.48
+  },
+  "vt_primary_1x": {
+    "sharpe": 3.037,
+    "total": 57.0,
+    "ann": 63.6,
+    "dd": -8.6,
+    "worst": -4.24
+  },
+  "vt_diag_n20_1x": {
+    "sharpe": 2.998,
+    "total": 54.3,
+    "ann": 60.5,
+    "dd": -8.5,
+    "worst": -4.24
+  },
+  "vt_diag_n48_1x": {
+    "sharpe": 3.11,
+    "total": 60.8,
+    "ann": 67.9,
+    "dd": -9.2,
+    "worst": -4.24
+  },
+  "vt_diag_clip[.33,2]_1x": {
+    "sharpe": 3.278,
+    "total": 60.5,
+    "ann": 67.5,
+    "dd": -7.9,
+    "worst": -2.92
+  },
+  "base_3x": {
+    "sharpe": 2.475,
+    "total": 290.3,
+    "ann": 341.8,
+    "dd": -43.5,
+    "worst": -25.44
+  },
+  "vt_primary_3x": {
+    "sharpe": 3.037,
+    "total": 255.5,
+    "ann": 298.9,
+    "dd": -24.1,
+    "worst": -12.72
+  },
+  "vt_diag_n20_3x": {
+    "sharpe": 2.998,
+    "total": 238.9,
+    "ann": 278.6,
+    "dd": -24.0,
+    "worst": -12.72
+  },
+  "vt_diag_n48_3x": {
+    "sharpe": 3.11,
+    "total": 280.4,
+    "ann": 329.5,
+    "dd": -25.8,
+    "worst": -12.72
+  },
+  "vt_diag_clip[.33,2]_3x": {
+    "sharpe": 3.278,
+    "total": 281.8,
+    "ann": 331.2,
+    "dd": -22.4,
+    "worst": -8.75
+  },
+  "adopt_rule_3x": true
+}
