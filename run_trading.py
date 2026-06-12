@@ -172,6 +172,10 @@ DEFAULT_RISK = {
     'dd_stop': -0.15,
     'dd_resume': -0.06,
     'confidence_threshold': 0.0,
+    # R184: vol-targeting (R179) + fractional net leverage. net_leverage=None
+    # → notional sized by the int exchange leverage (legacy behavior).
+    'vt_enabled': False,
+    'net_leverage': None,
 }
 
 # ── Partial rebalance settings ──
@@ -1608,6 +1612,9 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     if state.get('stopped', False):
         if dd > risk_cfg['dd_resume']:
             state['stopped'] = False
+            # R184: resume at quarter size and ramp up per clean cycle
+            # (0.25 → 0.5 → 1.0) instead of jumping back to full exposure.
+            state['relever_ramp'] = 0.25
             # Keep true peak — don't reset it, DD is now calculated correctly
             print(f"   🟢 DD recovered to {dd*100:.1f}%, resuming trading (peak={peak:.2f}, equity={equity:.2f})")
         else:
@@ -1616,6 +1623,7 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
 
     if dd < risk_cfg['dd_stop']:
         state['stopped'] = True
+        state['relever_ramp'] = 0.25  # R184: next resume starts at quarter size
         print(f"   🔴 DD hit {dd*100:.1f}% (limit {risk_cfg['dd_stop']*100:.0f}%), stopping")
         return []
 
@@ -1625,7 +1633,24 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
     # CLS mode: skip vol targeting (not used in R25 simulation)
     vol_history = state.get('recent_rets', [])
     if risk_cfg.get('_cls_mode', False):
+        # R184: vol-targeting (R179 pre-registered, de-risk-only [0.5, 1.0]).
+        # vol = trailing 30-cycle std of per-cycle strategy returns; ref =
+        # median of the persisted vol history (expanding-median approx).
+        # Disabled (scale 1.0) until 30 cycles of live history accumulate.
         vol_scale = 1.0
+        if risk_cfg.get('vt_enabled', False) and len(vol_history) >= 30:
+            cur_vol = float(np.std(vol_history[-30:]))
+            vh = state.setdefault('vt_vol_hist', [])
+            if not risk_cfg.get('_shadow', False):
+                vh.append(cur_vol)
+                if len(vh) > 1000:
+                    del vh[:len(vh) - 1000]
+            if len(vh) >= 60 and cur_vol > 1e-12:
+                ref = float(np.median(vh))
+                vol_scale = float(np.clip(ref / cur_vol, 0.5, 1.0))
+                if vol_scale < 0.999:
+                    print(f"   📉 VT de-risk: vol30={cur_vol:.4f} ref={ref:.4f} "
+                          f"→ scale {vol_scale:.2f}")
     elif len(vol_history) >= 6:
         realized_vol = np.std(vol_history[-risk_cfg['vol_lookback']:]) + 1e-10
         vol_scale = np.clip(risk_cfg['vol_target'] / realized_vol, 0.5, 1.2)
@@ -1778,8 +1803,18 @@ def construct_portfolio(signals, capital, risk_cfg, state, leverage=1, coin_vol=
         return []
 
     # Total allocation: capital × kelly × vol_scale × R7 factors × leverage
-    effective_kelly = kelly * vol_scale * r7_vol_scale * dyn_exposure * sm_scale * eq_boost
-    total_alloc = capital * effective_kelly * leverage
+    # R184: ramped re-leverage after a DD stop — steps 0.25→0.5→1.0 across
+    # clean cycles; any new stop resets it (set where 'stopped' flips True).
+    relever = state.get('relever_ramp', 1.0)
+    if relever < 1.0 and not risk_cfg.get('_shadow', False):
+        state['relever_ramp'] = min(1.0, relever * 2)
+        print(f"   🐢 Re-leverage ramp: {relever:.2f} of full size this cycle")
+
+    effective_kelly = kelly * vol_scale * r7_vol_scale * dyn_exposure * sm_scale * eq_boost * relever
+    # R184: net_leverage (float, e.g. 3.5) sizes the NOTIONAL; the int
+    # `leverage` stays what's sent to exchange.set_leverage / margin math.
+    net_lev = float(risk_cfg.get('net_leverage') or leverage)
+    total_alloc = capital * effective_kelly * net_lev
 
     # L/S allocation split & position sizing
     if cls_mode:
@@ -3408,6 +3443,11 @@ def main():
     parser.add_argument('--kelly', type=float, default=None)
     parser.add_argument('--config', type=str, default=None, help='Path to risk config JSON')
     parser.add_argument('--leverage', type=int, default=1, help='Exchange leverage (1-10)')
+    parser.add_argument('--net-leverage', type=float, default=None,
+                        help='R184: fractional notional leverage (e.g. 3.5); '
+                             'exchange margin stays at --leverage (set it >= this, e.g. 4)')
+    parser.add_argument('--vt', action='store_true',
+                        help='R184: enable vol-targeting (R179 de-risk-only scaler)')
     parser.add_argument('--no-deriv-gate', action='store_true', help='Disable derivative risk gate')
     parser.add_argument('--no-meta', action='store_true', help='Disable meta-model (use simple mean ensemble)')
     parser.add_argument('--no-xgb', action='store_true', help='Exclude XGBoost from ensemble')
@@ -3456,6 +3496,14 @@ def main():
     if args.kelly is not None:
         risk_cfg['kelly_frac'] = args.kelly
     risk_cfg['leverage'] = args.leverage
+    if args.net_leverage is not None:
+        if args.net_leverage > args.leverage:
+            print(f"   ⚠️  --net-leverage {args.net_leverage} > --leverage {args.leverage}: "
+                  f"margin must cover notional — raise --leverage")
+            sys.exit(1)
+        risk_cfg['net_leverage'] = args.net_leverage
+    if args.vt:
+        risk_cfg['vt_enabled'] = True
     if args.min_zscore > 0:
         risk_cfg['min_zscore'] = args.min_zscore
     risk_cfg['_demo_mode'] = (args.mode == 'paper')
@@ -3749,7 +3797,7 @@ def main():
 
         # ── Shadow log: what old 6L/3S would have picked ──
         try:
-            shadow_cfg = dict(risk_cfg, n_long=6, n_short=3)
+            shadow_cfg = dict(risk_cfg, n_long=6, n_short=3, _shadow=True)
             shadow_pos = construct_portfolio(signals, trading_capital, shadow_cfg, dict(state),
                                               leverage=risk_cfg['leverage'],
                                               coin_vol=coin_vol,
