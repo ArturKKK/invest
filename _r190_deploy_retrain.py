@@ -67,39 +67,50 @@ def train_leg(df_slice, feats, rank_exclude, seeds, out_dir, prefix,
               train_end, val_end):
     """Train one model per seed (LGB+XGB binary), save boosters. Returns the
     fitted booster lists for the forward check."""
+    import gc
     os.makedirs(out_dir, exist_ok=True)
     tz = df_slice["timestamp"].dt.tz
     te = pd.Timestamp(train_end, tz=tz)
     ve = pd.Timestamp(val_end, tz=tz)
-    d = df_slice.copy()
     rank_feats = [f for f in feats if f not in set(rank_exclude)]
+    # MEMORY: keep ONLY needed columns (input frame has ~107 cols, we need ~35).
+    # The full-frame copy + dual LGB/XGB matrices on 1.9M rows OOM-killed the VM.
+    keep = list(dict.fromkeys(feats + ["timestamp", "symbol", "fwd_ret_12h"]))
+    d = df_slice[[c for c in keep if c in df_slice.columns]].copy()
     d = cs_rank_cols(d, rank_feats)
     d["target_binary"] = (d["fwd_ret_12h"] > 0).astype(int)
     for c in feats:
         if c in d.columns:
             d[c] = d[c].fillna(0)
-    tr = d[d["timestamp"] < te].dropna(subset=["target_binary"])
-    va = d[(d["timestamp"] >= te) & (d["timestamp"] < ve)].dropna(subset=["target_binary"])
-    print(f"  [{prefix}] train={len(tr):,} (<{train_end})  val={len(va):,}", flush=True)
+    # Build train/val feature matrices ONCE as float32, drop the frame.
+    trm = d[d["timestamp"] < te].dropna(subset=["target_binary"])
+    vam = d[(d["timestamp"] >= te) & (d["timestamp"] < ve)].dropna(subset=["target_binary"])
+    Xtr = trm[feats].to_numpy(dtype="float32"); ytr = trm["target_binary"].to_numpy()
+    Xva = vam[feats].to_numpy(dtype="float32"); yva = vam["target_binary"].to_numpy()
+    n_tr, n_va = len(trm), len(vam)
+    del d, trm, vam; gc.collect()
+    print(f"  [{prefix}] train={n_tr:,} (<{train_end})  val={n_va:,}", flush=True)
+    # Shared datasets/matrices reused across seeds (LGB seed set via params).
+    dtr_l = lgb.Dataset(Xtr, label=ytr, feature_name=feats, free_raw_data=False)
+    dva_l = lgb.Dataset(Xva, label=yva, reference=dtr_l, free_raw_data=False)
+    dtr_x = xgb.DMatrix(Xtr, label=ytr, feature_names=feats)
+    dva_x = xgb.DMatrix(Xva, label=yva, feature_names=feats)
     lgbs, xgbs = [], []
     for s in seeds:
-        m = lgb.train({**LGB_PARAMS, "seed": s},
-                      lgb.Dataset(tr[feats], label=tr["target_binary"]),
-                      num_boost_round=N_ROUNDS,
-                      valid_sets=[lgb.Dataset(va[feats], label=va["target_binary"])],
+        m = lgb.train({**LGB_PARAMS, "seed": s}, dtr_l, num_boost_round=N_ROUNDS,
+                      valid_sets=[dva_l],
                       callbacks=[lgb.early_stopping(EARLY_STOP, verbose=False),
                                  lgb.log_evaluation(-1)])
         m.save_model(os.path.join(out_dir, f"lgb_{prefix}_seed_{s}.txt"))
         lgbs.append(m)
-        mx = xgb.train({**XGB_PARAMS, "seed": s},
-                       xgb.DMatrix(tr[feats], label=tr["target_binary"], feature_names=feats),
-                       num_boost_round=N_ROUNDS,
-                       evals=[(xgb.DMatrix(va[feats], label=va["target_binary"], feature_names=feats), "val")],
-                       early_stopping_rounds=EARLY_STOP, verbose_eval=False)
+        mx = xgb.train({**XGB_PARAMS, "seed": s}, dtr_x, num_boost_round=N_ROUNDS,
+                       evals=[(dva_x, "val")], early_stopping_rounds=EARLY_STOP,
+                       verbose_eval=False)
         mx.save_model(os.path.join(out_dir, f"xgb_{prefix}_seed_{s}.json"))
         xgbs.append(mx)
         if s in (seeds[0], seeds[-1]):
             print(f"    seed {s}: lgb {m.best_iteration} / xgb {mx.best_iteration} iters", flush=True)
+    del dtr_l, dva_l, dtr_x, dva_x, Xtr, Xva; gc.collect()
     return lgbs, xgbs, rank_feats
 
 
