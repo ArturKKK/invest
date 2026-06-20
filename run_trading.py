@@ -778,6 +778,153 @@ VENUE_FEATURES = ['okx_binance_basis_z168', 'okx_binance_basis_mom24',
                   'basis_range_z168']
 SPEC_BLEND_K = 0.5  # frozen: R163 validation + R167 k-grid peak
 
+# ─────────────────────────────────────────────────────────────────────
+# R189 — pre-trade DATA-HEALTH GATE (feature-source map wf_9bfaf156)
+# ─────────────────────────────────────────────────────────────────────
+# Per-symbol feature GROUPS: each must vary cross-sectionally at the decision
+# row. A whole group flat (zero variance across all symbols) == its data
+# source died. CRITICAL groups halt the cycle; DEGRADE groups only alert.
+HEALTH_GROUPS_CRITICAL = {
+    # All OHLCV-derived — if the entire group is flat, the price frame is dead.
+    'ohlcv_price': ['ret_12h', 'ret_24h', 'ret_48h', 'ret_168h', 'atr_14',
+                    'gk_vol_24h', 'ret_skew_168h', 'rvol_12h', 'rvol_24h',
+                    'rel_volume_cs', 'cs_rank_ma_5', 'residual_12h',
+                    'residual_24h', 'mom_z_24h', 'dist_from_high_24h'],
+    # Binance-FAPI derivatives, live-patched by patch_metrics_realtime each
+    # cycle — entire group flat == the live patcher silently failed.
+    'derivatives': ['oi_chg_12h', 'oi_chg_24h', 'oi_zscore',
+                    'taker_cvd_12h', 'taker_cvd_24h', 'ls_divergence'],
+}
+HEALTH_GROUPS_DEGRADE = {
+    # Static parquets with NO live patcher → silent staleness. Each is a single
+    # feature; losing one degrades but does not invalidate the model. ALERT.
+    'funding': ['cum_funding_24h'],          # binance_funding_rates.parquet (≤8h merge tol → 0)
+    'coinglass': ['cg_taker_imb'],           # coinglass/taker.parquet (daily, shift-1)
+    'venue': list(VENUE_FEATURES),           # spec leg auto-neutralizes if flat
+}
+# Market-level features: SAME across symbols by design → variance check is
+# meaningless. Only require they are not entirely NaN/zero at the decision row.
+HEALTH_MARKET_LEVEL = ['hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
+                       'pct_coins_up_12h', 'pct_coins_up_1h',
+                       'ret_dispersion_12h', 'iv_rv_spread']
+# Source-parquet freshness thresholds (hours since last bar at decision time).
+# (path_rel, warn_h, fail_h). fail_h=None → never hard-fail on this source.
+HEALTH_SOURCES = [
+    ('data/sentiment/binance_futures_metrics.parquet', 4, 8),   # live-patched; >8h = patcher dead
+    ('data/sentiment/binance_funding_rates.parquet', 24, None),  # static, daily-ish → degrade only
+    ('data/sentiment/deribit_dvol.parquet', 12, None),           # static → degrade only
+    ('data/raw/coinglass/taker.parquet', 48, None),              # daily, shift-1 → degrade only
+    ('data/raw/okx/okx_candles_1h.parquet', 6, None),            # live-patched venue
+    ('data/raw/coinbase/coinbase_candles_1h.parquet', 6, None),
+    ('data/raw/basis/premium_index_klines_1h.parquet', 6, None),
+]
+HEALTH_VAR_EPS = 1e-9          # below this CS-std == "flat"
+HEALTH_MAX_MISSING_FEATS = 3  # > this many model features absent → halt
+
+
+def _ts_max_age_h(path):
+    """Hours since the newest bar in a parquet (any common ts column). None on error."""
+    try:
+        import pyarrow.parquet as _pq
+        cols = _pq.read_schema(path).names
+        tc = next((c for c in ('timestamp', 'ts', 'date', 'time') if c in cols), None)
+        if tc is None:
+            return None
+        s = pd.read_parquet(path, columns=[tc])[tc]
+        if pd.api.types.is_datetime64_any_dtype(s):
+            mx = pd.to_datetime(s, utc=True).max()              # already datetime
+        else:
+            sn = pd.to_numeric(s, errors='coerce').dropna()
+            if len(sn):                                          # numeric epoch
+                unit = 's' if sn.max() < 1e11 else 'ms'
+                mx = pd.to_datetime(sn.max(), unit=unit, utc=True)
+            else:                                                # string timestamps
+                mx = pd.to_datetime(s, utc=True).max()
+        return (pd.Timestamp.now(tz='UTC') - mx).total_seconds() / 3600.0
+    except Exception:
+        return None
+
+
+def preflight_data_health(latest_snap, model_feats, root, bot=None):
+    """Pre-trade data-health gate (R189). Returns (ok_to_trade, issues:list).
+
+    Two layers: (1) source-parquet freshness; (2) decision-row feature health
+    (presence + per-group cross-sectional variance + market-level non-zero).
+    HALTS the cycle only on a dead CRITICAL group / stale critical source /
+    too many missing features; otherwise trades and ALERTS on every degrade so
+    a silent data outage can never pass unnoticed.
+    """
+    issues, fatal = [], []
+
+    # ── Layer 1: source freshness ──
+    for rel, warn_h, fail_h in HEALTH_SOURCES:
+        age = _ts_max_age_h(os.path.join(root, rel))
+        name = rel.split('/')[-1]
+        if age is None:
+            issues.append(f"{name}: unreadable/missing")
+            continue
+        if fail_h is not None and age > fail_h:
+            fatal.append(f"{name} STALE {age:.0f}h (>{fail_h}h)")
+        elif age > warn_h:
+            issues.append(f"{name} stale {age:.0f}h (>{warn_h}h)")
+
+    # ── Layer 2a: model-feature presence ──
+    present = set(latest_snap.columns)
+    missing = [f for f in model_feats if f not in present]
+    if missing:
+        issues.append(f"{len(missing)} model feats absent→0: {missing[:6]}")
+        if len(missing) > HEALTH_MAX_MISSING_FEATS:
+            fatal.append(f"{len(missing)} model features missing (>{HEALTH_MAX_MISSING_FEATS})")
+
+    def _flat(cols):
+        c = [x for x in cols if x in present]
+        if not c:
+            return None  # nothing to judge
+        stds = latest_snap[c].astype('float64').std(axis=0, ddof=0)
+        live = [x for x in c if stds.get(x, 0.0) > HEALTH_VAR_EPS]
+        return live, c
+
+    # ── Layer 2b: CRITICAL per-symbol groups (whole group flat == dead) ──
+    for g, cols in HEALTH_GROUPS_CRITICAL.items():
+        r = _flat(cols)
+        if r is None:
+            continue
+        live, c = r
+        if not live:
+            fatal.append(f"CRITICAL group '{g}' entirely FLAT ({len(c)} feats, source dead)")
+        elif len(live) < len(c):
+            issues.append(f"group '{g}': {len(c)-len(live)}/{len(c)} flat ({set(c)-set(live)})")
+
+    # ── Layer 2c: DEGRADE per-symbol groups (alert only) ──
+    for g, cols in HEALTH_GROUPS_DEGRADE.items():
+        r = _flat(cols)
+        if r is None:
+            continue
+        live, c = r
+        if not live:
+            issues.append(f"degrade group '{g}' flat ({len(c)} feats — static source likely stale)")
+
+    # ── Layer 2d: market-level non-zero ──
+    ml = [x for x in HEALTH_MARKET_LEVEL if x in present]
+    dead_ml = [x for x in ml if (latest_snap[x].fillna(0) == 0).all()]
+    if dead_ml:
+        issues.append(f"market-level all-zero: {dead_ml}")
+
+    ok = not fatal
+    tag = "✅ OK" if (ok and not issues) else ("🔴 HALT" if not ok else "🟡 DEGRADE")
+    print(f"   🩺 Data-health: {tag}")
+    for f in fatal:
+        print(f"      🔴 {f}")
+    for i in issues:
+        print(f"      🟡 {i}")
+    if bot is not None and getattr(bot, 'enabled', False) and (fatal or issues):
+        head = "🔴 DATA-HEALTH HALT — cycle skipped" if not ok else "🟡 DATA-HEALTH degraded (trading continues)"
+        try:
+            bot.alert_error("\n".join([head] + fatal + issues), context="data_health")
+        except Exception:
+            pass
+    return ok, fatal + issues
+
 
 def add_venue_features(df, root):
     """R183: cross-venue dislocation features for the specialist leg.
@@ -850,7 +997,6 @@ def add_venue_features(df, root):
             c = df.groupby('symbol')[_vc].transform(lambda s: float(s.notna().any()))
             cov = c if cov is None else np.maximum(cov, c)
         df['venue_covered'] = cov
-        df = df.drop(columns=['_bsym'])
         n_cov = int(df.groupby('symbol')['venue_covered'].last().sum())
         print(f"   ✅ Venue features: 5 added, {n_cov} symbols covered")
     except Exception as e:
@@ -859,6 +1005,10 @@ def add_venue_features(df, root):
             if c not in df.columns:
                 df[c] = np.nan
         df['venue_covered'] = 0.0
+    finally:
+        # R189-review: drop the helper on EVERY path (an exception between
+        # _bsym creation and its drop would otherwise leak the column).
+        df = df.drop(columns=['_bsym'], errors='ignore')
     return df
 
 
@@ -3902,6 +4052,21 @@ def main():
                 print(f"      {gname}: {n_live}/{len(gcols)} non-zero")
         if zero_cols:
             print(f"      zero features: {zero_cols[:20]}")
+
+        # R189: hard data-health gate (CLS deploy path). On a dead CRITICAL
+        # feature group / stale critical source / too many missing features,
+        # SKIP this cycle holding current positions — never trade on dead data,
+        # never panic-flatten on a data outage. Same safe early-return as a
+        # failed OHLCV fetch; the next cycle retries and telegram is alerted.
+        if args.cls:
+            _model_feats = (sum(HEALTH_GROUPS_CRITICAL.values(), [])
+                            + sum(HEALTH_GROUPS_DEGRADE.values(), [])
+                            + HEALTH_MARKET_LEVEL)
+            _hz = df.groupby('symbol').last()
+            _ok, _ = preflight_data_health(_hz, _model_feats, root, bot)
+            if not _ok:
+                print("   🛑 Data-health HALT — holding positions, no trades this cycle")
+                return
 
         # 3. Cross-sectional rank (after all enrichment)
         df = cross_sectional_rank(df, feat_cols)
